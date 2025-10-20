@@ -1,0 +1,100 @@
+[project]
+name = "iron-gql"
+version = "0.1.0"
+description = "iron_gql generates typed async GraphQL clients and runtime helpers from schemas for Python services"
+readme = "README.md"
+authors = [{ name = "Ilia Ablamonov", email = "ilia@flamefork.ru" }]
+requires-python = ">=3.13"
+dependencies = [
+    "gql>=3.5.3,<4",
+    "httpx>=0.28.1,<1",
+    "pydantic>=2.12.3,<3",
+]
+
+[build-system]
+requires = ["uv_build>=0.9.4,<0.10.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "basedpyright>=1.31.7",
+    "pytest>=8.4.2",
+    "pytest-asyncio>=1.2.0",
+    "pytest-cov>=7.0.0",
+    "pytest-httpserver>=1.1.3",
+    "ruff>=0.14.1",
+]
+
+[tool.pyright]
+typeCheckingMode = "strict"
+reportUnknownArgumentType = "none"
+reportUnknownLambdaType = "none"
+reportUnknownMemberType = "none"
+reportUnknownParameterType = "none"
+reportUnknownVariableType = "none"
+reportMissingParameterType = "none"
+reportMissingTypeArgument = "none"
+reportMissingTypeStubs = "none"
+deprecateTypingAliases = true
+reportImportCycles = true
+reportUnnecessaryTypeIgnoreComment = true
+reportUnreachable = true
+reportIgnoreCommentWithoutRule = true
+reportImplicitRelativeImport = true
+
+[tool.ruff]
+target-version = "py313"
+
+[tool.ruff.format]
+preview = true
+
+[tool.ruff.lint]
+preview = true
+select = ["ALL"]
+ignore = [
+    "ANN",
+    "COM812",
+    "CPY",
+    "D",
+    "FIX",
+    "G004",
+    "ISC001",
+    "PLC1901",
+    "PLR0911",
+    "PLR0915",
+    "PLR6301",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+    "TC006",
+    "TD",
+]
+
+[tool.ruff.lint.per-file-ignores]
+"{*_test.py,conftest.py}" = ["A002", "PLR2004", "S", "FBT"]
+
+[tool.ruff.lint.isort]
+force-single-line = true
+
+[tool.ruff.lint.pylint]
+max-args = 10
+
+[tool.ruff.lint.flake8-tidy-imports]
+ban-relative-imports = "all"
+
+[tool.pytest.ini_options]
+filterwarnings = ["error"]
+addopts = ["--no-cov-on-fail", "--cov-report=term-missing:skip-covered"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+
+[tool.coverage.run]
+branch = true
+omit = ["*_test.py"]
+data_file = ".coverage/db.sqlite"
+
+[tool.coverage.html]
+directory = ".coverage/htmlcov"
+
+[tool.coverage.report]
+exclude_also = ["if TYPE_CHECKING:", "@overload"]
