@@ -1,5 +1,10 @@
 # iron_gql
 
+[![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![main](https://github.com/Flamefork/iron_gql/actions/workflows/main.yml/badge.svg)](https://github.com/Flamefork/iron_gql/actions/workflows/main.yml)
+[![PyPI - Version](https://img.shields.io/pypi/v/iron-gql)](https://pypi.org/project/iron-gql/)
+
+
 `iron_gql` is a lightweight GraphQL code generator and runtime that turns schema SDL and real query documents into typed Python clients powered by Pydantic models. Use it to wire GraphQL APIs into services, CLIs, background jobs, or tests without hand-writing boilerplate.
 
 ## Key Features
