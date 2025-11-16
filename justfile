@@ -20,5 +20,6 @@ release version:
     uv version {{ version }}
     git add --all
     git commit --message "Release v{{ version }}"
+    git push
     git tag --annotate v{{ version }} --message v{{ version }}
     git push --tags
