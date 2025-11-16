@@ -1,15 +1,32 @@
 [project]
 name = "iron-gql"
 version = "0.1.1"
+
 description = "iron_gql generates typed async GraphQL clients and runtime helpers from schemas for Python services"
 readme = "README.md"
 authors = [{ name = "Ilia Ablamonov", email = "ilia@flamefork.ru" }]
+license = "MIT"
+license-files = ["LICENSE"]
+keywords = ["graphql", "gql", "client", "httpx", "pydantic", "codegen", "async"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Topic :: Software Development :: Libraries",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.13",
+]
+
 requires-python = ">=3.13"
 dependencies = [
     "gql>=3.5.3,<4",
     "httpx>=0.28.1,<1",
     "pydantic>=2.12.3,<3",
 ]
+
+[project.urls]
+Homepage = "https://github.com/Flamefork/iron_gql"
+Repository = "https://github.com/Flamefork/iron_gql.git"
+Issues = "https://github.com/Flamefork/iron_gql/issues"
 
 [build-system]
 requires = ["uv_build>=0.9.4,<0.10.0"]
