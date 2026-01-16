@@ -16,6 +16,7 @@ from iron_gql.parser import GQLType
 from iron_gql.parser import GQLVar
 from iron_gql.parser import Query
 from iron_gql.parser import Statement
+from iron_gql.parser import collect_fragment_spreads
 from iron_gql.parser import get_transitive_interfaces
 from iron_gql.parser import parse_gql_queries
 from iron_gql.parser import parse_input_type
@@ -702,12 +703,32 @@ def render_query_classes(
             typ = field_type(v.type, scalars, ctx=ctx)
             args.append(f"{py_name}: {typ}")
             variables.append(f'"{v.name}": runtime.serialize_var({py_name})')
+
+        referenced_fragments = _collect_referenced_fragments(query)
+        stmt_doc = graphql.parse(query.stmt.clean_text)
+        defined_fragments = {
+            definition.name.value
+            for definition in stmt_doc.definitions
+            if isinstance(definition, graphql.FragmentDefinitionNode)
+        }
+        fragments_code = "\n".join(
+            _extract_fragment_source(f)
+            for f in referenced_fragments
+            if f.name.value not in defined_fragments
+        )
+        combined_query = (
+            query.stmt.raw_text + "\n" + fragments_code
+            if fragments_code
+            else query.stmt.raw_text
+        )
+        full_query_code = repr(combined_query)
+
         query_classes.append(
             f"""
 
 class {capitalize_first(query.name)}(runtime.GQLQuery):
     async def execute({", ".join(args)}) -> {capitalize_first(query.name)}Result:
-        document = gql.gql({query.stmt.raw_text!r})
+        document = gql.gql({full_query_code})
         return await {package_name.upper()}_CLIENT.query(
             {capitalize_first(query.name)}Result,
             document,
@@ -719,6 +740,35 @@ class {capitalize_first(query.name)}(runtime.GQLQuery):
             """.strip()
         )
     return query_classes
+
+
+def _collect_referenced_fragments(query: Query) -> list[graphql.FragmentDefinitionNode]:
+    visited: set[str] = set()
+
+    def collect_fragment_names(name: str) -> set[str]:
+        if name in visited or name not in query.fragments:
+            return set()
+        visited.add(name)
+        return {name} | {
+            collected_name
+            for spread in collect_fragment_spreads(query.fragments[name])
+            for collected_name in collect_fragment_names(spread)
+        }
+
+    collected = {
+        name
+        for spread in collect_fragment_spreads(query.operation_def)
+        for name in collect_fragment_names(spread)
+    }
+
+    return [query.fragments[name] for name in sorted(collected)]
+
+
+def _extract_fragment_source(frag: graphql.FragmentDefinitionNode) -> str:
+    if not frag.loc or not frag.loc.source:
+        msg = f"Fragment {frag.name.value} has no source location"
+        raise ValueError(msg)
+    return frag.loc.source.body[frag.loc.start : frag.loc.end]
 
 
 def render_input_types(
