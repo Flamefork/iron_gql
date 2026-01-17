@@ -74,6 +74,7 @@
 ## Runtime Highlights
 - `GQLClient` accepts ASGI `target_app` so you can reuse the runtime for production HTTP calls or in-process ASGI execution.
 - `GQLQuery.with_headers` and `GQLQuery.with_file_uploads` clone the query object, making per-call customization trivial.
+- `Upload` scalars map to `gql.FileVar` for multipart file handling.
 - `serialize_var` converts nested Pydantic models, dicts, lists, and primitives into JSON-friendly structures for variable payloads.
 
 ## Validation and Troubleshooting
