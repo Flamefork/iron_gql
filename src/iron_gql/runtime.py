@@ -69,8 +69,7 @@ class GQLClient:
     async def query[T: pydantic.BaseModel](
         self,
         result_type: type[T],
-        document: gql.GraphQLRequest,
-        variable_values: dict[str, Any] | None = None,
+        request: gql.GraphQLRequest,
         *,
         headers: dict[str, str] | None = None,
         upload_files: bool = False,
@@ -79,8 +78,7 @@ class GQLClient:
 
         Args:
             result_type: Pydantic model class to validate the response against
-            document: Parsed GraphQL document (query/mutation)
-            variable_values: Optional dictionary of GraphQL variables
+            request: GraphQL request with document and optional variables
             headers: Optional HTTP headers to merge with client defaults
             upload_files: Whether to enable file upload support
 
@@ -104,9 +102,7 @@ class GQLClient:
             parse_results=True,
         )
         async with client as session:
-            if variable_values:
-                document.variable_values = variable_values
-            result = await session.execute(document, upload_files=upload_files)
+            result = await session.execute(request, upload_files=upload_files)
             return result_type.model_validate(result)
 
 

@@ -34,7 +34,7 @@ BUILTIN_SCALARS = {
     "Date": "datetime.date",
     "DateTime": "datetime.datetime",
     "JSON": "object",
-    "Upload": "IO",
+    "Upload": "gql.FileVar",
 }
 
 
@@ -228,7 +228,6 @@ def _render_imports(
     return f"""\
 import datetime
 from pathlib import Path
-from typing import IO
 from typing import Literal
 from typing import overload
 
@@ -728,11 +727,11 @@ def render_query_classes(
 
 class {capitalize_first(query.name)}(runtime.GQLQuery):
     async def execute({", ".join(args)}) -> {capitalize_first(query.name)}Result:
-        document = gql.gql({full_query_code})
+        request = gql.gql({full_query_code})
+        request.variable_values = {{{", ".join(variables)}}} or None
         return await {package_name.upper()}_CLIENT.query(
             {capitalize_first(query.name)}Result,
-            document,
-            {{{", ".join(variables)}}},
+            request,
             headers=self.headers,
             upload_files=self.upload_files,
         )
