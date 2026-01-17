@@ -69,7 +69,7 @@ class GQLClient:
     async def query[T: pydantic.BaseModel](
         self,
         result_type: type[T],
-        document: graphql.DocumentNode,
+        document: gql.GraphQLRequest,
         variable_values: dict[str, Any] | None = None,
         *,
         headers: dict[str, str] | None = None,
@@ -104,11 +104,9 @@ class GQLClient:
             parse_results=True,
         )
         async with client as session:
-            result = await session.execute(
-                document,
-                variable_values,
-                upload_files=upload_files,
-            )
+            if variable_values:
+                document.variable_values = variable_values
+            result = await session.execute(document, upload_files=upload_files)
             return result_type.model_validate(result)
 
 
