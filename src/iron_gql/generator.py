@@ -1,6 +1,7 @@
 import ast
 import logging
 from collections.abc import Callable
+from collections.abc import Iterable
 from collections.abc import Iterator
 from dataclasses import dataclass
 from dataclasses import field as dataclass_field
@@ -40,9 +41,6 @@ BUILTIN_SCALARS = {
 @dataclass(kw_only=True)
 class CollectorContext:
     enums: set[graphql.GraphQLEnumType] = dataclass_field(default_factory=set)
-    input_types: set[graphql.GraphQLInputObjectType] = dataclass_field(
-        default_factory=set
-    )
 
 
 @dataclass(kw_only=True)
@@ -59,10 +57,15 @@ class RenderedFieldModels:
     union_field_type: GQLType | None = None
 
 
-def finalize_type(typ: str, field_typ: GQLType) -> str:
+def finalize_type(
+    typ: str,
+    field_typ: GQLType,
+    *,
+    include_default: bool = True,
+) -> str:
     if not field_typ.not_null:
         typ += " | None"
-    if field_typ.default_value != graphql.Undefined:
+    if include_default and field_typ.default_value != graphql.Undefined:
         typ += f" = {field_typ.default_value!r}"
     return typ
 
@@ -293,12 +296,22 @@ def render_package(
     queries = get_unique_queries(queries)
     ctx = CollectorContext()
 
+    # Collect input type roots from all query variables
+    input_roots: set[graphql.GraphQLInputObjectType] = set()
+    for query in queries:
+        for v in query.variables:
+            _collect_input_root(v.type, input_roots)
+    ordered_input_types = collect_ordered_input_types(input_roots)
+
     rendered_query_classes = render_query_classes(
         queries, package_name, scalars, to_snake_fn, ctx
     )
     rendered_result_models = render_result_models(queries, scalars, to_snake_fn, ctx)
     rendered_input_types = render_input_types(
-        ctx.input_types, scalars, to_snake_fn, ctx
+        ordered_input_types,
+        scalars,
+        to_snake_fn,
+        ctx,
     )
     rendered_overloads = render_overloads(queries, gql_fn_name)
     query_cases = render_query_cases(queries)
@@ -323,6 +336,21 @@ def render_package(
         _render_gql_fn(gql_fn_name, rendered_overloads, query_cases),
     ]
     return "\n\n\n".join(section for section in sections if section)
+
+
+def _collect_input_root(
+    gql_type: GQLType,
+    roots: set[graphql.GraphQLInputObjectType],
+) -> None:
+    match gql_type:
+        case GQLSingularType(type=typ) if isinstance(
+            typ, graphql.GraphQLInputObjectType
+        ):
+            roots.add(typ)
+        case GQLListType(type=inner):
+            _collect_input_root(inner, roots)
+        case _:
+            pass
 
 
 def get_unique_queries(queries: list[Query]) -> list[Query]:
@@ -725,17 +753,16 @@ class {capitalize_first(query.name)}(runtime.GQLQuery):
 
 
 def render_input_types(
-    collected_input_types: set[graphql.GraphQLInputObjectType],
+    ordered_input_types: list[graphql.GraphQLInputObjectType],
     scalars: dict[str, str],
     to_snake_fn: StrTransform,
-    ctx: CollectorContext,
+    ctx: CollectorContext | None = None,
 ) -> list[str]:
-    ordered = order_input_types(collected_input_types)
     rendered: list[str] = []
-    for typ in ordered:
+    for typ in ordered_input_types:
         fields = [
             f"{to_snake_fn(field_name)}: {
-                field_type(
+                input_field_type(
                     parse_input_type(field.type, default_value=field.default_value),
                     scalars,
                     ctx=ctx,
@@ -747,49 +774,85 @@ def render_input_types(
     return rendered
 
 
-def order_input_types(
-    collected_input_types: set[graphql.GraphQLInputObjectType],
+def collect_ordered_input_types(
+    roots: Iterable[graphql.GraphQLInputObjectType],
 ) -> list[graphql.GraphQLInputObjectType]:
-    if not collected_input_types:
-        return []
-
-    _expand_input_types(collected_input_types)
-    types_by_name = {typ.name: typ for typ in collected_input_types}
-
     emitted: set[str] = set()
     ordered: list[graphql.GraphQLInputObjectType] = []
 
     def emit(typ: graphql.GraphQLInputObjectType) -> None:
         if typ.name in emitted:
             return
+        emitted.add(typ.name)
         for field in typ.fields.values():
             target = unwrap_input_type(field.type)
             if isinstance(target, graphql.GraphQLInputObjectType):
-                emit(types_by_name.get(target.name, target))
+                emit(target)
         ordered.append(typ)
-        emitted.add(typ.name)
 
-    for typ_name in sorted(types_by_name):
-        emit(types_by_name[typ_name])
+    for root in sorted(roots, key=lambda t: t.name):
+        emit(root)
 
     return ordered
 
 
-def _expand_input_types(
-    collected_input_types: set[graphql.GraphQLInputObjectType],
-) -> None:
-    queue = list(collected_input_types)
-    seen: set[graphql.GraphQLInputObjectType] = set(queue)
-    while queue:
-        typ = queue.pop()
-        for field in typ.fields.values():
-            target = unwrap_input_type(field.type)
-            if isinstance(target, graphql.GraphQLInputObjectType):
-                if target not in collected_input_types:
-                    collected_input_types.add(target)
-                if target not in seen:
-                    seen.add(target)
-                    queue.append(target)
+def input_field_type(
+    field_typ: GQLType,
+    scalars: dict[str, str],
+    *,
+    ctx: CollectorContext | None = None,
+) -> str:
+    has_input_object, typ = _build_input_type(field_typ, scalars, ctx=ctx)
+    if has_input_object:
+        typ = f'"{typ}"'
+    if field_typ.default_value != graphql.Undefined:
+        typ += f" = {field_typ.default_value!r}"
+    elif not field_typ.not_null:
+        typ += " = None"
+    return typ
+
+
+def _build_input_type(
+    field_typ: GQLType,
+    scalars: dict[str, str],
+    *,
+    ctx: CollectorContext | None = None,
+) -> tuple[bool, str]:
+    match field_typ:
+        case GQLSingularType(type=gql_type):
+            has_input, base_typ = _input_py_type(gql_type, scalars, ctx=ctx)
+        case GQLListType(type=inner):
+            has_input, child_type = _build_input_type(inner, scalars, ctx=ctx)
+            base_typ = f"list[{child_type}]"
+        case _:
+            msg = f"Unknown GQLType {field_typ} of type {type(field_typ)}"
+            raise TypeError(msg)
+    return has_input, finalize_type(base_typ, field_typ, include_default=False)
+
+
+def _input_py_type(
+    gql_type: graphql.GraphQLNamedType,
+    scalars: dict[str, str],
+    *,
+    ctx: CollectorContext | None = None,
+) -> tuple[bool, str]:
+    match gql_type:
+        case graphql.GraphQLScalarType(name=name):
+            if name in scalars:
+                return False, scalars[name].replace(":", ".")
+            if name in BUILTIN_SCALARS:
+                return False, BUILTIN_SCALARS[name]
+            logger.warning(f"Unknown scalar type {name}")
+            return False, "object"
+        case graphql.GraphQLInputObjectType(name=name):
+            return True, name
+        case graphql.GraphQLEnumType(name=name):
+            if ctx is not None:
+                ctx.enums.add(gql_type)
+            return False, name
+        case _:
+            logger.warning(f"Unknown GraphQL type {gql_type.name} {type(gql_type)}")
+            return False, "object"
 
 
 def render_overloads(queries: list[Query], gql_fn_name: str) -> list[str]:
@@ -866,8 +929,6 @@ def field_py_type(
             logger.warning(f"Unknown scalar type {name}")
             return "object"
         case graphql.GraphQLInputObjectType(name=name):
-            if ctx is not None:
-                ctx.input_types.add(gql_type)
             return name
         case graphql.GraphQLEnumType(name=name):
             if ctx is not None:
