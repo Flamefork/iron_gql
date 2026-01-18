@@ -407,7 +407,7 @@ def test_input_enums_and_defaults(tmp_path: Path):
         assert "type Status = Literal['ACTIVE', 'INACTIVE']" in generated
         assert "status: Status | None = None" in generated
         assert "note: str | None = None" in generated
-        assert 'child: "ChildInput | None" = {\'code\': \'X\'}' in generated
+        assert "child: \"ChildInput | None\" = {'code': 'X'}" in generated
 
         clear_sample_app_modules()
         api_module = importlib.import_module("sample_app.gql.api")

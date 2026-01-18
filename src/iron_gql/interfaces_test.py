@@ -564,6 +564,57 @@ def test_union_fragment_requires_typename(tmp_path: Path):
         generate_api(tmp_path)
 
 
+def test_union_fragment_typename_in_variants(tmp_path: Path):
+    schema = """
+        union SearchResult = User | Post
+
+        type User {
+            id: ID!
+            name: String!
+        }
+
+        type Post {
+            id: ID!
+            title: String!
+        }
+
+        type Query {
+            search(q: String!): SearchResult
+        }
+    """
+
+    prepare_workspace(
+        tmp_path,
+        """
+        from sample_app.gql.api import api_gql
+
+        SEARCH = api_gql(
+            '''
+            query Search($q: String!) {
+                search(q: $q) {
+                    ... on User {
+                        __typename
+                        id
+                        name
+                    }
+                    ... on Post {
+                        __typename
+                        id
+                        title
+                    }
+                }
+            }
+            '''
+        )
+        """,
+        schema=schema,
+    )
+
+    with sample_app_context(tmp_path):
+        changed = generate_api(tmp_path)
+        assert changed is True
+
+
 async def test_nullable_union_result_validation(tmp_path: Path, httpserver: HTTPServer):
     schema = """
         type Query {

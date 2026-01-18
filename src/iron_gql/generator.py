@@ -613,11 +613,17 @@ class ResultModelRenderer:
         selection: list[GQLVar],
         union_type: graphql.GraphQLUnionType,
     ) -> None:
-        has_typename = any(
-            sel_field.name == "__typename" and sel_field.parent_type == union_type
+        typename_parents = {
+            sel_field.parent_type
             for sel_field in selection
-        )
-        if not has_typename:
+            if sel_field.name == "__typename" and sel_field.parent_type is not None
+        }
+        missing: list[str] = []
+        for subtyp in union_type.types:
+            eligible_parents = {union_type, subtyp} | get_transitive_interfaces(subtyp)
+            if not (eligible_parents & typename_parents):
+                missing.append(subtyp.name)
+        if missing:
             msg = f"Missing __typename in selection set for union '{union_type.name}'"
             raise ValueError(msg)
 
