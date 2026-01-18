@@ -702,6 +702,9 @@ def render_query_classes(
             typ = field_type(v.type, scalars, ctx=ctx)
             args.append(f"{py_name}: {typ}")
             variables.append(f'"{v.name}": runtime.serialize_var({py_name})')
+        variable_values = (
+            f"request.variable_values={{{', '.join(variables)}}}" if variables else ""
+        )
 
         referenced_fragments = _collect_referenced_fragments(query)
         stmt_doc = graphql.parse(query.stmt.clean_text)
@@ -720,15 +723,13 @@ def render_query_classes(
             if fragments_code
             else query.stmt.raw_text
         )
-        full_query_code = repr(combined_query)
-
         query_classes.append(
             f"""
 
 class {capitalize_first(query.name)}(runtime.GQLQuery):
     async def execute({", ".join(args)}) -> {capitalize_first(query.name)}Result:
-        request = gql.gql({full_query_code})
-        request.variable_values = {{{", ".join(variables)}}} or None
+        request = gql.gql({combined_query!r})
+        {variable_values}
         return await {package_name.upper()}_CLIENT.query(
             {capitalize_first(query.name)}Result,
             request,
