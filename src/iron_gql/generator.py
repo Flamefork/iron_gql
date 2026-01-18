@@ -70,6 +70,20 @@ def finalize_type(
     return typ
 
 
+def _format_discriminated_union_type(
+    branch_types: list[str],
+    field_type: GQLType,
+) -> str:
+    match field_type:
+        case GQLListType(type=inner_type):
+            inner = _format_discriminated_union_type(branch_types, inner_type)
+            typ = f"list[{inner}]"
+        case _:
+            union_str = " | ".join(branch_types)
+            typ = f'Annotated[{union_str}, pydantic.Field(discriminator="typename__")]'
+    return finalize_type(typ, field_type)
+
+
 def unwrap_input_type(
     input_type: graphql.GraphQLInputType,
 ) -> graphql.GraphQLInputType:
@@ -230,6 +244,7 @@ def _render_imports(
     return f"""\
 import datetime
 from pathlib import Path
+from typing import Annotated
 from typing import Literal
 from typing import overload
 
@@ -495,6 +510,7 @@ class ResultModelRenderer:
         selection: list[GQLVar],
         field_type: GQLType,
     ) -> RenderedFieldModels:
+        self._require_union_typename(selection, union_type)
         child_models: list[GeneratedModel] = []
         union_types: list[str] = []
         for subtyp in union_type.types:
@@ -592,6 +608,19 @@ class ResultModelRenderer:
             )
             raise ValueError(msg)
 
+    def _require_union_typename(
+        self,
+        selection: list[GQLVar],
+        union_type: graphql.GraphQLUnionType,
+    ) -> None:
+        has_typename = any(
+            sel_field.name == "__typename" and sel_field.parent_type == union_type
+            for sel_field in selection
+        )
+        if not has_typename:
+            msg = f"Missing __typename in selection set for union '{union_type.name}'"
+            raise ValueError(msg)
+
     def _possible_interface_objects(
         self,
         interface_type: graphql.GraphQLInterfaceType,
@@ -641,12 +670,16 @@ class ResultModelRenderer:
                 for sel_field in selection
                 if sel_field.parent_type == interface_type
             ]
+            fallback_type_names = sorted(obj.name for obj in fallback_objects)
+            fallback_typename_literal = (
+                f"Literal[{', '.join(repr(name) for name in fallback_type_names)}]"
+            )
             child_models.extend(
                 self.render_models(
                     fallback_name,
                     fallback_sel,
                     interface_type,
-                    typename_type="str",
+                    typename_type=fallback_typename_literal,
                 )
             )
             union_types.append(fallback_name)
@@ -665,8 +698,8 @@ class ResultModelRenderer:
             if rendered.union_field_type is None:
                 msg = "Union field type is required for union rendering"
                 raise ValueError(msg)
-            return self._wrap_type(
-                rendered.union_field_type, " | ".join(rendered.union_types)
+            return _format_discriminated_union_type(
+                rendered.union_types, rendered.union_field_type
             )
         return field_type(
             field.type,

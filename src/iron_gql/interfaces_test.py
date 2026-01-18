@@ -508,3 +508,124 @@ def test_invalid_interface_fragment_reports_error(
         assert changed is False
         assert "Post" in caplog.text
         assert "Node" in caplog.text
+
+
+def test_union_fragment_requires_typename(tmp_path: Path):
+    schema = """
+        union SearchResult = User | Post
+
+        type User {
+            id: ID!
+            name: String!
+        }
+
+        type Post {
+            id: ID!
+            title: String!
+        }
+
+        type Query {
+            search(q: String!): SearchResult
+        }
+    """
+
+    prepare_workspace(
+        tmp_path,
+        """
+        from sample_app.gql.api import api_gql
+
+        SEARCH = api_gql(
+            '''
+            query Search($q: String!) {
+                search(q: $q) {
+                    ... on User {
+                        id
+                        name
+                    }
+                    ... on Post {
+                        id
+                        title
+                    }
+                }
+            }
+            '''
+        )
+        """,
+        schema=schema,
+    )
+
+    with (
+        sample_app_context(tmp_path),
+        pytest.raises(
+            ValueError,
+            match=r"Missing __typename in selection set for union 'SearchResult'",
+        ),
+    ):
+        generate_api(tmp_path)
+
+
+async def test_nullable_union_result_validation(tmp_path: Path, httpserver: HTTPServer):
+    schema = """
+        type Query {
+            node(id: ID!): Node
+        }
+
+        union Node = User | Admin
+
+        type User {
+            id: ID!
+            name: String!
+        }
+
+        type Admin {
+            id: ID!
+            permissions: [String!]!
+        }
+    """
+
+    query_source = """
+        from sample_app.gql.api import api_gql
+
+        get_node = api_gql(
+            '''
+            query GetNode($id: ID!) {
+                node(id: $id) {
+                    __typename
+                    ... on User {
+                        id
+                        name
+                    }
+                    ... on Admin {
+                        id
+                        permissions
+                    }
+                }
+            }
+            '''
+        )
+    """
+
+    def resolve_node(_root, _info, *, id: str):
+        if id == "none":
+            return None
+        if id == "user-1":
+            return {"__typename": "User", "id": id, "name": "Morty"}
+        return {"__typename": "Admin", "id": id, "permissions": ["portal"]}
+
+    with setup_test_server(
+        tmp_path,
+        httpserver,
+        schema,
+        query_source,
+        {"Query": {"node": resolve_node}},
+    ) as (api, queries):
+        none_result = await queries.get_node.execute(id="none")
+        assert none_result.node is None
+
+        user_result = await queries.get_node.execute(id="user-1")
+        assert isinstance(user_result.node, api.GetNodeResultNodeUser)
+        assert user_result.node.name == "Morty"
+
+        admin_result = await queries.get_node.execute(id="admin-1")
+        assert isinstance(admin_result.node, api.GetNodeResultNodeAdmin)
+        assert admin_result.node.permissions == ["portal"]
