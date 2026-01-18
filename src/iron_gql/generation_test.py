@@ -5,6 +5,7 @@ import graphql
 import pytest
 from pydantic import alias_generators
 
+from iron_gql import runtime
 from iron_gql.conftest import clear_sample_app_modules
 from iron_gql.conftest import generate_api
 from iron_gql.conftest import import_path
@@ -254,3 +255,163 @@ def test_fragment_cycle_reports_error(tmp_path: Path, caplog: pytest.LogCaptureF
         assert changed is False
         assert "Cannot spread fragment" in caplog.text
         assert not (tmp_path / "sample_app/gql/api.py").exists()
+
+
+def test_input_type_dependency_ordering(tmp_path: Path):
+    schema = """
+        type Query {
+            ping: Boolean
+        }
+
+        type Mutation {
+            createOrder(input: OrderInput!): Boolean
+        }
+
+        input OrderInput {
+            id: ID!
+            item: ItemInput!
+        }
+
+        input ItemInput {
+            sku: String!
+            quantity: Int!
+        }
+    """
+
+    prepare_workspace(
+        tmp_path,
+        """
+        from sample_app.gql.api import api_gql
+
+        create_order = api_gql(
+            '''
+            mutation CreateOrder($input: OrderInput!) {
+                createOrder(input: $input)
+            }
+            '''
+        )
+        """,
+        schema=schema,
+    )
+
+    with sample_app_context(tmp_path):
+        changed = generate_api(tmp_path)
+        assert changed is True
+
+        generated = (tmp_path / "sample_app/gql/api.py").read_text()
+        item_pos = generated.find("class ItemInput")
+        order_pos = generated.find("class OrderInput")
+        assert item_pos != -1, "ItemInput class not found"
+        assert order_pos != -1, "OrderInput class not found"
+        assert item_pos < order_pos, "ItemInput must appear before OrderInput"
+
+        clear_sample_app_modules()
+        api_module = importlib.import_module("sample_app.gql.api")
+        item = api_module.ItemInput(sku="ABC123", quantity=2)
+        api_module.OrderInput(id="o-1", item=item)
+
+
+def test_self_referential_input_type(tmp_path: Path):
+    schema = """
+        type Query {
+            ping: Boolean
+        }
+
+        type Mutation {
+            createTree(root: TreeNode!): Boolean
+        }
+
+        input TreeNode {
+            value: String!
+            children: [TreeNode]
+        }
+    """
+
+    prepare_workspace(
+        tmp_path,
+        """
+        from sample_app.gql.api import api_gql
+
+        create_tree = api_gql(
+            '''
+            mutation CreateTree($root: TreeNode!) {
+                createTree(root: $root)
+            }
+            '''
+        )
+        """,
+        schema=schema,
+    )
+
+    with sample_app_context(tmp_path):
+        changed = generate_api(tmp_path)
+        assert changed is True
+
+        generated = (tmp_path / "sample_app/gql/api.py").read_text()
+        assert 'children: "list[TreeNode | None] | None"' in generated
+
+        clear_sample_app_modules()
+        api_module = importlib.import_module("sample_app.gql.api")
+        leaf = api_module.TreeNode(value="leaf")
+        parent = api_module.TreeNode(value="parent", children=[leaf])
+        assert parent.children[0].value == "leaf"
+
+
+def test_input_enums_and_defaults(tmp_path: Path):
+    schema = """
+        type Query {
+            ping: Boolean
+        }
+
+        type Mutation {
+            update(input: UpdateInput!): Boolean
+        }
+
+        enum Status {
+            ACTIVE
+            INACTIVE
+        }
+
+        input ChildInput {
+            code: String!
+        }
+
+        input UpdateInput {
+            status: Status
+            note: String
+            child: ChildInput = { code: "X" }
+        }
+    """
+
+    prepare_workspace(
+        tmp_path,
+        """
+        from sample_app.gql.api import api_gql
+
+        update = api_gql(
+            '''
+            mutation Update($input: UpdateInput!) {
+                update(input: $input)
+            }
+            '''
+        )
+        """,
+        schema=schema,
+    )
+
+    with sample_app_context(tmp_path):
+        changed = generate_api(tmp_path)
+        assert changed is True
+
+        generated = (tmp_path / "sample_app/gql/api.py").read_text()
+        assert "type Status = Literal['ACTIVE', 'INACTIVE']" in generated
+        assert "status: Status | None = None" in generated
+        assert "note: str | None = None" in generated
+        assert "child: \"ChildInput | None\" = {'code': 'X'}" in generated
+
+        clear_sample_app_modules()
+        api_module = importlib.import_module("sample_app.gql.api")
+        update = api_module.UpdateInput(status="ACTIVE")
+        assert update.child == {"code": "X"}
+        serialized = runtime.serialize_var(update)
+        assert serialized == {"status": "ACTIVE"}

@@ -113,6 +113,6 @@ def serialize_var(value: Any) -> Any:
         case dict():
             return {k: serialize_var(v) for k, v in value.items()}
         case pydantic.BaseModel():
-            return value.model_dump(mode="json", by_alias=True)
+            return value.model_dump(mode="json", by_alias=True, exclude_unset=True)
         case _:
             return value

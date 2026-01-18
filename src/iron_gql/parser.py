@@ -39,6 +39,7 @@ class Query:
     doc: graphql.DocumentNode
     schema: graphql.GraphQLSchema
     fragments: dict[str, graphql.FragmentDefinitionNode]
+    exec_source: str
 
     @functools.cached_property
     def operation_def(self) -> graphql.OperationDefinitionNode:
@@ -474,12 +475,14 @@ def parse_gql_queries(
     queries = []
     for stmt, doc in operation_docs:
         validation_doc = _make_validation_doc(doc, fragments)
+        exec_source = graphql.print_ast(validation_doc)
         queries.append(
             Query(
                 stmt=stmt,
                 doc=validation_doc,
                 schema=schema,
                 fragments=_collect_fragments_from_doc(validation_doc),
+                exec_source=exec_source,
             )
         )
 

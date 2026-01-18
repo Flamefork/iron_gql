@@ -1,3 +1,4 @@
+import re
 from pathlib import Path
 
 from pytest_httpserver import HTTPServer
@@ -298,3 +299,144 @@ async def test_inline_fragment_definitions_not_duplicated(
         assert result.user is not None
         assert result.user.id == "u-1"
         assert result.user.name == "Morty"
+
+
+async def test_transitive_fragments(tmp_path: Path, httpserver: HTTPServer):
+    """Test that nested fragment deps (A → B → C) are resolved correctly."""
+    schema = """
+        type User {
+            id: ID!
+            name: String!
+            email: String
+            role: String!
+        }
+
+        type Query {
+            user(id: ID!): User
+        }
+    """
+
+    query_source = """
+        from sample_app.gql.api import api_gql
+
+        fragment_c = api_gql(
+            '''
+            fragment RoleFields on User {
+                role
+            }
+            '''
+        )
+
+        fragment_b = api_gql(
+            '''
+            fragment ContactFields on User {
+                email
+                ...RoleFields
+            }
+            '''
+        )
+
+        fragment_a = api_gql(
+            '''
+            fragment UserFields on User {
+                id
+                name
+                ...ContactFields
+            }
+            '''
+        )
+
+        get_user = api_gql(
+            '''
+            query GetUser($id: ID!) {
+                user(id: $id) {
+                    ...UserFields
+                }
+            }
+            '''
+        )
+    """
+
+    def resolve_user(_root, _info, *, id: str):
+        return {
+            "id": id,
+            "name": "Morty",
+            "email": "morty@example.com",
+            "role": "admin",
+        }
+
+    with setup_test_server(
+        tmp_path,
+        httpserver,
+        schema,
+        query_source,
+        {"Query": {"user": resolve_user}},
+    ) as (_, queries):
+        result = await queries.get_user.execute(id="u-1")
+        assert result.user is not None
+        assert result.user.id == "u-1"
+        assert result.user.name == "Morty"
+        assert result.user.email == "morty@example.com"
+        assert result.user.role == "admin"
+
+
+async def test_exec_source_contains_expanded_fragments(
+    tmp_path: Path, httpserver: HTTPServer
+):
+    """Verify that the request string contains expanded fragment definitions."""
+    schema = """
+        type User {
+            id: ID!
+            name: String!
+        }
+
+        type Query {
+            user(id: ID!): User
+        }
+    """
+
+    query_source = """
+        from sample_app.gql.api import api_gql
+
+        user_fragment = api_gql(
+            '''
+            fragment UserFields on User {
+                id
+                name
+            }
+            '''
+        )
+
+        get_user = api_gql(
+            '''
+            query GetUser($id: ID!) {
+                user(id: $id) {
+                    ...UserFields
+                }
+            }
+            '''
+        )
+    """
+
+    def resolve_user(_root, _info, *, id: str):
+        return {"id": id, "name": "Morty"}
+
+    with setup_test_server(
+        tmp_path,
+        httpserver,
+        schema,
+        query_source,
+        {"Query": {"user": resolve_user}},
+    ) as (_, queries):
+        # Read the generated code from file
+        generated_code = (tmp_path / "sample_app/gql/api.py").read_text()
+
+        # Verify the generated code contains the fragment definition in the request
+        assert "fragment UserFields on User" in generated_code
+        # The fragment should appear as part of the gql.gql() call
+        assert re.search(r"gql\.gql\(['\"].*fragment UserFields", generated_code)
+
+        # Also verify execution works
+        result = await queries.get_user.execute(id="u-1")
+        assert result.user is not None
+        assert result.user.id == "u-1"
