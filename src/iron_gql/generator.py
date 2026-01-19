@@ -177,7 +177,7 @@ def find_fn_calls(
     root_path: Path, fn_name: str, *, skip_path: Path
 ) -> Iterator[tuple[Path, int, ast.Call]]:
     for path in root_path.glob("**/*.py"):
-        if path.is_relative_to(skip_path):
+        if path.resolve() == skip_path.resolve():
             continue
         content = path.read_text(encoding="utf-8")
         if fn_name not in content:
