@@ -412,6 +412,7 @@ def test_input_enums_and_defaults(tmp_path: Path):
         clear_sample_app_modules()
         api_module = importlib.import_module("sample_app.gql.api")
         update = api_module.UpdateInput(status="ACTIVE")
-        assert update.child == {"code": "X"}
+        assert isinstance(update.child, api_module.ChildInput)
+        assert update.child.code == "X"
         serialized = runtime.serialize_var(update)
         assert serialized == {"status": "ACTIVE"}

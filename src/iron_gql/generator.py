@@ -278,6 +278,7 @@ class GQLModel(pydantic.BaseModel):
         populate_by_name=True,
         alias_generator={to_camel_fn_full_name.replace(":", ".")},
         extra="forbid",
+        validate_default=True,
     )"""
 
 
