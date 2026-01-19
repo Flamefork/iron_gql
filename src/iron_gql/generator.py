@@ -485,7 +485,8 @@ class ResultModelRenderer:
                     field.type,
                 )
             case _:
-                return RenderedFieldModels()
+                msg = f"Unknown type {obj_type} for field {field.name}"
+                raise ValueError(msg)
 
     def _render_object_field(
         self,
@@ -714,15 +715,6 @@ class ResultModelRenderer:
             child_model_name_base=rendered.child_model_name_base,
             ctx=self.ctx,
         )
-
-    def _wrap_type(self, field_typ: GQLType, inner: str) -> str:
-        match field_typ:
-            case GQLListType(type=inner_type):
-                wrapped = self._wrap_type(inner_type, inner)
-                typ = f"list[{wrapped}]"
-            case _:
-                typ = inner
-        return finalize_type(typ, field_typ)
 
 
 def render_result_models(

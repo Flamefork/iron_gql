@@ -39,6 +39,7 @@ dev = [
     "pytest-asyncio>=1.2.0",
     "pytest-cov>=7.0.0",
     "pytest-httpserver>=1.1.3",
+    "pytest-randomly>=4.0.1",
     "ruff>=0.14.1",
 ]
 
@@ -88,7 +89,7 @@ ignore = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
-"{*_test.py,conftest.py}" = ["A002", "PLR2004", "S", "FBT"]
+"test_*.py" = ["A002", "PLR2004", "S", "FBT"]
 
 [tool.ruff.lint.isort]
 force-single-line = true
@@ -112,11 +113,11 @@ asyncio_default_fixture_loop_scope = "function"
 
 [tool.coverage.run]
 branch = true
-omit = ["*_test.py"]
+omit = ["test_*.py", "api.py"]
 data_file = ".coverage/db.sqlite"
 
 [tool.coverage.html]
 directory = ".coverage/htmlcov"
 
 [tool.coverage.report]
-exclude_also = ["if TYPE_CHECKING:", "@overload"]
+exclude_also = ["@overload"]

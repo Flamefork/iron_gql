@@ -386,8 +386,6 @@ def collect_fragment_spreads(node: graphql.Node) -> set[str]:
     spreads: set[str] = set()
     for child in node.keys:
         match getattr(node, child, None):
-            case graphql.FragmentSpreadNode(name=name):
-                spreads.add(name.value)
             case graphql.Node() as child_node:
                 spreads.update(collect_fragment_spreads(child_node))
             case tuple() as items:

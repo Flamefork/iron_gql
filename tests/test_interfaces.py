@@ -1,16 +1,12 @@
-from pathlib import Path
-
 import pytest
 from pytest_httpserver import HTTPServer
 
-from iron_gql.conftest import generate_api
-from iron_gql.conftest import import_path
-from iron_gql.conftest import prepare_workspace
-from iron_gql.conftest import sample_app_context
-from iron_gql.conftest import setup_test_server
+from tests.conftest import ProjectBuilder
 
 
-async def test_union_result_validation(tmp_path: Path, httpserver: HTTPServer):
+async def test_union_result_validation(
+    test_project: ProjectBuilder, httpserver: HTTPServer
+):
     schema = """
         type Query {
             node(id: ID!): Node
@@ -68,19 +64,20 @@ async def test_union_result_validation(tmp_path: Path, httpserver: HTTPServer):
     def resolve_count(_root, _info):
         return 3
 
-    with setup_test_server(
-        tmp_path,
+    with test_project.server(
         httpserver,
-        schema,
-        query_source,
-        {"Query": {"node": resolve_node, "count": resolve_count}},
+        schema=schema,
+        queries=query_source,
+        resolvers={"Query": {"node": resolve_node, "count": resolve_count}},
     ) as (_, queries):
         result = await queries.get_node_and_count.execute(id="user-1")
         assert result.node is not None
         assert result.count == 3
 
 
-async def test_union_with_interface_fragment(tmp_path: Path, httpserver: HTTPServer):
+async def test_union_with_interface_fragment(
+    test_project: ProjectBuilder, httpserver: HTTPServer
+):
     schema = """
         interface Node {
             id: ID!
@@ -106,7 +103,7 @@ async def test_union_with_interface_fragment(tmp_path: Path, httpserver: HTTPSer
     query_source = """
         from sample_app.gql.api import api_gql
 
-        GET_ACTOR = api_gql(
+        get_actor = api_gql(
             '''
             query GetActor($id: ID!) {
                 actor(id: $id) {
@@ -131,25 +128,26 @@ async def test_union_with_interface_fragment(tmp_path: Path, httpserver: HTTPSer
             return {"__typename": "User", "id": id, "name": "Morty"}
         return {"__typename": "Admin", "id": id, "permissions": ["portal"]}
 
-    with setup_test_server(
-        tmp_path,
+    with test_project.server(
         httpserver,
-        schema,
-        query_source,
-        {"Query": {"actor": resolve_actor}},
+        schema=schema,
+        queries=query_source,
+        resolvers={"Query": {"actor": resolve_actor}},
     ) as (api, queries):
-        user_result = await queries.GET_ACTOR.execute(id="user-1")
+        user_result = await queries.get_actor.execute(id="user-1")
         assert isinstance(user_result.actor, api.GetActorResultActorUser)
         assert user_result.actor.id == "user-1"
         assert user_result.actor.name == "Morty"
 
-        admin_result = await queries.GET_ACTOR.execute(id="admin-1")
+        admin_result = await queries.get_actor.execute(id="admin-1")
         assert isinstance(admin_result.actor, api.GetActorResultActorAdmin)
         assert admin_result.actor.id == "admin-1"
         assert admin_result.actor.permissions == ["portal"]
 
 
-async def test_interface_without_fragments(tmp_path: Path, httpserver: HTTPServer):
+async def test_interface_without_fragments(
+    test_project: ProjectBuilder, httpserver: HTTPServer
+):
     schema = """
         interface Node {
             id: ID!
@@ -173,7 +171,7 @@ async def test_interface_without_fragments(tmp_path: Path, httpserver: HTTPServe
     query_source = """
         from sample_app.gql.api import api_gql
 
-        GET_NODE = api_gql(
+        get_node = api_gql(
             '''
             query GetNode($id: ID!) {
                 node(id: $id) {
@@ -189,19 +187,20 @@ async def test_interface_without_fragments(tmp_path: Path, httpserver: HTTPServe
             return {"__typename": "User", "id": id, "name": "Morty"}
         return {"__typename": "Post", "id": id, "title": "GraphQL 101"}
 
-    with setup_test_server(
-        tmp_path,
+    with test_project.server(
         httpserver,
-        schema,
-        query_source,
-        {"Query": {"node": resolve_node}},
+        schema=schema,
+        queries=query_source,
+        resolvers={"Query": {"node": resolve_node}},
     ) as (_, queries):
-        result = await queries.GET_NODE.execute(id="user-1")
+        result = await queries.get_node.execute(id="user-1")
         assert result.node is not None
         assert result.node.id == "user-1"
 
 
-async def test_interface_with_fragments(tmp_path: Path, httpserver: HTTPServer):
+async def test_interface_with_fragments(
+    test_project: ProjectBuilder, httpserver: HTTPServer
+):
     schema = """
         interface Node {
             id: ID!
@@ -230,7 +229,7 @@ async def test_interface_with_fragments(tmp_path: Path, httpserver: HTTPServer):
     query_source = """
         from sample_app.gql.api import api_gql
 
-        GET_NODE = api_gql(
+        get_node = api_gql(
             '''
             query GetNode($id: ID!) {
                 node(id: $id) {
@@ -255,23 +254,22 @@ async def test_interface_with_fragments(tmp_path: Path, httpserver: HTTPServer):
             return {"__typename": "Post", "id": id, "title": "GraphQL 101"}
         return {"__typename": "Comment", "id": id, "body": "First!"}
 
-    with setup_test_server(
-        tmp_path,
+    with test_project.server(
         httpserver,
-        schema,
-        query_source,
-        {"Query": {"node": resolve_node}},
+        schema=schema,
+        queries=query_source,
+        resolvers={"Query": {"node": resolve_node}},
     ) as (api, queries):
-        user_result = await queries.GET_NODE.execute(id="user-1")
+        user_result = await queries.get_node.execute(id="user-1")
         assert isinstance(user_result.node, api.GetNodeResultNodeUser)
         assert user_result.node.name == "Morty"
 
-        comment_result = await queries.GET_NODE.execute(id="comment-1")
+        comment_result = await queries.get_node.execute(id="comment-1")
         assert isinstance(comment_result.node, api.GetNodeResultNodeNode)
         assert comment_result.node.id == "comment-1"
 
 
-async def test_nested_interface(tmp_path: Path, httpserver: HTTPServer):
+async def test_nested_interface(test_project: ProjectBuilder, httpserver: HTTPServer):
     schema = """
         interface Child {
             id: ID!
@@ -304,7 +302,7 @@ async def test_nested_interface(tmp_path: Path, httpserver: HTTPServer):
     query_source = """
         from sample_app.gql.api import api_gql
 
-        GET_NODE = api_gql(
+        get_node = api_gql(
             '''
             query GetNode($id: ID!) {
                 node(id: $id) {
@@ -326,20 +324,21 @@ async def test_nested_interface(tmp_path: Path, httpserver: HTTPServer):
             "child": {"__typename": "Comment", "id": "child-1"},
         }
 
-    with setup_test_server(
-        tmp_path,
+    with test_project.server(
         httpserver,
-        schema,
-        query_source,
-        {"Query": {"node": resolve_node}},
+        schema=schema,
+        queries=query_source,
+        resolvers={"Query": {"node": resolve_node}},
     ) as (_, queries):
-        result = await queries.GET_NODE.execute(id="user-1")
+        result = await queries.get_node.execute(id="user-1")
         assert result.node is not None
         assert result.node.child is not None
         assert result.node.child.id == "child-1"
 
 
-async def test_interface_hierarchy(tmp_path: Path, httpserver: HTTPServer):
+async def test_interface_hierarchy(
+    test_project: ProjectBuilder, httpserver: HTTPServer
+):
     schema = """
         interface Node {
             id: ID!
@@ -369,7 +368,7 @@ async def test_interface_hierarchy(tmp_path: Path, httpserver: HTTPServer):
     query_source = """
         from sample_app.gql.api import api_gql
 
-        GET_NODE = api_gql(
+        get_node = api_gql(
             '''
             query GetNode($id: ID!) {
                 node(id: $id) {
@@ -394,23 +393,22 @@ async def test_interface_hierarchy(tmp_path: Path, httpserver: HTTPServer):
             }
         return {"__typename": "Post", "id": id, "title": "GraphQL 101"}
 
-    with setup_test_server(
-        tmp_path,
+    with test_project.server(
         httpserver,
-        schema,
-        query_source,
-        {"Query": {"node": resolve_node}},
+        schema=schema,
+        queries=query_source,
+        resolvers={"Query": {"node": resolve_node}},
     ) as (api, queries):
-        user_result = await queries.GET_NODE.execute(id="user-1")
+        user_result = await queries.get_node.execute(id="user-1")
         assert isinstance(user_result.node, api.GetNodeResultNodeUser)
         assert user_result.node.created_at == "2024-01-01"
 
-        post_result = await queries.GET_NODE.execute(id="post-1")
+        post_result = await queries.get_node.execute(id="post-1")
         assert isinstance(post_result.node, api.GetNodeResultNodeNode)
         assert post_result.node.id == "post-1"
 
 
-def test_interface_fragment_requires_typename(tmp_path: Path):
+def test_interface_fragment_requires_typename(test_project: ProjectBuilder):
     schema = """
         interface Node {
             id: ID!
@@ -426,12 +424,12 @@ def test_interface_fragment_requires_typename(tmp_path: Path):
         }
     """
 
-    prepare_workspace(
-        tmp_path,
-        """
+    test_project.prepare(
+        schema=schema,
+        queries="""
         from sample_app.gql.api import api_gql
 
-        GET_NODE = api_gql(
+        get_node = api_gql(
             '''
             query GetNode($id: ID!) {
                 node(id: $id) {
@@ -444,21 +442,17 @@ def test_interface_fragment_requires_typename(tmp_path: Path):
             '''
         )
         """,
-        schema=schema,
     )
 
-    with (
-        sample_app_context(tmp_path),
-        pytest.raises(
-            ValueError,
-            match=r"Missing __typename in selection set for interface 'Node'",
-        ),
+    with pytest.raises(
+        ValueError,
+        match=r"Missing __typename in selection set for interface 'Node'",
     ):
-        generate_api(tmp_path)
+        test_project.generate()
 
 
 def test_invalid_interface_fragment_reports_error(
-    tmp_path: Path, caplog: pytest.LogCaptureFixture
+    test_project: ProjectBuilder, caplog: pytest.LogCaptureFixture
 ):
     schema = """
         interface Node {
@@ -480,12 +474,12 @@ def test_invalid_interface_fragment_reports_error(
         }
     """
 
-    prepare_workspace(
-        tmp_path,
-        """
+    test_project.prepare(
+        schema=schema,
+        queries="""
         from sample_app.gql.api import api_gql
 
-        GET_NODE = api_gql(
+        get_node = api_gql(
             '''
             query GetNode($id: ID!) {
                 node(id: $id) {
@@ -499,18 +493,16 @@ def test_invalid_interface_fragment_reports_error(
             '''
         )
         """,
-        schema=schema,
     )
 
-    with import_path(tmp_path):
-        caplog.set_level("ERROR")
-        changed = generate_api(tmp_path)
-        assert changed is False
-        assert "Post" in caplog.text
-        assert "Node" in caplog.text
+    caplog.set_level("ERROR")
+    changed = test_project.generate()
+    assert changed is False
+    assert "Post" in caplog.text
+    assert "Node" in caplog.text
 
 
-def test_union_fragment_requires_typename(tmp_path: Path):
+def test_union_fragment_requires_typename(test_project: ProjectBuilder):
     schema = """
         union SearchResult = User | Post
 
@@ -529,12 +521,12 @@ def test_union_fragment_requires_typename(tmp_path: Path):
         }
     """
 
-    prepare_workspace(
-        tmp_path,
-        """
+    test_project.prepare(
+        schema=schema,
+        queries="""
         from sample_app.gql.api import api_gql
 
-        SEARCH = api_gql(
+        search = api_gql(
             '''
             query Search($q: String!) {
                 search(q: $q) {
@@ -551,20 +543,16 @@ def test_union_fragment_requires_typename(tmp_path: Path):
             '''
         )
         """,
-        schema=schema,
     )
 
-    with (
-        sample_app_context(tmp_path),
-        pytest.raises(
-            ValueError,
-            match=r"Missing __typename in selection set for union 'SearchResult'",
-        ),
+    with pytest.raises(
+        ValueError,
+        match=r"Missing __typename in selection set for union 'SearchResult'",
     ):
-        generate_api(tmp_path)
+        test_project.generate()
 
 
-def test_union_fragment_typename_in_variants(tmp_path: Path):
+def test_union_fragment_typename_in_variants(test_project: ProjectBuilder):
     schema = """
         union SearchResult = User | Post
 
@@ -583,12 +571,12 @@ def test_union_fragment_typename_in_variants(tmp_path: Path):
         }
     """
 
-    prepare_workspace(
-        tmp_path,
-        """
+    test_project.prepare(
+        schema=schema,
+        queries="""
         from sample_app.gql.api import api_gql
 
-        SEARCH = api_gql(
+        search = api_gql(
             '''
             query Search($q: String!) {
                 search(q: $q) {
@@ -607,15 +595,15 @@ def test_union_fragment_typename_in_variants(tmp_path: Path):
             '''
         )
         """,
-        schema=schema,
     )
 
-    with sample_app_context(tmp_path):
-        changed = generate_api(tmp_path)
-        assert changed is True
+    changed = test_project.generate()
+    assert changed is True
 
 
-async def test_nullable_union_result_validation(tmp_path: Path, httpserver: HTTPServer):
+async def test_nullable_union_result_validation(
+    test_project: ProjectBuilder, httpserver: HTTPServer
+):
     schema = """
         type Query {
             node(id: ID!): Node
@@ -663,12 +651,11 @@ async def test_nullable_union_result_validation(tmp_path: Path, httpserver: HTTP
             return {"__typename": "User", "id": id, "name": "Morty"}
         return {"__typename": "Admin", "id": id, "permissions": ["portal"]}
 
-    with setup_test_server(
-        tmp_path,
+    with test_project.server(
         httpserver,
-        schema,
-        query_source,
-        {"Query": {"node": resolve_node}},
+        schema=schema,
+        queries=query_source,
+        resolvers={"Query": {"node": resolve_node}},
     ) as (api, queries):
         none_result = await queries.get_node.execute(id="none")
         assert none_result.node is None
@@ -680,3 +667,116 @@ async def test_nullable_union_result_validation(tmp_path: Path, httpserver: HTTP
         admin_result = await queries.get_node.execute(id="admin-1")
         assert isinstance(admin_result.node, api.GetNodeResultNodeAdmin)
         assert admin_result.node.permissions == ["portal"]
+
+
+async def test_list_wrapped_union(test_project: ProjectBuilder, httpserver: HTTPServer):
+    schema = """
+        type Query {
+            nodes: [Node!]!
+        }
+
+        union Node = User | Post
+
+        type User {
+            id: ID!
+            name: String!
+        }
+
+        type Post {
+            id: ID!
+            title: String!
+        }
+    """
+
+    query_source = """
+        from sample_app.gql.api import api_gql
+
+        get_nodes = api_gql(
+            '''
+            query GetNodes {
+                nodes {
+                    __typename
+                    ... on User {
+                        id
+                        name
+                    }
+                    ... on Post {
+                        id
+                        title
+                    }
+                }
+            }
+            '''
+        )
+    """
+
+    def resolve_nodes(_root, _info):
+        return [
+            {"__typename": "User", "id": "u-1", "name": "Morty"},
+            {"__typename": "Post", "id": "p-1", "title": "GraphQL 101"},
+        ]
+
+    with test_project.server(
+        httpserver,
+        schema=schema,
+        queries=query_source,
+        resolvers={"Query": {"nodes": resolve_nodes}},
+    ) as (api, queries):
+        result = await queries.get_nodes.execute()
+        assert len(result.nodes) == 2
+        assert isinstance(result.nodes[0], api.GetNodesResultNodesUser)
+        assert result.nodes[0].name == "Morty"
+        assert isinstance(result.nodes[1], api.GetNodesResultNodesPost)
+        assert result.nodes[1].title == "GraphQL 101"
+
+
+def test_interface_exhaustively_covered(test_project: ProjectBuilder):
+    schema = """
+        interface Node {
+            id: ID!
+        }
+
+        type User implements Node {
+            id: ID!
+            name: String
+        }
+
+        type Post implements Node {
+            id: ID!
+            title: String
+        }
+        type Query {
+            node: Node
+        }
+    """
+    test_project.prepare(
+        schema=schema,
+        queries="""
+        from sample_app.gql.api import api_gql
+
+        get_node = api_gql(
+            '''
+            query GetNode {
+                node {
+                    __typename
+                    ... on User {
+                        id
+                        name
+                    }
+                    ... on Post {
+                        id
+                        title
+                    }
+                }
+            }
+            '''
+        )
+        """,
+    )
+
+    assert test_project.generate() is True
+    # We verify that no "Node" fallback model is generated or used,
+    # and the union is just User | Post
+    generated = (test_project.root / "sample_app/gql/api.py").read_text()
+    assert "GetNodeResultNodePost | GetNodeResultNodeUser" in generated
+    assert "GetNodeResultNodeNode" not in generated
