@@ -762,7 +762,7 @@ def render_query_classes(
             args.append(f"{py_name}: {typ}")
             variables.append(f'"{v.name}": runtime.serialize_var({py_name})')
         variable_values = (
-            f"request.variable_values={{{', '.join(variables)}}}" if variables else ""
+            f"request.variable_values = {{{', '.join(variables)}}}" if variables else ""
         )
 
         query_classes.append(
