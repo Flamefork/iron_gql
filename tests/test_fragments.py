@@ -1,13 +1,12 @@
 import re
-from pathlib import Path
 
 from pytest_httpserver import HTTPServer
 
-from iron_gql.conftest import setup_test_server
+from tests.conftest import ProjectBuilder
 
 
 async def test_inline_fragment_without_type_condition(
-    tmp_path: Path, httpserver: HTTPServer
+    test_project: ProjectBuilder, httpserver: HTTPServer
 ):
     schema = """
         type Query {
@@ -24,7 +23,7 @@ async def test_inline_fragment_without_type_condition(
     query_source = """
         from sample_app.gql.api import api_gql
 
-        GET_VIEWER = api_gql(
+        get_viewer = api_gql(
             '''
             query GetViewer {
                 viewer {
@@ -42,20 +41,19 @@ async def test_inline_fragment_without_type_condition(
     def resolve_viewer(_root, _info):
         return {"id": "user-1", "name": "Morty", "email": "morty@example.com"}
 
-    with setup_test_server(
-        tmp_path,
+    with test_project.server(
         httpserver,
-        schema,
-        query_source,
-        {"Query": {"viewer": resolve_viewer}},
+        schema=schema,
+        queries=query_source,
+        resolvers={"Query": {"viewer": resolve_viewer}},
     ) as (_, queries):
-        result = await queries.GET_VIEWER.execute()
+        result = await queries.get_viewer.execute()
         assert result.viewer.id == "user-1"
         assert result.viewer.name == "Morty"
         assert result.viewer.email == "morty@example.com"
 
 
-async def test_named_fragments(tmp_path: Path, httpserver: HTTPServer):
+async def test_named_fragments(test_project: ProjectBuilder, httpserver: HTTPServer):
     schema = """
         type User {
             id: ID!
@@ -95,12 +93,11 @@ async def test_named_fragments(tmp_path: Path, httpserver: HTTPServer):
     def resolve_user(_root, _info, *, id: str):
         return {"id": id, "name": "Morty", "email": "morty@example.com"}
 
-    with setup_test_server(
-        tmp_path,
+    with test_project.server(
         httpserver,
-        schema,
-        query_source,
-        {"Query": {"user": resolve_user}},
+        schema=schema,
+        queries=query_source,
+        resolvers={"Query": {"user": resolve_user}},
     ) as (_, queries):
         result = await queries.get_user.execute(id="u-1")
         assert result.user is not None
@@ -110,7 +107,7 @@ async def test_named_fragments(tmp_path: Path, httpserver: HTTPServer):
 
 
 async def test_duplicate_fragment_names_use_local_definition(
-    tmp_path: Path, httpserver: HTTPServer
+    test_project: ProjectBuilder, httpserver: HTTPServer
 ):
     schema = """
         type User {
@@ -153,12 +150,11 @@ async def test_duplicate_fragment_names_use_local_definition(
     def resolve_user(_root, _info, *, id: str):
         return {"id": id, "name": "Morty"}
 
-    with setup_test_server(
-        tmp_path,
+    with test_project.server(
         httpserver,
-        schema,
-        query_source,
-        {"Query": {"user": resolve_user}},
+        schema=schema,
+        queries=query_source,
+        resolvers={"Query": {"user": resolve_user}},
     ) as (_, queries):
         result = await queries.get_user.execute(id="u-1")
         assert result.user is not None
@@ -167,7 +163,7 @@ async def test_duplicate_fragment_names_use_local_definition(
 
 
 async def test_fragment_validation_scoped_to_query(
-    tmp_path: Path, httpserver: HTTPServer
+    test_project: ProjectBuilder, httpserver: HTTPServer
 ):
     schema = """
         type User {
@@ -234,12 +230,11 @@ async def test_fragment_validation_scoped_to_query(
     def resolve_post(_root, _info, *, id: str):
         return {"id": id, "title": "GraphQL 101"}
 
-    with setup_test_server(
-        tmp_path,
+    with test_project.server(
         httpserver,
-        schema,
-        query_source,
-        {"Query": {"user": resolve_user, "post": resolve_post}},
+        schema=schema,
+        queries=query_source,
+        resolvers={"Query": {"user": resolve_user, "post": resolve_post}},
     ) as (_, queries):
         user_result = await queries.get_user.execute(id="u-1")
         assert user_result.user is not None
@@ -253,7 +248,7 @@ async def test_fragment_validation_scoped_to_query(
 
 
 async def test_inline_fragment_definitions_not_duplicated(
-    tmp_path: Path, httpserver: HTTPServer
+    test_project: ProjectBuilder, httpserver: HTTPServer
 ):
     schema = """
         type User {
@@ -288,12 +283,11 @@ async def test_inline_fragment_definitions_not_duplicated(
     def resolve_user(_root, _info, *, id: str):
         return {"id": id, "name": "Morty"}
 
-    with setup_test_server(
-        tmp_path,
+    with test_project.server(
         httpserver,
-        schema,
-        query_source,
-        {"Query": {"user": resolve_user}},
+        schema=schema,
+        queries=query_source,
+        resolvers={"Query": {"user": resolve_user}},
     ) as (_, queries):
         result = await queries.get_user.execute(id="u-1")
         assert result.user is not None
@@ -301,7 +295,9 @@ async def test_inline_fragment_definitions_not_duplicated(
         assert result.user.name == "Morty"
 
 
-async def test_transitive_fragments(tmp_path: Path, httpserver: HTTPServer):
+async def test_transitive_fragments(
+    test_project: ProjectBuilder, httpserver: HTTPServer
+):
     """Test that nested fragment deps (A → B → C) are resolved correctly."""
     schema = """
         type User {
@@ -365,12 +361,11 @@ async def test_transitive_fragments(tmp_path: Path, httpserver: HTTPServer):
             "role": "admin",
         }
 
-    with setup_test_server(
-        tmp_path,
+    with test_project.server(
         httpserver,
-        schema,
-        query_source,
-        {"Query": {"user": resolve_user}},
+        schema=schema,
+        queries=query_source,
+        resolvers={"Query": {"user": resolve_user}},
     ) as (_, queries):
         result = await queries.get_user.execute(id="u-1")
         assert result.user is not None
@@ -381,7 +376,7 @@ async def test_transitive_fragments(tmp_path: Path, httpserver: HTTPServer):
 
 
 async def test_exec_source_contains_expanded_fragments(
-    tmp_path: Path, httpserver: HTTPServer
+    test_project: ProjectBuilder, httpserver: HTTPServer
 ):
     """Verify that the request string contains expanded fragment definitions."""
     schema = """
@@ -421,15 +416,14 @@ async def test_exec_source_contains_expanded_fragments(
     def resolve_user(_root, _info, *, id: str):
         return {"id": id, "name": "Morty"}
 
-    with setup_test_server(
-        tmp_path,
+    with test_project.server(
         httpserver,
-        schema,
-        query_source,
-        {"Query": {"user": resolve_user}},
+        schema=schema,
+        queries=query_source,
+        resolvers={"Query": {"user": resolve_user}},
     ) as (_, queries):
         # Read the generated code from file
-        generated_code = (tmp_path / "sample_app/gql/api.py").read_text()
+        generated_code = (test_project.root / "sample_app/gql/api.py").read_text()
 
         # Verify the generated code contains the fragment definition in the request
         assert "fragment UserFields on User" in generated_code
