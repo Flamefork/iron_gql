@@ -18,7 +18,7 @@ classifiers = [
 
 requires-python = ">=3.13"
 dependencies = [
-    "gql>=4.0.0,<5",
+    "graphql-core>=3.2.6,<4",
     "httpx>=0.28.1,<1",
     "pydantic>=2.12.3,<3",
 ]

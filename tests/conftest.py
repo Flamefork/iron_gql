@@ -2,10 +2,10 @@ import importlib
 import json
 import sys
 import textwrap
+from collections.abc import AsyncIterator
 from collections.abc import Callable
-from collections.abc import Iterator
 from collections.abc import Mapping
-from contextlib import contextmanager
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from dataclasses import field
 from pathlib import Path
@@ -76,13 +76,15 @@ class ProjectBuilder:
             ):
                 sys.modules.pop(module_name, None)
 
-    def prepare(self, *, schema: str, queries: str) -> None:
+    def prepare(
+        self, *, schema: str, queries: str, base_url: str = "http://testserver/graphql/"
+    ) -> None:
         self.write_file(self.root / "schema.graphql", schema)
         self.write_file(self.root / f"{self.package}/__init__.py", "")
         self.write_file(self.root / f"{self.package}/gql/__init__.py", "")
         self.write_file(
             self.root / f"{self.package}/settings.py",
-            "GRAPHQL_URL = 'http://testserver/graphql/'\n",
+            f"GRAPHQL_URL = {base_url!r}\n",
         )
         self.write_file(self.root / f"{self.package}/queries.py", queries)
         importlib.invalidate_caches()
@@ -116,20 +118,23 @@ class ProjectBuilder:
         queries_module = importlib.import_module(f"{self.package}.queries")
         return api_module, queries_module
 
-    @contextmanager
-    def server(
+    @asynccontextmanager
+    async def server(
         self,
         httpserver: HTTPServer,
         *,
         schema: str,
         queries: str,
         resolvers: Resolvers,
-    ) -> Iterator[tuple[ModuleType, ModuleType]]:
-        self.prepare(schema=schema, queries=queries)
-        api_module, queries_module = self.generate_and_import()
+    ) -> AsyncIterator[tuple[ModuleType, ModuleType]]:
         schema_obj = _build_schema(schema, resolvers)
-        api_module.API_CLIENT.base_url = _setup_httpserver(httpserver, schema_obj)
-        yield api_module, queries_module
+        base_url = _setup_httpserver(httpserver, schema_obj)
+        self.prepare(schema=schema, queries=queries, base_url=base_url)
+        api_module, queries_module = self.generate_and_import()
+        try:
+            yield api_module, queries_module
+        finally:
+            await api_module.API_CLIENT.close()
 
 
 @pytest.fixture

@@ -34,7 +34,7 @@ BUILTIN_SCALARS = {
     "Date": "datetime.date",
     "DateTime": "datetime.datetime",
     "JSON": "object",
-    "Upload": "gql.FileVar",
+    "Upload": "runtime.FileVar",
 }
 
 
@@ -237,7 +237,6 @@ from typing import Literal
 from typing import overload
 
 import pydantic
-import gql
 
 from iron_gql import runtime
 
@@ -277,15 +276,13 @@ def _render_gql_fn(
 ) -> str:
     dict_name = f"_{package_name.upper()}_GQL_DISPATCH"
 
-    overloads = "\n".join(
-        f"@overload\ndef {gql_fn_name}(stmt: Literal[{query.stmt.raw_text!r}]) -> {capitalize_first(query.name)}: ..."
-        for query in queries
-    )
+    entries = [(repr(q.stmt.raw_text), capitalize_first(q.name)) for q in queries]
 
-    dict_entries = "\n".join(
-        f"    {query.stmt.raw_text!r}: {capitalize_first(query.name)},"
-        for query in queries
+    overloads = "\n".join(
+        f"@overload\ndef {gql_fn_name}(stmt: Literal[{lit}]) -> {ret}: ..."
+        for lit, ret in entries
     )
+    dict_entries = "\n".join(f"    {lit}: {ret}," for lit, ret in entries)
 
     return f"""\
 {overloads}
@@ -765,8 +762,8 @@ def render_query_classes(
             typ = field_type(v.type, scalars, ctx=ctx)
             args.append(f"{py_name}: {typ}")
             variables.append(f'"{v.name}": runtime.serialize_var({py_name})')
-        variable_values = (
-            f"request.variable_values = {{{', '.join(variables)}}}" if variables else ""
+        variables_arg = (
+            f"\n            {{{', '.join(variables)}}}," if variables else ""
         )
 
         query_classes.append(
@@ -774,11 +771,9 @@ def render_query_classes(
 
 class {capitalize_first(query.name)}(runtime.GQLQuery):
     async def execute({", ".join(args)}) -> {capitalize_first(query.name)}Result:
-        request = gql.gql({query.exec_source!r})
-        {variable_values}
         return await {package_name.upper()}_CLIENT.query(
             {capitalize_first(query.name)}Result,
-            request,
+            {query.exec_source!r},{variables_arg}
             headers=self.headers,
             upload_files=self.upload_files,
         )
@@ -889,8 +884,6 @@ def _input_py_type(
         case _:
             logger.warning(f"Unknown GraphQL type {gql_type.name} {type(gql_type)}")
             return False, "object"
-
-
 
 
 def field_type(

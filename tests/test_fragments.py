@@ -41,7 +41,7 @@ async def test_inline_fragment_without_type_condition(
     def resolve_viewer(_root, _info):
         return {"id": "user-1", "name": "Morty", "email": "morty@example.com"}
 
-    with test_project.server(
+    async with test_project.server(
         httpserver,
         schema=schema,
         queries=query_source,
@@ -93,7 +93,7 @@ async def test_named_fragments(test_project: ProjectBuilder, httpserver: HTTPSer
     def resolve_user(_root, _info, *, id: str):
         return {"id": id, "name": "Morty", "email": "morty@example.com"}
 
-    with test_project.server(
+    async with test_project.server(
         httpserver,
         schema=schema,
         queries=query_source,
@@ -150,7 +150,7 @@ async def test_duplicate_fragment_names_use_local_definition(
     def resolve_user(_root, _info, *, id: str):
         return {"id": id, "name": "Morty"}
 
-    with test_project.server(
+    async with test_project.server(
         httpserver,
         schema=schema,
         queries=query_source,
@@ -230,7 +230,7 @@ async def test_fragment_validation_scoped_to_query(
     def resolve_post(_root, _info, *, id: str):
         return {"id": id, "title": "GraphQL 101"}
 
-    with test_project.server(
+    async with test_project.server(
         httpserver,
         schema=schema,
         queries=query_source,
@@ -283,7 +283,7 @@ async def test_inline_fragment_definitions_not_duplicated(
     def resolve_user(_root, _info, *, id: str):
         return {"id": id, "name": "Morty"}
 
-    with test_project.server(
+    async with test_project.server(
         httpserver,
         schema=schema,
         queries=query_source,
@@ -361,7 +361,7 @@ async def test_transitive_fragments(
             "role": "admin",
         }
 
-    with test_project.server(
+    async with test_project.server(
         httpserver,
         schema=schema,
         queries=query_source,
@@ -416,7 +416,7 @@ async def test_exec_source_contains_expanded_fragments(
     def resolve_user(_root, _info, *, id: str):
         return {"id": id, "name": "Morty"}
 
-    with test_project.server(
+    async with test_project.server(
         httpserver,
         schema=schema,
         queries=query_source,
@@ -425,10 +425,11 @@ async def test_exec_source_contains_expanded_fragments(
         # Read the generated code from file
         generated_code = (test_project.root / "sample_app/gql/api.py").read_text()
 
-        # Verify the generated code contains the fragment definition in the request
+        # Verify the generated code contains the expanded fragment in the query string
         assert "fragment UserFields on User" in generated_code
-        # The fragment should appear as part of the gql.gql() call
-        assert re.search(r"gql\.gql\(['\"].*fragment UserFields", generated_code)
+        assert re.search(
+            r"API_CLIENT\.query\(.*fragment UserFields", generated_code, re.DOTALL
+        )
 
         # Also verify execution works
         result = await queries.get_user.execute(id="u-1")
