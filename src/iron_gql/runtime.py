@@ -4,6 +4,7 @@ from collections.abc import Awaitable
 from collections.abc import Callable
 from collections.abc import MutableMapping
 from dataclasses import dataclass
+from http import HTTPStatus
 from pathlib import Path
 from typing import IO
 from typing import Any
@@ -96,9 +97,9 @@ class GQLClient:
             with schema.open(encoding="utf-8") as f:
                 schema = f.read()
         self.schema = graphql.build_ast_schema(graphql.parse(schema))
+        self._endpoint_url = httpx.URL(base_url)
         transport = httpx.ASGITransport(app=target_app) if target_app else None
         self._client = httpx.AsyncClient(
-            base_url=base_url,
             transport=transport,
             headers=headers or {},
             timeout=query_timeout,
@@ -119,7 +120,17 @@ class GQLClient:
         if upload_files and variables:
             response = await self._post_multipart(payload, headers)
         else:
-            response = await self._client.post("", json=payload, headers=headers or {})
+            response = await self._client.post(
+                self._endpoint_url, json=payload, headers=headers or {}
+            )
+        if HTTPStatus.MULTIPLE_CHOICES <= response.status_code < HTTPStatus.BAD_REQUEST:
+            location = response.headers.get("Location")
+            message = f"Unexpected 3xx response ({response.status_code})"
+            if location:
+                message = f"{message} to {location}"
+            raise httpx.HTTPStatusError(
+                message, request=response.request, response=response
+            )
         response.raise_for_status()
         body = response.json()
         errors = body.get("errors")
@@ -147,7 +158,7 @@ class GQLClient:
             else:
                 file_streams[key] = (name, file_var.f)
         return await self._client.post(
-            "",
+            self._endpoint_url,
             data={
                 "operations": json.dumps(payload),
                 "map": json.dumps(file_map),

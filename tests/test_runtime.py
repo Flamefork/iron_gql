@@ -1,13 +1,14 @@
 import io
 import json
 
+import httpx
 import pytest
 from pytest_httpserver import HTTPServer
 from werkzeug import Response
 
-from iron_gql.runtime import FileVar
+from iron_gql import FileVar
+from iron_gql import GraphQLResponseError
 from iron_gql.runtime import GQLQuery
-from iron_gql.runtime import GraphQLResponseError
 from iron_gql.runtime import extract_files
 from iron_gql.runtime import serialize_var
 from tests.conftest import ProjectBuilder
@@ -432,5 +433,160 @@ async def test_file_upload_multipart(
         assert received["map"] == {"0": ["variables.file"]}
         assert received["file_content"] == "hello world"
         assert received["file_name"] == "test.txt"
+    finally:
+        await api_module.API_CLIENT.close()
+
+
+async def test_base_url_without_trailing_slash_calls_exact_endpoint(
+    test_project: ProjectBuilder, httpserver: HTTPServer
+):
+    schema = """
+        type Query {
+            ping: String!
+        }
+    """
+
+    def ping_handler(_request):
+        return Response(
+            json.dumps({"data": {"ping": "pong"}}),
+            status=200,
+            mimetype="application/json",
+        )
+
+    httpserver.expect_request("/graphql", method="POST").respond_with_handler(
+        ping_handler
+    )
+    base_url = httpserver.url_for("/graphql")
+    test_project.prepare(
+        schema=schema,
+        queries="""
+        from sample_app.gql.api import api_gql
+
+        ping = api_gql(
+            '''
+            query Ping {
+                ping
+            }
+            '''
+        )
+        """,
+        base_url=base_url,
+    )
+    api_module, queries_module = test_project.generate_and_import()
+    try:
+        result = await queries_module.ping.execute()
+        assert result.ping == "pong"
+    finally:
+        await api_module.API_CLIENT.close()
+
+
+async def test_file_upload_multipart_base_url_without_trailing_slash(
+    test_project: ProjectBuilder, httpserver: HTTPServer
+):
+    schema = """
+        scalar Upload
+
+        type Query {
+            _dummy: String
+        }
+
+        type Mutation {
+            uploadFile(file: Upload!, label: String!): String!
+        }
+    """
+
+    received: dict = {}
+
+    def upload_handler(request):
+        received["operations"] = json.loads(request.form["operations"])
+        received["map"] = json.loads(request.form["map"])
+        received["file_content"] = request.files["0"].read().decode()
+        received["file_name"] = request.files["0"].filename
+        return Response(
+            json.dumps({"data": {"uploadFile": f"ok:{received['file_content']}"}}),
+            status=200,
+            mimetype="application/json",
+        )
+
+    httpserver.expect_request("/graphql", method="POST").respond_with_handler(
+        upload_handler
+    )
+    base_url = httpserver.url_for("/graphql")
+    test_project.prepare(
+        schema=schema,
+        queries="""
+        from sample_app.gql.api import api_gql
+
+        upload_file = api_gql(
+            '''
+            mutation UploadFile($file: Upload!, $label: String!) {
+                uploadFile(file: $file, label: $label)
+            }
+            '''
+        )
+        """,
+        base_url=base_url,
+    )
+    api_module, queries_module = test_project.generate_and_import()
+    try:
+        file_data = io.BytesIO(b"hello world")
+        query = queries_module.upload_file.with_file_uploads()
+        result = await query.execute(
+            file=FileVar(file_data, filename="test.txt"), label="my-label"
+        )
+
+        assert result.upload_file == "ok:hello world"
+        assert received["operations"]["variables"]["file"] is None
+        assert received["operations"]["variables"]["label"] == "my-label"
+        assert received["map"] == {"0": ["variables.file"]}
+        assert received["file_content"] == "hello world"
+        assert received["file_name"] == "test.txt"
+    finally:
+        await api_module.API_CLIENT.close()
+
+
+async def test_redirect_response_raises_http_status_error(
+    test_project: ProjectBuilder, httpserver: HTTPServer
+):
+    schema = """
+        type Query {
+            ping: String!
+        }
+    """
+
+    def redirect_handler(_request):
+        return Response(
+            "moved",
+            status=307,
+            headers={"Location": "/graphql/"},
+            mimetype="text/plain",
+        )
+
+    httpserver.expect_request("/graphql", method="POST").respond_with_handler(
+        redirect_handler
+    )
+    base_url = httpserver.url_for("/graphql")
+    test_project.prepare(
+        schema=schema,
+        queries="""
+        from sample_app.gql.api import api_gql
+
+        ping = api_gql(
+            '''
+            query Ping {
+                ping
+            }
+            '''
+        )
+        """,
+        base_url=base_url,
+    )
+    api_module, queries_module = test_project.generate_and_import()
+    try:
+        with pytest.raises(
+            httpx.HTTPStatusError,
+            match=r"Unexpected 3xx response \(307\) to /graphql/",
+        ):
+            await queries_module.ping.execute()
     finally:
         await api_module.API_CLIENT.close()

@@ -17,7 +17,7 @@ from pydantic import alias_generators
 from pytest_httpserver import HTTPServer
 from werkzeug import Response
 
-from iron_gql.generator import generate_gql_package
+from iron_gql.gen import generate_gql_package
 
 Resolver = Callable[..., object]
 Resolvers = Mapping[str, Mapping[str, Resolver]]

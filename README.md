@@ -10,7 +10,7 @@
 ## Key Features
 - **Query discovery.** `generate_gql_package` scans your codebase for calls that look like `<package>_gql("""...""")`, validates each statement, and emits a module with strongly typed helpers.
 - **Typed inputs and results.** Generated Pydantic models mirror every selection set, enum, and input object referenced by the discovered queries.
-- **Async runtime.** `runtime.GQLClient` speaks to GraphQL endpoints over `gql` + `httpx` and can shortcut network hops when pointed at an ASGI app.
+- **Async runtime.** `runtime.GQLClient` speaks to GraphQL endpoints over `httpx` and can shortcut network hops when pointed at an ASGI app.
 - **Deterministic validation.** `graphql-core` enforces schema compatibility and rejects duplicate operation names with incompatible bodies.
 
 ## Package Layout
@@ -40,7 +40,7 @@
    ```python
    from pathlib import Path
 
-   from iron_gql.generator import generate_gql_package
+   from iron_gql.gen import generate_gql_package
 
    generate_gql_package(
        schema_path=Path("schema.graphql"),
@@ -74,7 +74,7 @@
 ## Runtime Highlights
 - `GQLClient` accepts ASGI `target_app` so you can reuse the runtime for production HTTP calls or in-process ASGI execution.
 - `GQLQuery.with_headers` and `GQLQuery.with_file_uploads` clone the query object, making per-call customization trivial.
-- `Upload` scalars map to `gql.FileVar` for multipart file handling.
+- `Upload` scalars map to `iron_gql.FileVar` for multipart file handling.
 - `serialize_var` converts nested Pydantic models, dicts, lists, and primitives into JSON-friendly structures for variable payloads.
 
 ## Validation and Troubleshooting
