@@ -1,11 +1,16 @@
+from __future__ import annotations
+
 import functools
 import hashlib
 import shutil
 import textwrap
 from dataclasses import dataclass
-from pathlib import Path
+from typing import TYPE_CHECKING
 from typing import Any
 from typing import cast
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 import graphql
 import pydantic
@@ -56,7 +61,7 @@ class Query:
         return f"query{capitalize_first(self.stmt.hash_str)}"
 
     @property
-    def variables(self) -> list["GQLVar"]:
+    def variables(self) -> list[GQLVar]:
         return [
             _parse_var(var_def, schema=self.schema, context=self.stmt.location)
             for var_def in self.operation_def.variable_definitions
@@ -72,7 +77,7 @@ class Query:
         return root_type
 
     @property
-    def selection_set(self) -> list["GQLVar"]:
+    def selection_set(self) -> list[GQLVar]:
         ctx = ParseContext(
             schema=self.schema,
             fragments=self.fragments,
@@ -86,30 +91,10 @@ class Query:
 @dataclass(kw_only=True)
 class GQLVar:
     name: str
-    type: "GQLType"
+    gql_type: graphql.GraphQLType
     parent_type: graphql.GraphQLNamedType | None
-
-
-@dataclass(kw_only=True)
-class GQLType:
-    not_null: bool
-    default_value: graphql.UndefinedType | Any = graphql.Undefined
-
-
-@dataclass(kw_only=True)
-class GQLSingularType(GQLType):
-    type: graphql.GraphQLNamedType
-
-
-@dataclass(kw_only=True)
-class GQLObjectType(GQLType):
-    type: graphql.GraphQLNamedType
-    selection: list[GQLVar]
-
-
-@dataclass(kw_only=True)
-class GQLListType(GQLType):
-    type: GQLType
+    selection: list[GQLVar] | None = None
+    default_value: Any = graphql.Undefined
 
 
 @dataclass(kw_only=True)
@@ -123,93 +108,16 @@ def _error_with_context(message: str, context: str = "") -> str:
     return f"{message} in {context}" if context else message
 
 
-def _parse_type_node(
-    type_node: graphql.TypeNode,
-    *,
-    schema: graphql.GraphQLSchema,
-    not_null: bool = False,
-    context: str = "",
-) -> GQLType:
-    match type_node:
-        case graphql.NamedTypeNode(name=name):
-            gql_type = schema.get_type(name.value)
-            if not gql_type:
-                raise ValueError(
-                    _error_with_context(f"Unknown type: {name.value}", context)
-                )
-            return GQLSingularType(type=gql_type, not_null=not_null)
-        case graphql.ListTypeNode(type=inner_type):
-            inner_gql_type = _parse_type_node(
-                inner_type,
-                schema=schema,
-                not_null=False,
-                context=context,
-            )
-            return GQLListType(type=inner_gql_type, not_null=not_null)
-        case graphql.NonNullTypeNode(type=inner_type):
-            return _parse_type_node(
-                inner_type,
-                schema=schema,
-                not_null=True,
-                context=context,
-            )
-        case _:
-            msg = f"Unsupported type node: {type_node}"
-            raise ValueError(msg)
-
-
 def _parse_selection_set(
     selection_set: graphql.SelectionSetNode,
     parent_type: graphql.GraphQLCompositeType,
     ctx: ParseContext,
-) -> list["GQLVar"]:
+) -> list[GQLVar]:
     return [
         v
         for sel in selection_set.selections
         for v in _parse_selection(sel, parent_type, ctx)
     ]
-
-
-def _parse_output_type(
-    out_type: graphql.GraphQLOutputType,
-    ctx: ParseContext,
-    *,
-    not_null: bool = False,
-    selection_set: graphql.SelectionSetNode | None = None,
-) -> GQLType:
-    match out_type:
-        case (
-            graphql.GraphQLObjectType()
-            | graphql.GraphQLInterfaceType()
-            | graphql.GraphQLUnionType()
-        ):
-            if not selection_set:
-                type_kind = (
-                    "union"
-                    if isinstance(out_type, graphql.GraphQLUnionType)
-                    else "object"
-                )
-                msg = f"Selection set is required for {type_kind} types"
-                raise ValueError(msg)
-            return GQLObjectType(
-                type=out_type,
-                selection=_parse_selection_set(selection_set, out_type, ctx),
-                not_null=not_null,
-            )
-        case graphql.GraphQLNamedType():
-            return GQLSingularType(type=out_type, not_null=not_null)
-        case graphql.GraphQLNonNull():
-            return _parse_output_type(
-                out_type.of_type, ctx, not_null=True, selection_set=selection_set
-            )
-        case graphql.GraphQLList():
-            inner_type = _parse_output_type(
-                out_type.of_type, ctx, not_null=False, selection_set=selection_set
-            )
-            return GQLListType(type=inner_type, not_null=not_null)
-        case _:
-            msg = f"Unsupported output type: {out_type}"
-            raise ValueError(msg)
 
 
 def _parse_var(
@@ -219,14 +127,15 @@ def _parse_var(
     context: str = "",
 ):
     var_name = var_def.variable.name.value
-    var_context = _error_with_context(f"variable ${var_name}", context)
-    gql_type = _parse_type_node(var_def.type, schema=schema, context=var_context)
+    gql_type = graphql.type_from_ast(schema, var_def.type)
+    if gql_type is None:
+        msg = _error_with_context(f"Cannot resolve type for ${var_name}", context)
+        raise ValueError(msg)
+    default_value = graphql.Undefined
     if var_def.default_value is not None:
-        gql_type.default_value = value_from_ast_untyped(var_def.default_value)
+        default_value = value_from_ast_untyped(var_def.default_value)
     return GQLVar(
-        name=var_name,
-        type=gql_type,
-        parent_type=None,
+        name=var_name, gql_type=gql_type, parent_type=None, default_value=default_value
     )
 
 
@@ -241,13 +150,26 @@ def _parse_selection(
             if not field:
                 msg = f"Field '{name.value}' not found in type '{parent_type.name}'"
                 raise ValueError(_error_with_context(msg, ctx.location))
-
-            v = GQLVar(
-                name=alias.value if alias else name.value,
-                type=_parse_output_type(field.type, ctx, selection_set=selection_set),
-                parent_type=parent_type,
-            )
-            return [v]
+            sub_selection = None
+            if selection_set:
+                named_type = graphql.get_named_type(field.type)
+                if isinstance(
+                    named_type,
+                    (
+                        graphql.GraphQLObjectType,
+                        graphql.GraphQLInterfaceType,
+                        graphql.GraphQLUnionType,
+                    ),
+                ):
+                    sub_selection = _parse_selection_set(selection_set, named_type, ctx)
+            return [
+                GQLVar(
+                    name=alias.value if alias else name.value,
+                    gql_type=field.type,
+                    parent_type=parent_type,
+                    selection=sub_selection,
+                )
+            ]
         case graphql.InlineFragmentNode(
             type_condition=tc, selection_set=selection_set
         ) if cast(graphql.NamedTypeNode | None, tc) is None:
@@ -303,41 +225,6 @@ def resolve_fragment_type(
     return fragment_type
 
 
-def parse_input_type(
-    input_type: graphql.GraphQLInputType,
-    *,
-    not_null: bool = False,
-    default_value: Any = graphql.Undefined,
-) -> GQLType:
-    match input_type:
-        case graphql.GraphQLNamedType():
-            return GQLSingularType(
-                type=input_type,
-                not_null=not_null,
-                default_value=default_value,
-            )
-        case graphql.GraphQLNonNull():
-            return parse_input_type(
-                input_type.of_type,
-                not_null=True,
-                default_value=default_value,
-            )
-        case graphql.GraphQLList():
-            inner_type = parse_input_type(
-                input_type.of_type,
-                not_null=False,
-                default_value=graphql.Undefined,
-            )
-            return GQLListType(
-                type=inner_type,
-                not_null=not_null,
-                default_value=default_value,
-            )
-        case _:
-            msg = f"Unsupported input type: {input_type}"
-            raise ValueError(msg)
-
-
 @dataclass(kw_only=True)
 class ParseResult:
     queries: list[Query]
@@ -384,21 +271,14 @@ def _collect_operations(
 
 def collect_fragment_spreads(node: graphql.Node) -> set[str]:
     spreads: set[str] = set()
-    for child in node.keys:
-        match getattr(node, child, None):
-            case graphql.Node() as child_node:
-                spreads.update(collect_fragment_spreads(child_node))
-            case tuple() as items:
-                for item in items:
-                    match item:
-                        case graphql.FragmentSpreadNode(name=name):
-                            spreads.add(name.value)
-                        case graphql.Node():
-                            spreads.update(collect_fragment_spreads(item))
-                        case _:
-                            pass
-            case _:
-                pass
+
+    class SpreadCollector(graphql.Visitor):
+        def enter_fragment_spread(
+            self, node: graphql.FragmentSpreadNode, *_args: object
+        ):
+            spreads.add(node.name.value)
+
+    graphql.visit(node, SpreadCollector())
     return spreads
 
 
@@ -406,29 +286,23 @@ def _collect_referenced_fragment_names(
     doc: graphql.DocumentNode,
     fragments: dict[str, graphql.FragmentDefinitionNode],
 ) -> set[str]:
-    def collect_fragment_names(name: str) -> set[str]:
-        visited: set[str] = set()
-
-        def walk(fragment_name: str) -> None:
-            if fragment_name in visited:
-                return
-            fragment = fragments.get(fragment_name)
-            if not fragment:
-                return
-            visited.add(fragment_name)
-            for spread in collect_fragment_spreads(fragment):
-                walk(spread)
-
-        walk(name)
-        return visited
-
-    return {
-        name
-        for definition in doc.definitions
-        if isinstance(definition, graphql.OperationDefinitionNode)
-        for spread in collect_fragment_spreads(definition)
-        for name in collect_fragment_names(spread)
-    }
+    visited: set[str] = set()
+    queue = [
+        spread
+        for defn in doc.definitions
+        if isinstance(defn, graphql.OperationDefinitionNode)
+        for spread in collect_fragment_spreads(defn)
+    ]
+    while queue:
+        name = queue.pop()
+        if name in visited:
+            continue
+        fragment = fragments.get(name)
+        if not fragment:
+            continue
+        visited.add(name)
+        queue.extend(collect_fragment_spreads(fragment))
+    return visited
 
 
 def _make_validation_doc(
