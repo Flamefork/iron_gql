@@ -84,6 +84,31 @@ pip install iron-gql[codegen]   # + graphql-core for code generation
 - `Upload` scalars map to `iron_gql.FileVar` for multipart file handling.
 - `serialize_var` converts nested Pydantic models, dicts, lists, and primitives into JSON-friendly structures for variable payloads.
 
+## Example
+
+The [`example/`](example/) directory contains a complete working setup: a GraphQL schema with queries, mutations, enums, interfaces, unions, and fragments, plus the generation script and sample query definitions. See [`example/generate.py`](example/generate.py) for the codegen call and [`example/myapp/queries.py`](example/myapp/queries.py) for query usage.
+
+## Testing
+
+Override the generated client via `monkeypatch` (or any other module attribute patching) to point queries at a test server or an ASGI app:
+
+```python
+from iron_gql import runtime
+from myapp.gql import api
+
+async def test_get_user(monkeypatch):
+    test_client = runtime.GQLClient(
+        base_url="http://testserver",
+        target_app=my_asgi_app,
+    )
+    monkeypatch.setattr(api, "API_CLIENT", test_client)
+
+    result = await get_user.execute(id="1")
+    assert result.user.name == "Alice"
+```
+
+The generated query classes resolve the client by module attribute name at call time, so replacing it is sufficient. The attribute is always named `{PACKAGE}_CLIENT` — for a package `myapp.gql.api` it is `API_CLIENT`.
+
 ## Validation and Troubleshooting
 - Errors identify the file and line where the problematic statement lives.
 - Duplicate operation names must share identical bodies; rename or consolidate to resolve the conflict.
