@@ -1,0 +1,41 @@
+type Query {
+  user(id: ID!): User
+  users(role: Role): [User!]!
+  search(query: String!): [SearchItem!]!
+}
+
+type Mutation {
+  createUser(input: CreateUserInput!): User!
+}
+
+enum Role {
+  ADMIN
+  MEMBER
+}
+
+interface Node {
+  id: ID!
+}
+
+type User implements Node {
+  id: ID!
+  name: String!
+  email: String!
+  role: Role!
+  posts: [Post!]!
+}
+
+type Post implements Node {
+  id: ID!
+  title: String!
+  body: String!
+  author: User!
+}
+
+union SearchItem = User | Post
+
+input CreateUserInput {
+  name: String!
+  email: String!
+  role: Role!
+}

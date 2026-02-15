@@ -7,16 +7,23 @@
 
 `iron_gql` is a lightweight GraphQL code generator and runtime that turns schema SDL and real query documents into typed Python clients powered by Pydantic models. Use it to wire GraphQL APIs into services, CLIs, background jobs, or tests without hand-writing boilerplate.
 
+## Installation
+
+```bash
+pip install iron-gql            # runtime only (httpx + pydantic)
+pip install iron-gql[codegen]   # + graphql-core for code generation
+```
+
 ## Key Features
 - **Query discovery.** `generate_gql_package` scans your codebase for calls that look like `<package>_gql("""...""")`, validates each statement, and emits a module with strongly typed helpers.
 - **Typed inputs and results.** Generated Pydantic models mirror every selection set, enum, and input object referenced by the discovered queries.
 - **Async runtime.** `runtime.GQLClient` speaks to GraphQL endpoints over `httpx` and can shortcut network hops when pointed at an ASGI app.
-- **Deterministic validation.** `graphql-core` enforces schema compatibility and rejects duplicate operation names with incompatible bodies.
+- **Deterministic validation.** `graphql-core` (codegen dependency) enforces schema compatibility and rejects duplicate operation names with incompatible bodies.
 
 ## Package Layout
-- `generator.py` – orchestrates query discovery, validation, and module rendering.
-- `parser.py` – converts GraphQL AST into typed helper structures consumed by the renderer.
 - `runtime.py` – provides the async `GQLClient`, the reusable `GQLQuery` base class, and value serialization helpers.
+- `codegen/generator.py` – orchestrates query discovery, validation, and module rendering.
+- `codegen/parser.py` – converts GraphQL AST into typed helper structures consumed by the renderer.
 
 ## Getting Started
 1. **Describe your schema.** Point `generate_gql_package` at an SDL file (`schema.graphql`). Include whichever root types you rely on (query, mutation, subscription).
@@ -40,7 +47,7 @@
    ```python
    from pathlib import Path
 
-   from iron_gql.gen import generate_gql_package
+   from iron_gql.codegen import generate_gql_package
 
    generate_gql_package(
        schema_path=Path("schema.graphql"),
@@ -76,6 +83,31 @@
 - `GQLQuery.with_headers` and `GQLQuery.with_file_uploads` clone the query object, making per-call customization trivial.
 - `Upload` scalars map to `iron_gql.FileVar` for multipart file handling.
 - `serialize_var` converts nested Pydantic models, dicts, lists, and primitives into JSON-friendly structures for variable payloads.
+
+## Example
+
+The [`example/`](example/) directory contains a complete working setup: a GraphQL schema with queries, mutations, enums, interfaces, unions, and fragments, plus the generation script and sample query definitions. See [`example/generate.py`](example/generate.py) for the codegen call and [`example/myapp/main.py`](example/myapp/main.py) for query usage.
+
+## Testing
+
+Override the generated client via `monkeypatch` (or any other module attribute patching) to point queries at a test server or an ASGI app:
+
+```python
+from iron_gql import runtime
+from myapp.gql import api
+
+async def test_get_user(monkeypatch):
+    test_client = runtime.GQLClient(
+        base_url="http://testserver",
+        target_app=my_asgi_app,
+    )
+    monkeypatch.setattr(api, "API_CLIENT", test_client)
+
+    result = await get_user.execute(id="1")
+    assert result.user.name == "Alice"
+```
+
+The generated query classes resolve the client by module attribute name at call time, so replacing it is sufficient. The attribute is always named `{PACKAGE}_CLIENT` — for a package `myapp.gql.api` it is `API_CLIENT`.
 
 ## Validation and Troubleshooting
 - Errors identify the file and line where the problematic statement lives.
