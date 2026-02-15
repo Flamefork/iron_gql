@@ -1,5 +1,6 @@
 import ast
 import logging
+import warnings
 from collections.abc import Callable
 from collections.abc import Iterable
 from collections.abc import Iterator
@@ -38,13 +39,17 @@ BUILTIN_SCALARS = {
 }
 
 
-@dataclass(kw_only=True)
+class UnknownGQLTypeWarning(UserWarning):
+    pass
+
+
+@dataclass(kw_only=True, frozen=True)
 class GeneratedModel:
     name: str
     fields: list[str]
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(kw_only=True, frozen=True)
 class RenderContext:
     fragments: dict[str, graphql.FragmentDefinitionNode]
     variable_values: dict[str, Any]
@@ -860,7 +865,11 @@ def field_py_type(
                 return scalars[name].replace(":", ".")
             if name in BUILTIN_SCALARS:
                 return BUILTIN_SCALARS[name]
-            logger.warning(f"Unknown scalar type {name}")
+            warnings.warn(
+                f"Unknown scalar type: {name}, mapped to 'object'",
+                category=UnknownGQLTypeWarning,
+                stacklevel=1,
+            )
             return "object"
         case graphql.GraphQLInputObjectType(name=name):
             return name
@@ -869,5 +878,10 @@ def field_py_type(
                 enums.add(gql_type)
             return name
         case _:
-            logger.warning(f"Unknown GraphQL type {gql_type.name} {type(gql_type)}")
+            warnings.warn(
+                f"Unknown GraphQL type: {gql_type.name}"
+                f" ({type(gql_type).__name__}), mapped to 'object'",
+                category=UnknownGQLTypeWarning,
+                stacklevel=1,
+            )
             return "object"

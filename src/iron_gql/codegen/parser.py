@@ -13,7 +13,7 @@ from graphql.utilities import value_from_ast_untyped
 from iron_gql.codegen.util import capitalize_first
 
 
-@dataclass(kw_only=True)
+@dataclass(kw_only=True, frozen=True)
 class Statement:
     raw_text: str
     file: Path
@@ -32,7 +32,7 @@ class Statement:
         return hashlib.md5(self.clean_text.encode(), usedforsecurity=False).hexdigest()
 
 
-@dataclass(kw_only=True)
+@dataclass(kw_only=True, frozen=True)
 class GQLVar:
     name: str
     gql_type: graphql.GraphQLType
@@ -58,7 +58,7 @@ def parse_var(
     return GQLVar(name=var_name, gql_type=gql_type, default_value=default_value)
 
 
-@dataclass(kw_only=True)
+@dataclass(kw_only=True, frozen=True)
 class Query:
     stmt: Statement
     doc: graphql.DocumentNode
@@ -97,7 +97,7 @@ class Query:
         return root_type
 
 
-@dataclass(kw_only=True)
+@dataclass(kw_only=True, frozen=True)
 class ParseResult:
     queries: list[Query]
     error: str | None

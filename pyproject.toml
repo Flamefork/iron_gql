@@ -119,7 +119,7 @@ asyncio_default_fixture_loop_scope = "function"
 
 [tool.coverage.run]
 branch = true
-omit = ["test_*.py", "api.py"]
+omit = ["tests/*.py", "api.py"]
 data_file = ".coverage/db.sqlite"
 
 [tool.coverage.html]

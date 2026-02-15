@@ -4,6 +4,7 @@ import pytest
 from pydantic import alias_generators
 
 from iron_gql import runtime
+from iron_gql.codegen import UnknownGQLTypeWarning
 from iron_gql.codegen import generate_gql_package
 from tests.conftest import ProjectBuilder
 
@@ -383,9 +384,7 @@ def test_input_enums_and_defaults(test_project: ProjectBuilder):
     assert serialized == {"status": "ACTIVE"}
 
 
-def test_unknown_scalar_warning(
-    test_project: ProjectBuilder, caplog: pytest.LogCaptureFixture
-):
+def test_unknown_scalar_warning(test_project: ProjectBuilder):
     schema = """
         type Query {
             customValue: CustomScalar
@@ -409,10 +408,9 @@ def test_unknown_scalar_warning(
         """,
     )
 
-    caplog.set_level("WARNING")
-    changed = test_project.generate()
+    with pytest.warns(UnknownGQLTypeWarning, match="Unknown scalar type: CustomScalar"):
+        changed = test_project.generate()
     assert changed is True
-    assert "Unknown scalar type CustomScalar" in caplog.text
 
     generated = (test_project.root / "sample_app/gql/api.py").read_text()
     assert "custom_value: object | None" in generated

@@ -3,7 +3,6 @@ import json
 from collections.abc import Awaitable
 from collections.abc import Callable
 from collections.abc import MutableMapping
-from dataclasses import dataclass
 from http import HTTPStatus
 from typing import IO
 from typing import Any
@@ -24,11 +23,24 @@ _ASGIApp = Callable[
 ]
 
 
-@dataclass(slots=True)
 class FileVar:
-    f: IO[bytes] | bytes
-    filename: str | None = None
-    content_type: str | None = None
+    """A file to be uploaded via GraphQL multipart request."""
+
+    def __init__(
+        self,
+        f: IO[bytes] | bytes,
+        *,
+        filename: str | None = None,
+        content_type: str | None = None,
+    ):
+        """Args:
+        f: File-like object opened in binary mode, or raw bytes.
+        filename: Name sent to the server; defaults to a numeric index.
+        content_type: MIME type; when omitted, httpx infers it.
+        """
+        self.f = f
+        self.filename = filename
+        self.content_type = content_type
 
 
 class GraphQLResponseError(Exception):

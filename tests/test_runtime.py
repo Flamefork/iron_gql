@@ -1,5 +1,7 @@
+import datetime
 import io
 import json
+from decimal import Decimal
 
 import httpx
 import pytest
@@ -200,10 +202,7 @@ def test_serialize_var_handles_nested_structures():
 
 
 def test_serialize_var_handles_custom_scalar_types():
-    import datetime
-    from decimal import Decimal
-
-    dt = datetime.datetime(2024, 1, 15, 10, 30, 0, tzinfo=datetime.timezone.utc)
+    dt = datetime.datetime(2024, 1, 15, 10, 30, 0, tzinfo=datetime.UTC)
     assert serialize_var(dt) == "2024-01-15T10:30:00Z"
 
     d = datetime.date(2024, 6, 1)
@@ -494,9 +493,7 @@ async def test_custom_scalar_in_variables_and_response(
         queries=query_source,
         resolvers={"Query": {"events": resolve_events}},
     ) as (_, queries):
-        import datetime
-
-        dt = datetime.datetime(2024, 1, 15, 10, 30, 0, tzinfo=datetime.timezone.utc)
+        dt = datetime.datetime(2024, 1, 15, 10, 30, 0, tzinfo=datetime.UTC)
         result = await queries.get_events.execute(since=dt)
         assert result.events[0].name == "Launch"
         assert result.events[0].started_at == dt
