@@ -5,14 +5,17 @@ from collections.abc import Iterable
 from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
+from typing import Protocol
+from typing import cast
 
 import graphql
+from graphql.execution.collect_fields import collect_fields
+from graphql.execution.execute import get_field_def
 from pydantic import alias_generators
 
-from iron_gql.codegen.parser import GQLVar
 from iron_gql.codegen.parser import Query
 from iron_gql.codegen.parser import Statement
-from iron_gql.codegen.parser import get_transitive_interfaces
 from iron_gql.codegen.parser import parse_gql_queries
 from iron_gql.codegen.util import capitalize_first
 from iron_gql.codegen.util import indent_block
@@ -40,20 +43,160 @@ class GeneratedModel:
     fields: list[str]
 
 
-@dataclass(kw_only=True)
-class ObjectFieldResult:
-    child_models: list[GeneratedModel]
-    model_name: str
+@dataclass(frozen=True, slots=True)
+class _RenderContext:
+    fragments: dict[str, graphql.FragmentDefinitionNode]
+    variable_values: dict[str, Any]
 
 
-@dataclass(kw_only=True)
-class UnionFieldResult:
-    child_models: list[GeneratedModel]
-    union_types: list[str]
-    gql_type: graphql.GraphQLType
+class _VariableLike(Protocol):
+    name: str
+    default_value: Any
 
 
-type FieldRenderResult = ObjectFieldResult | UnionFieldResult | None
+def _merge_selection_sets(
+    field_nodes: list[graphql.FieldNode],
+) -> graphql.SelectionSetNode | None:
+    selections: list[graphql.SelectionNode] = []
+    for node in field_nodes:
+        if node.selection_set is not None:
+            selections.extend(node.selection_set.selections)
+    if not selections:
+        return None
+    return graphql.SelectionSetNode(selections=selections)
+
+
+def _collect_type_conditions(
+    selection_set: graphql.SelectionSetNode,
+    fragments: dict[str, graphql.FragmentDefinitionNode],
+) -> set[str]:
+    visited_fragments: set[str] = set()
+    conditions: set[str] = set()
+
+    def walk(selection_set: graphql.SelectionSetNode) -> None:
+        for selection in selection_set.selections:
+            if isinstance(selection, graphql.FieldNode):
+                continue
+            if isinstance(selection, graphql.InlineFragmentNode):
+                type_condition = cast(
+                    graphql.NamedTypeNode | None, selection.type_condition
+                )
+                if type_condition is not None:
+                    conditions.add(type_condition.name.value)
+                walk(selection.selection_set)
+                continue
+            if isinstance(selection, graphql.FragmentSpreadNode):
+                name = selection.name.value
+                if name in visited_fragments:
+                    continue
+                visited_fragments.add(name)
+                fragment = fragments.get(name)
+                if fragment is None:
+                    continue
+                conditions.add(fragment.type_condition.name.value)
+                walk(fragment.selection_set)
+                continue
+            msg = f"Unsupported selection {selection}"
+            raise TypeError(msg)
+
+    walk(selection_set)
+    return conditions
+
+
+def _push_base_inline_fragment(
+    selection: graphql.InlineFragmentNode,
+    interface_name: str,
+    stack: list[graphql.SelectionSetNode],
+) -> None:
+    type_condition = cast(graphql.NamedTypeNode | None, selection.type_condition)
+    if type_condition is None or type_condition.name.value == interface_name:
+        stack.append(selection.selection_set)
+
+
+def _push_base_fragment_spread(
+    selection: graphql.FragmentSpreadNode,
+    fragments: dict[str, graphql.FragmentDefinitionNode],
+    interface_name: str,
+    visited_fragments: set[str],
+    stack: list[graphql.SelectionSetNode],
+) -> None:
+    name = selection.name.value
+    if name in visited_fragments:
+        return
+    visited_fragments.add(name)
+    fragment = fragments.get(name)
+    if fragment is not None and fragment.type_condition.name.value == interface_name:
+        stack.append(fragment.selection_set)
+
+
+def _interface_has_base_typename(
+    selection_set: graphql.SelectionSetNode,
+    fragments: dict[str, graphql.FragmentDefinitionNode],
+    interface_name: str,
+) -> bool:
+    visited_fragments: set[str] = set()
+    stack: list[graphql.SelectionSetNode] = [selection_set]
+    while stack:
+        current = stack.pop()
+        for selection in current.selections:
+            if isinstance(selection, graphql.FieldNode):
+                if selection.alias is None and selection.name.value == "__typename":
+                    return True
+                continue
+            if isinstance(selection, graphql.InlineFragmentNode):
+                _push_base_inline_fragment(selection, interface_name, stack)
+                continue
+            if isinstance(selection, graphql.FragmentSpreadNode):
+                _push_base_fragment_spread(
+                    selection,
+                    fragments,
+                    interface_name,
+                    visited_fragments,
+                    stack,
+                )
+                continue
+            msg = f"Unsupported selection {selection}"
+            raise TypeError(msg)
+    return False
+
+
+def _build_codegen_variable_values(
+    doc: graphql.DocumentNode,
+    variables: Iterable[_VariableLike],
+) -> dict[str, Any]:
+    values: dict[str, Any] = {
+        var.name: var.default_value
+        for var in variables
+        if var.default_value != graphql.Undefined
+    }
+    desired: dict[str, bool] = {}
+
+    class DirectiveVarCollector(graphql.Visitor):
+        def enter_directive(self, node: graphql.DirectiveNode, *_args: object) -> None:
+            directive_name = node.name.value
+            if directive_name == "include":
+                include_value = True
+            elif directive_name == "skip":
+                include_value = False
+            else:
+                return
+
+            for arg in node.arguments or []:
+                if arg.name.value != "if":
+                    continue
+                if isinstance(arg.value, graphql.VariableNode):
+                    var_name = arg.value.name.value
+                    prev = desired.get(var_name)
+                    if prev is None:
+                        desired[var_name] = include_value
+                    else:
+                        desired[var_name] = prev or include_value
+
+    graphql.visit(doc, DirectiveVarCollector())
+    for name, value in desired.items():
+        if name not in values:
+            values[name] = value
+    return values
 
 
 def render_type(
@@ -393,14 +536,6 @@ def render_enums(enum_types: set[graphql.GraphQLEnumType]) -> list[str]:
     ]
 
 
-def _extract_object_selection(
-    field: GQLVar,
-) -> tuple[graphql.GraphQLNamedType, list[GQLVar]] | None:
-    if field.selection is None:
-        return None
-    return graphql.get_named_type(field.gql_type), field.selection
-
-
 @dataclass(kw_only=True)
 class ResultModelRenderer:
     scalars: dict[str, str]
@@ -408,43 +543,86 @@ class ResultModelRenderer:
     enums: set[graphql.GraphQLEnumType]
     schema: graphql.GraphQLSchema
 
-    def render_models(
+    def render_operation_models(self, query: Query) -> list[GeneratedModel]:
+        ctx = _RenderContext(
+            fragments=query.fragments,
+            variable_values=_build_codegen_variable_values(query.doc, query.variables),
+        )
+        return self._render_object_model(
+            model_name_base=f"{capitalize_first(query.name)}Result",
+            runtime_type=query.root_type,
+            selection_set=query.operation_def.selection_set,
+            ctx=ctx,
+        )
+
+    def _render_object_model(
         self,
-        model_name_base: str,
-        fields: list[GQLVar],
-        model_type: graphql.GraphQLNamedType,
         *,
+        model_name_base: str,
+        runtime_type: graphql.GraphQLObjectType,
+        selection_set: graphql.SelectionSetNode,
+        ctx: _RenderContext,
         typename_type: str | None = None,
+        require_union_typename: str | None = None,
+        require_interface_typename: str | None = None,
     ) -> list[GeneratedModel]:
+        fields_by_key = collect_fields(
+            self.schema,
+            ctx.fragments,
+            ctx.variable_values,
+            runtime_type,
+            selection_set,
+        )
+        if require_union_typename is not None and "__typename" not in fields_by_key:
+            msg = (
+                "Missing __typename in selection set for union "
+                f"'{require_union_typename}'"
+            )
+            raise ValueError(msg)
+        if require_interface_typename is not None and "__typename" not in fields_by_key:
+            msg = (
+                "Missing __typename in selection set for interface "
+                f"'{require_interface_typename}'"
+            )
+            raise ValueError(msg)
+
         child_models: list[GeneratedModel] = []
         fields_mapping: dict[str, str] = {}
-        for field in fields:
-            rendered = self._render_field_models(model_name_base, field)
-            match rendered:
-                case (
-                    ObjectFieldResult(child_models=cm)
-                    | UnionFieldResult(child_models=cm)
-                ):
-                    child_models.extend(cm)
-                case None:
-                    pass
-
-            if field.name.startswith("__"):
-                py_name = self.to_snake_fn(f"{field.name[2:]}__")
-                py_alias = field.name
+        for response_key, field_nodes in fields_by_key.items():
+            representative = field_nodes[0]
+            if response_key.startswith("__"):
+                py_name = self.to_snake_fn(f"{response_key[2:]}__")
+                py_alias = response_key
             else:
-                py_name = self.to_snake_fn(field.name)
+                py_name = self.to_snake_fn(response_key)
                 py_alias = None
 
-            py_type = self._render_field_type(
-                field,
-                rendered,
-                model_type,
-                typename_type,
-            )
+            if response_key == "__typename":
+                field_type = typename_type or f'Literal["{runtime_type.name}"]'
+            else:
+                field_def = cast(
+                    graphql.GraphQLField | None,
+                    get_field_def(self.schema, runtime_type, representative),
+                )
+                if field_def is None:
+                    msg = (
+                        f"Field '{representative.name.value}' not found in type "
+                        f"'{runtime_type.name}'"
+                    )
+                    raise ValueError(msg)
+                field_child_models, field_type = self._render_typed_field(
+                    model_name_base=model_name_base,
+                    response_key=response_key,
+                    gql_type=field_def.type,
+                    field_nodes=field_nodes,
+                    ctx=ctx,
+                )
+                child_models.extend(field_child_models)
+
             if py_alias:
-                py_type = f'{py_type} = pydantic.Field(alias="{field.name}")'
-            fields_mapping[py_name] = py_type
+                field_type = f'{field_type} = pydantic.Field(alias="{py_alias}")'
+            fields_mapping[py_name] = field_type
+
         return [
             *child_models,
             GeneratedModel(
@@ -456,218 +634,185 @@ class ResultModelRenderer:
             ),
         ]
 
-    def _render_field_models(
+    def _render_typed_field(
         self,
+        *,
         model_name_base: str,
-        field: GQLVar,
-    ) -> FieldRenderResult:
-        obj_info = _extract_object_selection(field)
-        if obj_info is None:
-            return None
-        obj_type, selection = obj_info
-        match obj_type:
-            case graphql.GraphQLObjectType():
-                return self._render_object_field(
-                    model_name_base,
-                    field.name,
-                    obj_type,
-                    selection,
-                )
-            case graphql.GraphQLUnionType():
-                return self._render_union_field(
-                    model_name_base,
-                    field.name,
-                    obj_type,
-                    selection,
-                    field.gql_type,
-                )
-            case graphql.GraphQLInterfaceType():
-                return self._render_interface_field(
-                    model_name_base,
-                    field.name,
-                    obj_type,
-                    selection,
-                    field.gql_type,
-                )
-            case _:
-                msg = f"Unknown type {obj_type} for field {field.name}"
-                raise ValueError(msg)
+        response_key: str,
+        gql_type: graphql.GraphQLType,
+        field_nodes: list[graphql.FieldNode],
+        ctx: _RenderContext,
+    ) -> tuple[list[GeneratedModel], str]:
+        selection_set = _merge_selection_sets(field_nodes)
+        if selection_set is None:
+            return [], render_type(gql_type, self.scalars, enums=self.enums)
 
-    def _render_object_field(
-        self,
-        model_name_base: str,
-        field_name: str,
-        obj_type: graphql.GraphQLObjectType,
-        selection: list[GQLVar],
-    ) -> ObjectFieldResult:
-        model_name = model_name_base + capitalize_first(field_name)
-        child_models = self.render_models(model_name, selection, obj_type)
-        return ObjectFieldResult(child_models=child_models, model_name=model_name)
+        named = graphql.get_named_type(gql_type)
+        child_base = model_name_base + capitalize_first(response_key)
+        if isinstance(named, graphql.GraphQLObjectType):
+            return (
+                self._render_object_model(
+                    model_name_base=child_base,
+                    runtime_type=named,
+                    selection_set=selection_set,
+                    ctx=ctx,
+                ),
+                render_type(
+                    gql_type,
+                    self.scalars,
+                    child_model_name=child_base,
+                    enums=self.enums,
+                ),
+            )
 
-    def _render_variant_models(
+        if isinstance(named, graphql.GraphQLUnionType):
+            models, union_types = self._render_union_models(
+                base_name=child_base,
+                union_type=named,
+                selection_set=selection_set,
+                ctx=ctx,
+            )
+            return models, _format_discriminated_union_type(union_types, gql_type)
+
+        if isinstance(named, graphql.GraphQLInterfaceType):
+            return self._render_interface_models(
+                base_name=child_base,
+                interface_type=named,
+                selection_set=selection_set,
+                ctx=ctx,
+                field_gql_type=gql_type,
+            )
+
+        msg = f"Unknown type {named} for field {response_key}"
+        raise ValueError(msg)
+
+    def _render_union_models(
         self,
+        *,
         base_name: str,
-        variant_types: list[graphql.GraphQLObjectType],
-        parent_type: graphql.GraphQLNamedType,
-        selection: list[GQLVar],
+        union_type: graphql.GraphQLUnionType,
+        selection_set: graphql.SelectionSetNode,
+        ctx: _RenderContext,
     ) -> tuple[list[GeneratedModel], list[str]]:
         child_models: list[GeneratedModel] = []
         union_types: list[str] = []
-        for obj_type in sorted(variant_types, key=lambda t: t.name):
-            child_model_name = base_name + obj_type.name
-            eligible_parents = {parent_type, obj_type} | get_transitive_interfaces(
-                obj_type
-            )
-            obj_sel = [f for f in selection if f.parent_type in eligible_parents]
-            child_models.extend(self.render_models(child_model_name, obj_sel, obj_type))
-            union_types.append(child_model_name)
-        return child_models, union_types
-
-    def _render_union_field(
-        self,
-        model_name_base: str,
-        field_name: str,
-        union_type: graphql.GraphQLUnionType,
-        selection: list[GQLVar],
-        field_gql_type: graphql.GraphQLType,
-    ) -> UnionFieldResult:
-        self._require_union_typename(selection, union_type)
-        base = model_name_base + capitalize_first(field_name)
-        child_models, union_types = self._render_variant_models(
-            base, list(union_type.types), union_type, selection
-        )
-        return UnionFieldResult(
-            child_models=child_models,
-            union_types=union_types,
-            gql_type=field_gql_type,
-        )
-
-    def _render_interface_field(
-        self,
-        model_name_base: str,
-        field_name: str,
-        interface_type: graphql.GraphQLInterfaceType,
-        selection: list[GQLVar],
-        field_gql_type: graphql.GraphQLType,
-    ) -> ObjectFieldResult | UnionFieldResult:
-        explicit_fragment_types = {
-            sel_field.parent_type
-            for sel_field in selection
-            if sel_field.parent_type is not None
-            and sel_field.parent_type != interface_type
-        }
-        if not explicit_fragment_types:
-            model_name = model_name_base + capitalize_first(field_name)
-            child_models = self.render_models(
-                model_name,
-                selection,
-                interface_type,
-                typename_type="str",
-            )
-            return ObjectFieldResult(child_models=child_models, model_name=model_name)
-
-        self._require_interface_typename(selection, interface_type)
-
-        explicit_objects: set[graphql.GraphQLObjectType] = set()
-        possible_types = set(self.schema.get_possible_types(interface_type))
-        for fragment_type in explicit_fragment_types:
-            if isinstance(fragment_type, graphql.GraphQLObjectType):
-                explicit_objects.add(fragment_type)
-            elif isinstance(fragment_type, graphql.GraphQLInterfaceType):
-                explicit_objects.update(self.schema.get_possible_types(fragment_type))
-
-        interface_model_base = model_name_base + capitalize_first(field_name)
-        child_models, union_types = self._render_variant_models(
-            interface_model_base,
-            list(explicit_objects),
-            interface_type,
-            selection,
-        )
-
-        fallback_objects = possible_types - explicit_objects
-        if fallback_objects:
-            fallback_name = interface_model_base + interface_type.name
-            fallback_sel = [
-                sel_field
-                for sel_field in selection
-                if sel_field.parent_type == interface_type
-            ]
-            fallback_type_names = sorted(obj.name for obj in fallback_objects)
-            fallback_typename_literal = (
-                f"Literal[{', '.join(repr(name) for name in fallback_type_names)}]"
-            )
+        for obj_type in sorted(union_type.types, key=lambda t: t.name):
+            model_name = base_name + obj_type.name
             child_models.extend(
-                self.render_models(
-                    fallback_name,
-                    fallback_sel,
-                    interface_type,
-                    typename_type=fallback_typename_literal,
+                self._render_object_model(
+                    model_name_base=model_name,
+                    runtime_type=obj_type,
+                    selection_set=selection_set,
+                    ctx=ctx,
+                    require_union_typename=union_type.name,
                 )
             )
-            union_types.append(fallback_name)
+            union_types.append(model_name)
+        return child_models, union_types
 
-        return UnionFieldResult(
-            child_models=child_models,
-            union_types=union_types,
-            gql_type=field_gql_type,
-        )
-
-    def _require_interface_typename(
+    def _render_interface_models(
         self,
-        selection: list[GQLVar],
+        *,
+        base_name: str,
         interface_type: graphql.GraphQLInterfaceType,
-    ) -> None:
-        has_typename = any(
-            sel_field.name == "__typename" and sel_field.parent_type == interface_type
-            for sel_field in selection
+        selection_set: graphql.SelectionSetNode,
+        ctx: _RenderContext,
+        field_gql_type: graphql.GraphQLType,
+    ) -> tuple[list[GeneratedModel], str]:
+        possible_types = sorted(
+            self.schema.get_possible_types(interface_type),
+            key=lambda t: t.name,
         )
-        if not has_typename:
+        if not possible_types:
+            msg = f"Interface '{interface_type.name}' has no possible types"
+            raise ValueError(msg)
+
+        explicit_conditions = _collect_type_conditions(selection_set, ctx.fragments) - {
+            interface_type.name
+        }
+        explicit_objects: set[graphql.GraphQLObjectType] = set()
+        for name in explicit_conditions:
+            typ = self.schema.get_type(name)
+            if typ is None:
+                msg = f"Unknown GraphQL type '{name}'"
+                raise ValueError(msg)
+            if isinstance(typ, graphql.GraphQLObjectType):
+                explicit_objects.add(typ)
+                continue
+            if isinstance(typ, graphql.GraphQLInterfaceType):
+                explicit_objects.update(self.schema.get_possible_types(typ))
+                continue
+            msg = f"Type condition '{name}' is not a composite type"
+            raise TypeError(msg)
+
+        if not explicit_objects:
+            child_models = self._render_object_model(
+                model_name_base=base_name,
+                runtime_type=possible_types[0],
+                selection_set=selection_set,
+                ctx=ctx,
+                typename_type="str",
+            )
+            return (
+                child_models,
+                render_type(
+                    field_gql_type,
+                    self.scalars,
+                    child_model_name=base_name,
+                    enums=self.enums,
+                ),
+            )
+        if not _interface_has_base_typename(
+            selection_set,
+            ctx.fragments,
+            interface_type.name,
+        ):
             msg = (
                 "Missing __typename in selection set for interface "
                 f"'{interface_type.name}'"
             )
             raise ValueError(msg)
 
-    def _require_union_typename(
-        self,
-        selection: list[GQLVar],
-        union_type: graphql.GraphQLUnionType,
-    ) -> None:
-        typename_parents = {
-            sel_field.parent_type
-            for sel_field in selection
-            if sel_field.name == "__typename" and sel_field.parent_type is not None
-        }
-        missing: list[str] = []
-        for subtyp in union_type.types:
-            eligible_parents = {union_type, subtyp} | get_transitive_interfaces(subtyp)
-            if not (eligible_parents & typename_parents):
-                missing.append(subtyp.name)
-        if missing:
-            msg = f"Missing __typename in selection set for union '{union_type.name}'"
-            raise ValueError(msg)
-
-    def _render_field_type(
-        self,
-        field: GQLVar,
-        rendered: FieldRenderResult,
-        model_type: graphql.GraphQLNamedType,
-        typename_type: str | None,
-    ) -> str:
-        if field.name == "__typename":
-            return typename_type or f'Literal["{model_type.name}"]'
-        match rendered:
-            case UnionFieldResult(union_types=union_types, gql_type=gql_type):
-                return _format_discriminated_union_type(union_types, gql_type)
-            case ObjectFieldResult(model_name=model_name):
-                return render_type(
-                    field.gql_type,
-                    self.scalars,
-                    child_model_name=model_name,
-                    enums=self.enums,
+        child_models: list[GeneratedModel] = []
+        union_types: list[str] = []
+        explicit_object_list = sorted(explicit_objects, key=lambda t: t.name)
+        for obj_type in explicit_object_list:
+            model_name = base_name + obj_type.name
+            child_models.extend(
+                self._render_object_model(
+                    model_name_base=model_name,
+                    runtime_type=obj_type,
+                    selection_set=selection_set,
+                    ctx=ctx,
+                    require_interface_typename=interface_type.name,
                 )
-            case None:
-                return render_type(field.gql_type, self.scalars, enums=self.enums)
+            )
+            union_types.append(model_name)
+
+        fallback_objects = {t for t in possible_types if t not in explicit_objects}
+        if fallback_objects:
+            fallback_name = base_name + interface_type.name
+            fallback_type_names = sorted(obj.name for obj in fallback_objects)
+            fallback_typename_literal = (
+                f"Literal[{', '.join(repr(name) for name in fallback_type_names)}]"
+            )
+            fallback_runtime = min(fallback_objects, key=lambda t: t.name)
+            child_models.extend(
+                self._render_object_model(
+                    model_name_base=fallback_name,
+                    runtime_type=fallback_runtime,
+                    selection_set=selection_set,
+                    ctx=ctx,
+                    typename_type=fallback_typename_literal,
+                    require_interface_typename=interface_type.name,
+                )
+            )
+            union_types.append(fallback_name)
+
+        return (
+            child_models,
+            _format_discriminated_union_type(union_types, field_gql_type),
+        )
 
 
 def render_result_models(
@@ -688,11 +833,7 @@ def render_result_models(
     return [
         render_pydantic_class(model.name, "GQLModel", model.fields)
         for query in queries
-        for model in renderer.render_models(
-            f"{capitalize_first(query.name)}Result",
-            query.selection_set,
-            query.root_type,
-        )
+        for model in renderer.render_operation_models(query)
     ]
 
 

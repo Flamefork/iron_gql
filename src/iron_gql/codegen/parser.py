@@ -7,7 +7,6 @@ import textwrap
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 from typing import Any
-from typing import cast
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -76,48 +75,12 @@ class Query:
             raise ValueError(msg)
         return root_type
 
-    @property
-    def selection_set(self) -> list[GQLVar]:
-        ctx = ParseContext(
-            schema=self.schema,
-            fragments=self.fragments,
-            location=self.stmt.location,
-        )
-        return _parse_selection_set(
-            self.operation_def.selection_set, self.root_type, ctx
-        )
-
 
 @dataclass(kw_only=True)
 class GQLVar:
     name: str
     gql_type: graphql.GraphQLType
-    parent_type: graphql.GraphQLNamedType | None
-    selection: list[GQLVar] | None = None
     default_value: Any = graphql.Undefined
-
-
-@dataclass(kw_only=True)
-class ParseContext:
-    schema: graphql.GraphQLSchema
-    fragments: dict[str, graphql.FragmentDefinitionNode]
-    location: str = ""
-
-
-def _error_with_context(message: str, context: str = "") -> str:
-    return f"{message} in {context}" if context else message
-
-
-def _parse_selection_set(
-    selection_set: graphql.SelectionSetNode,
-    parent_type: graphql.GraphQLCompositeType,
-    ctx: ParseContext,
-) -> list[GQLVar]:
-    return [
-        v
-        for sel in selection_set.selections
-        for v in _parse_selection(sel, parent_type, ctx)
-    ]
 
 
 def _parse_var(
@@ -129,100 +92,14 @@ def _parse_var(
     var_name = var_def.variable.name.value
     gql_type = graphql.type_from_ast(schema, var_def.type)
     if gql_type is None:
-        msg = _error_with_context(f"Cannot resolve type for ${var_name}", context)
+        msg = f"Cannot resolve type for ${var_name}"
+        if context:
+            msg = f"{msg} in {context}"
         raise ValueError(msg)
     default_value = graphql.Undefined
     if var_def.default_value is not None:
         default_value = value_from_ast_untyped(var_def.default_value)
-    return GQLVar(
-        name=var_name, gql_type=gql_type, parent_type=None, default_value=default_value
-    )
-
-
-def _parse_selection(
-    selection: graphql.SelectionNode,
-    parent_type: graphql.GraphQLCompositeType,
-    ctx: ParseContext,
-) -> list[GQLVar]:
-    match selection:
-        case graphql.FieldNode(name=name, alias=alias, selection_set=selection_set):
-            field = schema_get_field(ctx.schema, parent_type, name.value)
-            if not field:
-                msg = f"Field '{name.value}' not found in type '{parent_type.name}'"
-                raise ValueError(_error_with_context(msg, ctx.location))
-            sub_selection = None
-            if selection_set:
-                named_type = graphql.get_named_type(field.type)
-                if isinstance(
-                    named_type,
-                    (
-                        graphql.GraphQLObjectType,
-                        graphql.GraphQLInterfaceType,
-                        graphql.GraphQLUnionType,
-                    ),
-                ):
-                    sub_selection = _parse_selection_set(selection_set, named_type, ctx)
-            return [
-                GQLVar(
-                    name=alias.value if alias else name.value,
-                    gql_type=field.type,
-                    parent_type=parent_type,
-                    selection=sub_selection,
-                )
-            ]
-        case graphql.InlineFragmentNode(
-            type_condition=tc, selection_set=selection_set
-        ) if cast(graphql.NamedTypeNode | None, tc) is None:
-            return _parse_selection_set(selection_set, parent_type, ctx)
-        case graphql.InlineFragmentNode(
-            type_condition=graphql.NamedTypeNode(
-                name=graphql.NameNode(value=fragment_type_name)
-            ),
-            selection_set=selection_set,
-        ):
-            fragment_type = resolve_fragment_type(
-                ctx.schema.get_type(fragment_type_name),
-                fragment_type_name,
-                parent_type,
-            )
-            return _parse_selection_set(selection_set, fragment_type, ctx)
-        case graphql.FragmentSpreadNode(name=name):
-            if name.value not in ctx.fragments:
-                msg = f"Unknown fragment '{name.value}'"
-                raise ValueError(_error_with_context(msg, ctx.location))
-            fragment = ctx.fragments[name.value]
-            fragment_type_name = fragment.type_condition.name.value
-            fragment_type = resolve_fragment_type(
-                ctx.schema.get_type(fragment_type_name),
-                fragment_type_name,
-                parent_type,
-            )
-            return _parse_selection_set(fragment.selection_set, fragment_type, ctx)
-        case _:
-            msg = f"Unsupported selection {selection} for parent type {parent_type}"
-            raise ValueError(msg)
-
-
-def resolve_fragment_type(
-    fragment_type: graphql.GraphQLNamedType | None,
-    fragment_type_name: str,
-    parent_type: graphql.GraphQLCompositeType,
-) -> graphql.GraphQLCompositeType:
-    if not isinstance(
-        fragment_type,
-        (graphql.GraphQLObjectType, graphql.GraphQLInterfaceType),
-    ):
-        msg = f"Type condition '{fragment_type_name}' is not a composite type"
-        raise TypeError(msg)
-    if not isinstance(parent_type, graphql.GraphQLInterfaceType):
-        return fragment_type
-    if not implements_interface(fragment_type, parent_type):
-        msg = (
-            f"Type condition '{fragment_type.name}' does not "
-            f"implement interface '{parent_type.name}'"
-        )
-        raise ValueError(msg)
-    return fragment_type
+    return GQLVar(name=var_name, gql_type=gql_type, default_value=default_value)
 
 
 @dataclass(kw_only=True)
@@ -367,10 +244,6 @@ def parse_gql_queries(
                 + "\n".join(str(e) for e in errs)
             )
             continue
-        try:
-            _ = q.selection_set
-        except (ValueError, TypeError) as exc:
-            errors.append(f"Invalid GraphQL query in {q.stmt.location}:\n{exc}")
 
     if debug_path:
         debug_path.mkdir(parents=True, exist_ok=True)
@@ -386,7 +259,6 @@ def parse_gql_queries(
                     "location": q.stmt.location,
                     "name": q.name,
                     "variables": q.variables,
-                    "selection_set": q.selection_set,
                 }
                 for q in queries
             ],
@@ -403,45 +275,3 @@ def _dump_json(path: Path, obj: object):
 
 def _dump_strings(path: Path, strings: list[str]):
     path.write_text("\n\n".join(strings), encoding="utf-8")
-
-
-# Port of GraphQLSchema.get_field from graphql-core 3.3
-# See https://github.com/graphql-python/graphql-core/blob/main/src/graphql/type/schema.py#L374
-def schema_get_field(
-    schema: graphql.GraphQLSchema,
-    parent_type: graphql.GraphQLCompositeType,
-    field_name: str,
-) -> graphql.GraphQLField | None:
-    if field_name == "__schema":
-        return graphql.SchemaMetaFieldDef if schema.query_type is parent_type else None
-    if field_name == "__type":
-        return graphql.TypeMetaFieldDef if schema.query_type is parent_type else None
-    if field_name == "__typename":
-        return graphql.TypeNameMetaFieldDef
-
-    try:
-        # This is a port not reimplementation, so we use author's approach.
-        return parent_type.fields[field_name]  # pyright: ignore[reportAttributeAccessIssue]
-    except (AttributeError, KeyError):
-        return None
-
-
-def get_transitive_interfaces(
-    type_: graphql.GraphQLObjectType | graphql.GraphQLInterfaceType,
-) -> set[graphql.GraphQLInterfaceType]:
-    interfaces = set()
-    queue = list(type_.interfaces)
-    while queue:
-        current = queue.pop()
-        if current in interfaces:
-            continue
-        interfaces.add(current)
-        queue.extend(current.interfaces)
-    return interfaces
-
-
-def implements_interface(
-    type_: graphql.GraphQLObjectType | graphql.GraphQLInterfaceType,
-    interface: graphql.GraphQLInterfaceType,
-) -> bool:
-    return type_ == interface or interface in get_transitive_interfaces(type_)
