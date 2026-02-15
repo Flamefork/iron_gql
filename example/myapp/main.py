@@ -62,5 +62,5 @@ async def main():
             case SearchResultSearchPost():
                 print(f"Post: {item.title} by {item.author.name}")
 
-
-asyncio.run(main())
+if __name__ == "__main__":
+    asyncio.run(main())

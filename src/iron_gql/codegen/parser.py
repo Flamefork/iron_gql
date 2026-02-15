@@ -1,15 +1,10 @@
-from __future__ import annotations
-
 import functools
 import hashlib
 import shutil
 import textwrap
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from pathlib import Path
 from typing import Any
-
-if TYPE_CHECKING:
-    from pathlib import Path
 
 import graphql
 import pydantic
@@ -38,6 +33,32 @@ class Statement:
 
 
 @dataclass(kw_only=True)
+class GQLVar:
+    name: str
+    gql_type: graphql.GraphQLType
+    default_value: Any = graphql.Undefined
+
+
+def parse_var(
+    var_def: graphql.VariableDefinitionNode,
+    *,
+    schema: graphql.GraphQLSchema,
+    context: str = "",
+) -> GQLVar:
+    var_name = var_def.variable.name.value
+    gql_type = graphql.type_from_ast(schema, var_def.type)
+    if gql_type is None:
+        msg = f"Cannot resolve type for ${var_name}"
+        if context:
+            msg = f"{msg} in {context}"
+        raise ValueError(msg)
+    default_value = graphql.Undefined
+    if var_def.default_value is not None:
+        default_value = value_from_ast_untyped(var_def.default_value)
+    return GQLVar(name=var_name, gql_type=gql_type, default_value=default_value)
+
+
+@dataclass(kw_only=True)
 class Query:
     stmt: Statement
     doc: graphql.DocumentNode
@@ -62,7 +83,7 @@ class Query:
     @functools.cached_property
     def variables(self) -> list[GQLVar]:
         return [
-            _parse_var(var_def, schema=self.schema, context=self.stmt.location)
+            parse_var(var_def, schema=self.schema, context=self.stmt.location)
             for var_def in self.operation_def.variable_definitions
         ]
 
@@ -77,44 +98,18 @@ class Query:
 
 
 @dataclass(kw_only=True)
-class GQLVar:
-    name: str
-    gql_type: graphql.GraphQLType
-    default_value: Any = graphql.Undefined
-
-
-def _parse_var(
-    var_def: graphql.VariableDefinitionNode,
-    *,
-    schema: graphql.GraphQLSchema,
-    context: str = "",
-):
-    var_name = var_def.variable.name.value
-    gql_type = graphql.type_from_ast(schema, var_def.type)
-    if gql_type is None:
-        msg = f"Cannot resolve type for ${var_name}"
-        if context:
-            msg = f"{msg} in {context}"
-        raise ValueError(msg)
-    default_value = graphql.Undefined
-    if var_def.default_value is not None:
-        default_value = value_from_ast_untyped(var_def.default_value)
-    return GQLVar(name=var_name, gql_type=gql_type, default_value=default_value)
-
-
-@dataclass(kw_only=True)
 class ParseResult:
     queries: list[Query]
     error: str | None
 
 
-def _parse_documents(
+def parse_documents(
     statements: list[Statement],
 ) -> list[tuple[Statement, graphql.DocumentNode]]:
     return [(stmt, graphql.parse(stmt.clean_text)) for stmt in statements]
 
 
-def _collect_fragments_from_doc(
+def collect_fragments_from_doc(
     doc: graphql.DocumentNode,
 ) -> dict[str, graphql.FragmentDefinitionNode]:
     fragments: dict[str, graphql.FragmentDefinitionNode] = {}
@@ -124,16 +119,16 @@ def _collect_fragments_from_doc(
     return fragments
 
 
-def _collect_fragments(
+def collect_fragments(
     docs: list[tuple[Statement, graphql.DocumentNode]],
 ) -> dict[str, graphql.FragmentDefinitionNode]:
     fragments: dict[str, graphql.FragmentDefinitionNode] = {}
     for _, doc in docs:
-        fragments.update(_collect_fragments_from_doc(doc))
+        fragments.update(collect_fragments_from_doc(doc))
     return fragments
 
 
-def _collect_operations(
+def collect_operations(
     docs: list[tuple[Statement, graphql.DocumentNode]],
 ) -> list[tuple[Statement, graphql.DocumentNode]]:
     operation_docs: list[tuple[Statement, graphql.DocumentNode]] = []
@@ -159,7 +154,7 @@ def collect_fragment_spreads(node: graphql.Node) -> set[str]:
     return spreads
 
 
-def _collect_referenced_fragment_names(
+def collect_referenced_fragment_names(
     doc: graphql.DocumentNode,
     fragments: dict[str, graphql.FragmentDefinitionNode],
 ) -> set[str]:
@@ -182,14 +177,14 @@ def _collect_referenced_fragment_names(
     return visited
 
 
-def _make_validation_doc(
+def make_validation_doc(
     doc: graphql.DocumentNode,
     fragments: dict[str, graphql.FragmentDefinitionNode],
 ) -> graphql.DocumentNode:
-    local_fragments = _collect_fragments_from_doc(doc)
+    local_fragments = collect_fragments_from_doc(doc)
     defined_fragments = set(local_fragments)
     effective_fragments = {**fragments, **local_fragments}
-    referenced_fragments = _collect_referenced_fragment_names(doc, effective_fragments)
+    referenced_fragments = collect_referenced_fragment_names(doc, effective_fragments)
     extra_definitions = [
         effective_fragments[name]
         for name in sorted(referenced_fragments)
@@ -204,33 +199,23 @@ def parse_gql_queries(
     *,
     debug_path: Path | None = None,
 ) -> ParseResult:
-    """Parse and validate GraphQL queries against a schema.
-
-    Args:
-        schema_path: Path to GraphQL schema file (SDL format)
-        statements: List of GraphQL query statements to parse
-        debug_path: Optional directory to save debug artifacts (schema, queries, AST)
-
-    Returns:
-        ParseResult containing validated queries or validation errors
-    """
     schema_document = graphql.parse(schema_path.read_text(encoding="utf-8"))
     schema = graphql.build_ast_schema(schema_document)
 
-    docs = _parse_documents(statements)
-    fragments = _collect_fragments(docs)
-    operation_docs = _collect_operations(docs)
+    docs = parse_documents(statements)
+    fragments = collect_fragments(docs)
+    operation_docs = collect_operations(docs)
 
     queries = []
     for stmt, doc in operation_docs:
-        validation_doc = _make_validation_doc(doc, fragments)
+        validation_doc = make_validation_doc(doc, fragments)
         exec_source = graphql.print_ast(validation_doc)
         queries.append(
             Query(
                 stmt=stmt,
                 doc=validation_doc,
                 schema=schema,
-                fragments=_collect_fragments_from_doc(validation_doc),
+                fragments=collect_fragments_from_doc(validation_doc),
                 exec_source=exec_source,
             )
         )
@@ -243,15 +228,14 @@ def parse_gql_queries(
                 f"Invalid GraphQL query in {q.stmt.location}:\n"
                 + "\n".join(str(e) for e in errs)
             )
-            continue
 
     if debug_path:
         debug_path.mkdir(parents=True, exist_ok=True)
         shutil.copy(schema_path, debug_path / "schema.graphql")
-        _dump_strings(debug_path / "queries.gql", [q.stmt.clean_text for q in queries])
-        _dump_json(debug_path / "queries.json", [q.doc.to_dict() for q in queries])
-        _dump_json(debug_path / "schema.json", schema_document.to_dict())
-        _dump_json(
+        dump_strings(debug_path / "queries.gql", [q.stmt.clean_text for q in queries])
+        dump_json(debug_path / "queries.json", [q.doc.to_dict() for q in queries])
+        dump_json(debug_path / "schema.json", schema_document.to_dict())
+        dump_json(
             debug_path / "out.json",
             [
                 {
@@ -267,11 +251,11 @@ def parse_gql_queries(
     return ParseResult(queries=queries, error="\n".join(errors) if errors else None)
 
 
-def _dump_json(path: Path, obj: object):
+def dump_json(path: Path, obj: object) -> None:
     path.write_bytes(
         pydantic.TypeAdapter(type(obj)).dump_json(obj, indent=2, fallback=str)
     )
 
 
-def _dump_strings(path: Path, strings: list[str]):
+def dump_strings(path: Path, strings: list[str]) -> None:
     path.write_text("\n\n".join(strings), encoding="utf-8")

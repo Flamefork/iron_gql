@@ -86,7 +86,7 @@ pip install iron-gql[codegen]   # + graphql-core for code generation
 
 ## Example
 
-The [`example/`](example/) directory contains a complete working setup: a GraphQL schema with queries, mutations, enums, interfaces, unions, and fragments, plus the generation script and sample query definitions. See [`example/generate.py`](example/generate.py) for the codegen call and [`example/myapp/queries.py`](example/myapp/queries.py) for query usage.
+The [`example/`](example/) directory contains a complete working setup: a GraphQL schema with queries, mutations, enums, interfaces, unions, and fragments, plus the generation script and sample query definitions. See [`example/generate.py`](example/generate.py) for the codegen call and [`example/myapp/main.py`](example/myapp/main.py) for query usage.
 
 ## Testing
 

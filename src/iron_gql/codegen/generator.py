@@ -45,12 +45,12 @@ class GeneratedModel:
 
 
 @dataclass(frozen=True, slots=True)
-class _RenderContext:
+class RenderContext:
     fragments: dict[str, graphql.FragmentDefinitionNode]
     variable_values: dict[str, Any]
 
 
-def _merge_selection_sets(
+def merge_selection_sets(
     field_nodes: list[graphql.FieldNode],
 ) -> graphql.SelectionSetNode | None:
     selections: list[graphql.SelectionNode] = []
@@ -62,7 +62,7 @@ def _merge_selection_sets(
     return graphql.SelectionSetNode(selections=selections)
 
 
-def _collect_type_conditions(
+def collect_type_conditions(
     selection_set: graphql.SelectionSetNode,
     fragments: dict[str, graphql.FragmentDefinitionNode],
 ) -> set[str]:
@@ -99,7 +99,7 @@ def _collect_type_conditions(
     return conditions
 
 
-def _interface_has_base_typename(
+def interface_has_base_typename(
     selection_set: graphql.SelectionSetNode,
     fragments: dict[str, graphql.FragmentDefinitionNode],
     interface_name: str,
@@ -135,7 +135,7 @@ def _interface_has_base_typename(
     return False
 
 
-def _build_codegen_variable_values(
+def build_codegen_variable_values(
     doc: graphql.DocumentNode,
     variables: Iterable[GQLVar],
 ) -> dict[str, Any]:
@@ -208,7 +208,7 @@ def render_type(
     return typ
 
 
-def _format_discriminated_union_type(
+def format_discriminated_union_type(
     branch_types: list[str],
     gql_type: graphql.GraphQLType,
     *,
@@ -216,9 +216,9 @@ def _format_discriminated_union_type(
 ) -> str:
     match gql_type:
         case graphql.GraphQLNonNull(of_type=inner):
-            return _format_discriminated_union_type(branch_types, inner, nullable=False)
+            return format_discriminated_union_type(branch_types, inner, nullable=False)
         case graphql.GraphQLList(of_type=inner):
-            inner_str = _format_discriminated_union_type(branch_types, inner)
+            inner_str = format_discriminated_union_type(branch_types, inner)
             typ = f"list[{inner_str}]"
         case _:
             union_str = " | ".join(branch_types)
@@ -229,7 +229,7 @@ def _format_discriminated_union_type(
 
 
 def render_pydantic_class(name: str, base: str, fields: list[str]) -> str:
-    return f"class {name}({base}):\n    {indent_block(chr(10).join(fields), '    ')}"
+    return f"class {name}({base}):\n    {indent_block('\n'.join(fields), '    ')}"
 
 
 def generate_gql_package(
@@ -268,7 +268,7 @@ def generate_gql_package(
     if scalars is None:
         scalars = {}
 
-    package_name = package_full_name.split(".")[-1]  # noqa: PLC0207
+    package_name = package_full_name.rsplit(".", maxsplit=1)[-1]
     gql_fn_name = f"{package_name}_gql"
 
     target_package_path = src_path / f"{package_full_name.replace('.', '/')}.py"
@@ -351,7 +351,7 @@ from __future__ import annotations
 # ruff: noqa"""
 
 
-def _render_imports(
+def render_imports(
     to_camel_fn_full_name: str,
     scalars: dict[str, str],
     base_url_import_package: str,
@@ -378,7 +378,7 @@ import {to_camel_module}
 from {base_url_import_package} import {base_url_symbol}"""
 
 
-def _render_client_init(
+def render_client_init(
     package_name: str,
     base_url_import_path: str,
     to_camel_fn_full_name: str,
@@ -398,7 +398,7 @@ class GQLModel(pydantic.BaseModel):
     )"""
 
 
-def _render_gql_fn(
+def render_gql_fn(
     queries: list[Query],
     package_name: str,
     gql_fn_name: str,
@@ -440,13 +440,13 @@ def render_package(
     scalars: dict[str, str],
     to_camel_fn_full_name: str,
     to_snake_fn: StrTransform,
-):
+) -> str:
     queries = get_unique_queries(queries)
 
     input_roots: set[graphql.GraphQLInputObjectType] = set()
     for query in queries:
         for v in query.variables:
-            _collect_input_root(v.gql_type, input_roots)
+            collect_input_root(v.gql_type, input_roots)
     ordered_input_types = collect_input_types(input_roots)
 
     if queries:
@@ -465,23 +465,23 @@ def render_package(
 
     sections = [
         HEADER,
-        _render_imports(
+        render_imports(
             to_camel_fn_full_name,
             scalars,
             base_url_import_package,
             base_url_import_path,
         ),
-        _render_client_init(package_name, base_url_import_path, to_camel_fn_full_name),
+        render_client_init(package_name, base_url_import_path, to_camel_fn_full_name),
         "\n".join(rendered_enums),
         "\n\n\n".join(rendered_result_models),
         "\n\n\n".join(rendered_input_types),
         "\n\n\n".join(rendered_query_classes),
-        _render_gql_fn(queries, package_name, gql_fn_name),
+        render_gql_fn(queries, package_name, gql_fn_name),
     ]
     return "\n\n\n".join(section for section in sections if section)
 
 
-def _collect_input_root(
+def collect_input_root(
     gql_type: graphql.GraphQLType,
     roots: set[graphql.GraphQLInputObjectType],
 ) -> None:
@@ -513,9 +513,9 @@ class PackageRenderer:
     enums: set[graphql.GraphQLEnumType] = field(default_factory=set)
 
     def render_operation_models(self, query: Query) -> list[GeneratedModel]:
-        ctx = _RenderContext(
+        ctx = RenderContext(
             fragments=query.fragments,
-            variable_values=_build_codegen_variable_values(query.doc, query.variables),
+            variable_values=build_codegen_variable_values(query.doc, query.variables),
         )
         return self._render_object_model(
             model_name_base=f"{capitalize_first(query.name)}Result",
@@ -530,7 +530,7 @@ class PackageRenderer:
         model_name_base: str,
         runtime_type: graphql.GraphQLObjectType,
         selection_set: graphql.SelectionSetNode,
-        ctx: _RenderContext,
+        ctx: RenderContext,
         typename_type: str | None = None,
         require_typename_for: str | None = None,
     ) -> list[GeneratedModel]:
@@ -600,9 +600,9 @@ class PackageRenderer:
         response_key: str,
         gql_type: graphql.GraphQLType,
         field_nodes: list[graphql.FieldNode],
-        ctx: _RenderContext,
+        ctx: RenderContext,
     ) -> tuple[list[GeneratedModel], str]:
-        selection_set = _merge_selection_sets(field_nodes)
+        selection_set = merge_selection_sets(field_nodes)
         if selection_set is None:
             return [], render_type(gql_type, self.scalars, enums=self.enums)
 
@@ -645,7 +645,7 @@ class PackageRenderer:
                 msg = f"Interface '{named.name}' has no possible types"
                 raise ValueError(msg)
             explicit = self._resolve_explicit_types(selection_set, ctx, named, possible)
-            if explicit and not _interface_has_base_typename(
+            if explicit and not interface_has_base_typename(
                 selection_set, ctx.fragments, named.name
             ):
                 msg = (
@@ -668,11 +668,11 @@ class PackageRenderer:
     def _resolve_explicit_types(
         self,
         selection_set: graphql.SelectionSetNode,
-        ctx: _RenderContext,
+        ctx: RenderContext,
         interface_type: graphql.GraphQLInterfaceType,
         possible_types: list[graphql.GraphQLObjectType],
     ) -> set[graphql.GraphQLObjectType]:
-        explicit_conditions = _collect_type_conditions(selection_set, ctx.fragments) - {
+        explicit_conditions = collect_type_conditions(selection_set, ctx.fragments) - {
             interface_type.name
         }
         explicit_objects: set[graphql.GraphQLObjectType] = set()
@@ -701,7 +701,7 @@ class PackageRenderer:
         possible_types: list[graphql.GraphQLObjectType],
         explicit_types: set[graphql.GraphQLObjectType],
         selection_set: graphql.SelectionSetNode,
-        ctx: _RenderContext,
+        ctx: RenderContext,
         field_gql_type: graphql.GraphQLType,
         require_typename_for: str,
     ) -> tuple[list[GeneratedModel], str]:
@@ -760,7 +760,7 @@ class PackageRenderer:
 
         return (
             child_models,
-            _format_discriminated_union_type(union_types, field_gql_type),
+            format_discriminated_union_type(union_types, field_gql_type),
         )
 
     def render_result_models(self, queries: list[Query]) -> list[str]:
