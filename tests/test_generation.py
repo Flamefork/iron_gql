@@ -568,3 +568,114 @@ def test_list_variable_argument(test_project: ProjectBuilder):
     # Verify ListTypeNode parsing resulted in list typed argument
     assert "ids: list[" in generated
     assert "str | None" in generated
+
+
+def test_include_skip_directives(test_project: ProjectBuilder):
+    schema = """
+        type Query {
+            user(id: ID!): User
+        }
+        type User {
+            id: ID!
+            name: String!
+            email: String!
+            phone: String!
+        }
+    """
+    test_project.prepare(
+        schema=schema,
+        queries="""
+        from sample_app.gql.api import api_gql
+
+        get_user = api_gql(
+            '''
+            query GetUser($id: ID!, $withEmail: Boolean!, $skipPhone: Boolean!) {
+                user(id: $id) {
+                    name
+                    email @include(if: $withEmail)
+                    phone @skip(if: $skipPhone)
+                }
+            }
+            '''
+        )
+        """,
+    )
+
+    assert test_project.generate() is True
+    generated = (test_project.root / "sample_app/gql/api.py").read_text()
+    assert "name: str" in generated
+    assert "email: str" in generated
+    assert "phone: str" in generated
+
+
+def test_regeneration_is_idempotent(test_project: ProjectBuilder):
+    schema = """
+        type Query {
+            ping: String
+        }
+    """
+    test_project.prepare(
+        schema=schema,
+        queries="""
+        from sample_app.gql.api import api_gql
+        q = api_gql("query Ping { ping }")
+        """,
+    )
+
+    assert test_project.generate() is True
+    assert test_project.generate() is False
+
+
+def test_no_queries_generates_module(test_project: ProjectBuilder):
+    schema = """
+        type Query {
+            ping: String
+        }
+    """
+    test_project.prepare(
+        schema=schema,
+        queries="""
+        x = 1
+        """,
+    )
+
+    assert test_project.generate() is True
+    generated = (test_project.root / "sample_app/gql/api.py").read_text()
+    assert "GQLClient" in generated
+    assert "_API_GQL_DISPATCH: dict[str, type[runtime.GQLQuery]] = {\n\n}" in generated
+
+
+def test_invalid_gql_call_arguments(test_project: ProjectBuilder):
+    schema = """
+        type Query {
+            ping: String
+        }
+    """
+    test_project.prepare(
+        schema=schema,
+        queries="""
+        from sample_app.gql.api import api_gql
+        q = api_gql(123)
+        """,
+    )
+
+    with pytest.raises(TypeError, match="expected a single string literal"):
+        test_project.generate()
+
+
+def test_duplicate_identical_query_deduplication(test_project: ProjectBuilder):
+    schema = """
+        type Query {
+            ping: String
+        }
+    """
+    test_project.prepare(
+        schema=schema,
+        queries="""
+        from sample_app.gql.api import api_gql
+        first = api_gql("query Ping { ping }")
+        second = api_gql("query Ping { ping }")
+        """,
+    )
+
+    assert test_project.generate() is True
