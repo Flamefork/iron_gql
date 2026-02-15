@@ -740,7 +740,10 @@ class ResultModelRenderer:
                 explicit_objects.add(typ)
                 continue
             if isinstance(typ, graphql.GraphQLInterfaceType):
-                explicit_objects.update(self.schema.get_possible_types(typ))
+                possible_set = set(possible_types)
+                explicit_objects.update(
+                    set(self.schema.get_possible_types(typ)) & possible_set
+                )
                 continue
             msg = f"Type condition '{name}' is not a composite type"
             raise TypeError(msg)

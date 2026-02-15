@@ -408,6 +408,77 @@ async def test_interface_hierarchy(
         assert post_result.node.id == "post-1"
 
 
+async def test_interface_fragment_on_overlapping_interface(
+    test_project: ProjectBuilder, httpserver: HTTPServer
+):
+    schema = """
+        interface Node {
+            id: ID!
+        }
+
+        interface Named {
+            name: String!
+        }
+
+        type User implements Node & Named {
+            id: ID!
+            name: String!
+        }
+
+        type Post implements Node {
+            id: ID!
+        }
+
+        type Org implements Named {
+            name: String!
+        }
+
+        type Query {
+            node(id: ID!): Node
+        }
+    """
+
+    query_source = """
+        from sample_app.gql.api import api_gql
+
+        get_node = api_gql(
+            '''
+            query GetNode($id: ID!) {
+                node(id: $id) {
+                    __typename
+                    id
+                    ... on Named {
+                        name
+                    }
+                }
+            }
+            '''
+        )
+    """
+
+    def resolve_node(_root, _info, *, id: str):
+        if id == "user-1":
+            return {"__typename": "User", "id": id, "name": "Morty"}
+        return {"__typename": "Post", "id": id}
+
+    async with test_project.server(
+        httpserver,
+        schema=schema,
+        queries=query_source,
+        resolvers={"Query": {"node": resolve_node}},
+    ) as (api, queries):
+        assert not hasattr(api, "GetNodeResultNodeOrg")
+
+        user_result = await queries.get_node.execute(id="user-1")
+        assert isinstance(user_result.node, api.GetNodeResultNodeUser)
+        assert user_result.node.id == "user-1"
+        assert user_result.node.name == "Morty"
+
+        post_result = await queries.get_node.execute(id="post-1")
+        assert isinstance(post_result.node, api.GetNodeResultNodeNode)
+        assert post_result.node.id == "post-1"
+
+
 def test_interface_fragment_requires_typename(test_project: ProjectBuilder):
     schema = """
         interface Node {
