@@ -4,9 +4,9 @@ from collections.abc import Callable
 from collections.abc import Iterable
 from collections.abc import Iterator
 from dataclasses import dataclass
+from dataclasses import field
 from pathlib import Path
 from typing import Any
-from typing import Protocol
 from typing import cast
 
 import graphql
@@ -14,6 +14,7 @@ from graphql.execution.collect_fields import collect_fields
 from graphql.execution.execute import get_field_def
 from pydantic import alias_generators
 
+from iron_gql.codegen.parser import GQLVar
 from iron_gql.codegen.parser import Query
 from iron_gql.codegen.parser import Statement
 from iron_gql.codegen.parser import parse_gql_queries
@@ -47,11 +48,6 @@ class GeneratedModel:
 class _RenderContext:
     fragments: dict[str, graphql.FragmentDefinitionNode]
     variable_values: dict[str, Any]
-
-
-class _VariableLike(Protocol):
-    name: str
-    default_value: Any
 
 
 def _merge_selection_sets(
@@ -103,32 +99,6 @@ def _collect_type_conditions(
     return conditions
 
 
-def _push_base_inline_fragment(
-    selection: graphql.InlineFragmentNode,
-    interface_name: str,
-    stack: list[graphql.SelectionSetNode],
-) -> None:
-    type_condition = cast(graphql.NamedTypeNode | None, selection.type_condition)
-    if type_condition is None or type_condition.name.value == interface_name:
-        stack.append(selection.selection_set)
-
-
-def _push_base_fragment_spread(
-    selection: graphql.FragmentSpreadNode,
-    fragments: dict[str, graphql.FragmentDefinitionNode],
-    interface_name: str,
-    visited_fragments: set[str],
-    stack: list[graphql.SelectionSetNode],
-) -> None:
-    name = selection.name.value
-    if name in visited_fragments:
-        return
-    visited_fragments.add(name)
-    fragment = fragments.get(name)
-    if fragment is not None and fragment.type_condition.name.value == interface_name:
-        stack.append(fragment.selection_set)
-
-
 def _interface_has_base_typename(
     selection_set: graphql.SelectionSetNode,
     fragments: dict[str, graphql.FragmentDefinitionNode],
@@ -144,16 +114,21 @@ def _interface_has_base_typename(
                     return True
                 continue
             if isinstance(selection, graphql.InlineFragmentNode):
-                _push_base_inline_fragment(selection, interface_name, stack)
+                type_cond = cast(graphql.NamedTypeNode | None, selection.type_condition)
+                if type_cond is None or type_cond.name.value == interface_name:
+                    stack.append(selection.selection_set)
                 continue
             if isinstance(selection, graphql.FragmentSpreadNode):
-                _push_base_fragment_spread(
-                    selection,
-                    fragments,
-                    interface_name,
-                    visited_fragments,
-                    stack,
-                )
+                name = selection.name.value
+                if name in visited_fragments:
+                    continue
+                visited_fragments.add(name)
+                fragment = fragments.get(name)
+                if (
+                    fragment is not None
+                    and fragment.type_condition.name.value == interface_name
+                ):
+                    stack.append(fragment.selection_set)
                 continue
             msg = f"Unsupported selection {selection}"
             raise TypeError(msg)
@@ -162,7 +137,7 @@ def _interface_has_base_typename(
 
 def _build_codegen_variable_values(
     doc: graphql.DocumentNode,
-    variables: Iterable[_VariableLike],
+    variables: Iterable[GQLVar],
 ) -> dict[str, Any]:
     values: dict[str, Any] = {
         var.name: var.default_value
@@ -467,7 +442,6 @@ def render_package(
     to_snake_fn: StrTransform,
 ):
     queries = get_unique_queries(queries)
-    enums: set[graphql.GraphQLEnumType] = set()
 
     input_roots: set[graphql.GraphQLInputObjectType] = set()
     for query in queries:
@@ -475,17 +449,19 @@ def render_package(
             _collect_input_root(v.gql_type, input_roots)
     ordered_input_types = collect_input_types(input_roots)
 
-    rendered_query_classes = render_query_classes(
-        queries, package_name, scalars, to_snake_fn, enums
-    )
-    rendered_result_models = render_result_models(queries, scalars, to_snake_fn, enums)
-    rendered_input_types = render_input_types(
-        ordered_input_types,
-        scalars,
-        to_snake_fn,
-        enums,
-    )
-    rendered_enums = render_enums(enums)
+    if queries:
+        renderer = PackageRenderer(
+            schema=queries[0].schema, scalars=scalars, to_snake_fn=to_snake_fn
+        )
+        rendered_result_models = renderer.render_result_models(queries)
+        rendered_input_types = renderer.render_input_types(ordered_input_types)
+        rendered_query_classes = renderer.render_query_classes(queries, package_name)
+        rendered_enums = renderer.render_enums()
+    else:
+        rendered_result_models = []
+        rendered_input_types = []
+        rendered_query_classes = []
+        rendered_enums = []
 
     sections = [
         HEADER,
@@ -529,19 +505,12 @@ def get_unique_queries(queries: list[Query]) -> list[Query]:
     return list(unique_queries.values())
 
 
-def render_enums(enum_types: set[graphql.GraphQLEnumType]) -> list[str]:
-    return [
-        f"type {typ.name} = Literal[{', '.join(repr(name) for name in typ.values)}]"
-        for typ in sorted(enum_types, key=lambda t: t.name)
-    ]
-
-
 @dataclass(kw_only=True)
-class ResultModelRenderer:
+class PackageRenderer:
     scalars: dict[str, str]
     to_snake_fn: StrTransform
-    enums: set[graphql.GraphQLEnumType]
     schema: graphql.GraphQLSchema
+    enums: set[graphql.GraphQLEnumType] = field(default_factory=set)
 
     def render_operation_models(self, query: Query) -> list[GeneratedModel]:
         ctx = _RenderContext(
@@ -563,8 +532,7 @@ class ResultModelRenderer:
         selection_set: graphql.SelectionSetNode,
         ctx: _RenderContext,
         typename_type: str | None = None,
-        require_union_typename: str | None = None,
-        require_interface_typename: str | None = None,
+        require_typename_for: str | None = None,
     ) -> list[GeneratedModel]:
         fields_by_key = collect_fields(
             self.schema,
@@ -573,17 +541,8 @@ class ResultModelRenderer:
             runtime_type,
             selection_set,
         )
-        if require_union_typename is not None and "__typename" not in fields_by_key:
-            msg = (
-                "Missing __typename in selection set for union "
-                f"'{require_union_typename}'"
-            )
-            raise ValueError(msg)
-        if require_interface_typename is not None and "__typename" not in fields_by_key:
-            msg = (
-                "Missing __typename in selection set for interface "
-                f"'{require_interface_typename}'"
-            )
+        if require_typename_for is not None and "__typename" not in fields_by_key:
+            msg = f"Missing __typename in selection set for '{require_typename_for}'"
             raise ValueError(msg)
 
         child_models: list[GeneratedModel] = []
@@ -666,67 +625,53 @@ class ResultModelRenderer:
             )
 
         if isinstance(named, graphql.GraphQLUnionType):
-            models, union_types = self._render_union_models(
+            possible = sorted(named.types, key=lambda t: t.name)
+            return self._render_polymorphic_models(
                 base_name=child_base,
-                union_type=named,
-                selection_set=selection_set,
-                ctx=ctx,
-            )
-            return models, _format_discriminated_union_type(union_types, gql_type)
-
-        if isinstance(named, graphql.GraphQLInterfaceType):
-            return self._render_interface_models(
-                base_name=child_base,
-                interface_type=named,
+                possible_types=possible,
+                explicit_types=set(possible),
                 selection_set=selection_set,
                 ctx=ctx,
                 field_gql_type=gql_type,
+                require_typename_for=named.name,
+            )
+
+        if isinstance(named, graphql.GraphQLInterfaceType):
+            possible = sorted(
+                self.schema.get_possible_types(named),
+                key=lambda t: t.name,
+            )
+            if not possible:
+                msg = f"Interface '{named.name}' has no possible types"
+                raise ValueError(msg)
+            explicit = self._resolve_explicit_types(selection_set, ctx, named, possible)
+            if explicit and not _interface_has_base_typename(
+                selection_set, ctx.fragments, named.name
+            ):
+                msg = (
+                    f"Missing __typename in selection set for interface '{named.name}'"
+                )
+                raise ValueError(msg)
+            return self._render_polymorphic_models(
+                base_name=child_base,
+                possible_types=possible,
+                explicit_types=explicit,
+                selection_set=selection_set,
+                ctx=ctx,
+                field_gql_type=gql_type,
+                require_typename_for=named.name,
             )
 
         msg = f"Unknown type {named} for field {response_key}"
         raise ValueError(msg)
 
-    def _render_union_models(
+    def _resolve_explicit_types(
         self,
-        *,
-        base_name: str,
-        union_type: graphql.GraphQLUnionType,
         selection_set: graphql.SelectionSetNode,
         ctx: _RenderContext,
-    ) -> tuple[list[GeneratedModel], list[str]]:
-        child_models: list[GeneratedModel] = []
-        union_types: list[str] = []
-        for obj_type in sorted(union_type.types, key=lambda t: t.name):
-            model_name = base_name + obj_type.name
-            child_models.extend(
-                self._render_object_model(
-                    model_name_base=model_name,
-                    runtime_type=obj_type,
-                    selection_set=selection_set,
-                    ctx=ctx,
-                    require_union_typename=union_type.name,
-                )
-            )
-            union_types.append(model_name)
-        return child_models, union_types
-
-    def _render_interface_models(
-        self,
-        *,
-        base_name: str,
         interface_type: graphql.GraphQLInterfaceType,
-        selection_set: graphql.SelectionSetNode,
-        ctx: _RenderContext,
-        field_gql_type: graphql.GraphQLType,
-    ) -> tuple[list[GeneratedModel], str]:
-        possible_types = sorted(
-            self.schema.get_possible_types(interface_type),
-            key=lambda t: t.name,
-        )
-        if not possible_types:
-            msg = f"Interface '{interface_type.name}' has no possible types"
-            raise ValueError(msg)
-
+        possible_types: list[graphql.GraphQLObjectType],
+    ) -> set[graphql.GraphQLObjectType]:
         explicit_conditions = _collect_type_conditions(selection_set, ctx.fragments) - {
             interface_type.name
         }
@@ -747,8 +692,20 @@ class ResultModelRenderer:
                 continue
             msg = f"Type condition '{name}' is not a composite type"
             raise TypeError(msg)
+        return explicit_objects
 
-        if not explicit_objects:
+    def _render_polymorphic_models(
+        self,
+        *,
+        base_name: str,
+        possible_types: list[graphql.GraphQLObjectType],
+        explicit_types: set[graphql.GraphQLObjectType],
+        selection_set: graphql.SelectionSetNode,
+        ctx: _RenderContext,
+        field_gql_type: graphql.GraphQLType,
+        require_typename_for: str,
+    ) -> tuple[list[GeneratedModel], str]:
+        if not explicit_types:
             child_models = self._render_object_model(
                 model_name_base=base_name,
                 runtime_type=possible_types[0],
@@ -765,21 +722,10 @@ class ResultModelRenderer:
                     enums=self.enums,
                 ),
             )
-        if not _interface_has_base_typename(
-            selection_set,
-            ctx.fragments,
-            interface_type.name,
-        ):
-            msg = (
-                "Missing __typename in selection set for interface "
-                f"'{interface_type.name}'"
-            )
-            raise ValueError(msg)
 
         child_models: list[GeneratedModel] = []
         union_types: list[str] = []
-        explicit_object_list = sorted(explicit_objects, key=lambda t: t.name)
-        for obj_type in explicit_object_list:
+        for obj_type in sorted(explicit_types, key=lambda t: t.name):
             model_name = base_name + obj_type.name
             child_models.extend(
                 self._render_object_model(
@@ -787,14 +733,14 @@ class ResultModelRenderer:
                     runtime_type=obj_type,
                     selection_set=selection_set,
                     ctx=ctx,
-                    require_interface_typename=interface_type.name,
+                    require_typename_for=require_typename_for,
                 )
             )
             union_types.append(model_name)
 
-        fallback_objects = {t for t in possible_types if t not in explicit_objects}
+        fallback_objects = {t for t in possible_types if t not in explicit_types}
         if fallback_objects:
-            fallback_name = base_name + interface_type.name
+            fallback_name = base_name + require_typename_for
             fallback_type_names = sorted(obj.name for obj in fallback_objects)
             fallback_typename_literal = (
                 f"Literal[{', '.join(repr(name) for name in fallback_type_names)}]"
@@ -807,7 +753,7 @@ class ResultModelRenderer:
                     selection_set=selection_set,
                     ctx=ctx,
                     typename_type=fallback_typename_literal,
-                    require_interface_typename=interface_type.name,
+                    require_typename_for=require_typename_for,
                 )
             )
             union_types.append(fallback_name)
@@ -817,55 +763,35 @@ class ResultModelRenderer:
             _format_discriminated_union_type(union_types, field_gql_type),
         )
 
+    def render_result_models(self, queries: list[Query]) -> list[str]:
+        return [
+            render_pydantic_class(model.name, "GQLModel", model.fields)
+            for query in queries
+            for model in self.render_operation_models(query)
+        ]
 
-def render_result_models(
-    queries: list[Query],
-    scalars: dict[str, str],
-    to_snake_fn: StrTransform,
-    enums: set[graphql.GraphQLEnumType],
-):
-    if not queries:
-        return []
-    renderer = ResultModelRenderer(
-        scalars=scalars,
-        to_snake_fn=to_snake_fn,
-        enums=enums,
-        schema=queries[0].schema,
-    )
+    def render_query_classes(
+        self, queries: list[Query], package_name: str
+    ) -> list[str]:
+        query_classes = []
+        for query in queries:
+            args = ["self"]
+            variables = []
+            if query.variables:
+                args.append("*")
+            for v in query.variables:
+                py_name = self.to_snake_fn(v.name)
+                typ = render_type(v.gql_type, self.scalars, enums=self.enums)
+                if v.default_value != graphql.Undefined:
+                    typ += f" = {v.default_value!r}"
+                args.append(f"{py_name}: {typ}")
+                variables.append(f'"{v.name}": runtime.serialize_var({py_name})')
+            variables_arg = (
+                f"\n            {{{', '.join(variables)}}}," if variables else ""
+            )
 
-    return [
-        render_pydantic_class(model.name, "GQLModel", model.fields)
-        for query in queries
-        for model in renderer.render_operation_models(query)
-    ]
-
-
-def render_query_classes(
-    queries: list[Query],
-    package_name: str,
-    scalars: dict[str, str],
-    to_snake_fn: StrTransform,
-    enums: set[graphql.GraphQLEnumType],
-) -> list[str]:
-    query_classes = []
-    for query in queries:
-        args = ["self"]
-        variables = []
-        if query.variables:
-            args.append("*")
-        for v in query.variables:
-            py_name = to_snake_fn(v.name)
-            typ = render_type(v.gql_type, scalars, enums=enums)
-            if v.default_value != graphql.Undefined:
-                typ += f" = {v.default_value!r}"
-            args.append(f"{py_name}: {typ}")
-            variables.append(f'"{v.name}": runtime.serialize_var({py_name})')
-        variables_arg = (
-            f"\n            {{{', '.join(variables)}}}," if variables else ""
-        )
-
-        query_classes.append(
-            f"""
+            query_classes.append(
+                f"""
 
 class {capitalize_first(query.name)}(runtime.GQLQuery):
     async def execute({", ".join(args)}) -> {capitalize_first(query.name)}Result:
@@ -876,29 +802,31 @@ class {capitalize_first(query.name)}(runtime.GQLQuery):
             upload_files=self.upload_files,
         )
 
-            """.strip()
-        )
-    return query_classes
+                """.strip()
+            )
+        return query_classes
 
+    def render_input_types(
+        self, ordered_input_types: list[graphql.GraphQLInputObjectType]
+    ) -> list[str]:
+        rendered: list[str] = []
+        for typ in ordered_input_types:
+            fields: list[str] = []
+            for field_name, gql_field in typ.fields.items():
+                typ_str = render_type(gql_field.type, self.scalars, enums=self.enums)
+                if gql_field.default_value != graphql.Undefined:
+                    typ_str += f" = {gql_field.default_value!r}"
+                elif not isinstance(gql_field.type, graphql.GraphQLNonNull):
+                    typ_str += " = None"
+                fields.append(f"{self.to_snake_fn(field_name)}: {typ_str}")
+            rendered.append(render_pydantic_class(typ.name, "GQLModel", fields))
+        return rendered
 
-def render_input_types(
-    ordered_input_types: list[graphql.GraphQLInputObjectType],
-    scalars: dict[str, str],
-    to_snake_fn: StrTransform,
-    enums: set[graphql.GraphQLEnumType] | None = None,
-) -> list[str]:
-    rendered: list[str] = []
-    for typ in ordered_input_types:
-        fields: list[str] = []
-        for field_name, field in typ.fields.items():
-            typ_str = render_type(field.type, scalars, enums=enums)
-            if field.default_value != graphql.Undefined:
-                typ_str += f" = {field.default_value!r}"
-            elif not isinstance(field.type, graphql.GraphQLNonNull):
-                typ_str += " = None"
-            fields.append(f"{to_snake_fn(field_name)}: {typ_str}")
-        rendered.append(render_pydantic_class(typ.name, "GQLModel", fields))
-    return rendered
+    def render_enums(self) -> list[str]:
+        return [
+            f"type {typ.name} = Literal[{', '.join(repr(name) for name in typ.values)}]"
+            for typ in sorted(self.enums, key=lambda t: t.name)
+        ]
 
 
 def collect_input_types(
@@ -913,8 +841,8 @@ def collect_input_types(
             continue
         visited.add(typ.name)
         result.append(typ)
-        for field in typ.fields.values():
-            target = graphql.get_named_type(field.type)
+        for gql_field in typ.fields.values():
+            target = graphql.get_named_type(gql_field.type)
             if isinstance(target, graphql.GraphQLInputObjectType):
                 queue.append(target)
     return sorted(result, key=lambda t: t.name)

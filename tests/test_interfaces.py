@@ -618,7 +618,7 @@ def test_union_fragment_requires_typename(test_project: ProjectBuilder):
 
     with pytest.raises(
         ValueError,
-        match=r"Missing __typename in selection set for union 'SearchResult'",
+        match=r"Missing __typename in selection set for 'SearchResult'",
     ):
         test_project.generate()
 

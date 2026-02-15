@@ -59,7 +59,7 @@ class Query:
             return self.operation_def.name.value
         return f"query{capitalize_first(self.stmt.hash_str)}"
 
-    @property
+    @functools.cached_property
     def variables(self) -> list[GQLVar]:
         return [
             _parse_var(var_def, schema=self.schema, context=self.stmt.location)
