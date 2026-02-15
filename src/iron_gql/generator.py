@@ -34,7 +34,7 @@ BUILTIN_SCALARS = {
     "Date": "datetime.date",
     "DateTime": "datetime.datetime",
     "JSON": "object",
-    "Upload": "gql.FileVar",
+    "Upload": "runtime.FileVar",
 }
 
 
@@ -237,7 +237,6 @@ from typing import Literal
 from typing import overload
 
 import pydantic
-import gql
 
 from iron_gql import runtime
 
@@ -271,18 +270,35 @@ class GQLModel(pydantic.BaseModel):
 
 
 def _render_gql_fn(
+    queries: list[Query],
+    package_name: str,
     gql_fn_name: str,
-    rendered_overloads: list[str],
-    query_cases: list[str],
 ) -> str:
+    dict_name = f"_{package_name.upper()}_GQL_DISPATCH"
+
+    entries = [(repr(q.stmt.raw_text), capitalize_first(q.name)) for q in queries]
+
+    overloads = "\n".join(
+        f"@overload\ndef {gql_fn_name}(stmt: Literal[{lit}]) -> {ret}: ..."
+        for lit, ret in entries
+    )
+    dict_entries = "\n".join(f"    {lit}: {ret}," for lit, ret in entries)
+
     return f"""\
-{"\n".join(rendered_overloads)}
+{overloads}
 @overload
 def {gql_fn_name}(stmt: str) -> runtime.GQLQuery: ...
 
 
+{dict_name}: dict[str, type[runtime.GQLQuery]] = {{
+{dict_entries}
+}}
+
+
 def {gql_fn_name}(stmt: str) -> runtime.GQLQuery:
-    {indent_block("\n".join(query_cases), "    ")}
+    query_cls = {dict_name}.get(stmt)
+    if query_cls is not None:
+        return query_cls()
     return runtime.GQLQuery()"""
 
 
@@ -317,8 +333,6 @@ def render_package(
         to_snake_fn,
         ctx,
     )
-    rendered_overloads = render_overloads(queries, gql_fn_name)
-    query_cases = render_query_cases(queries)
     rendered_enums = render_enums(ctx.enums)
 
     sections = [
@@ -336,7 +350,7 @@ def render_package(
         "\n\n\n".join(rendered_result_models),
         "\n\n\n".join(rendered_input_types),
         "\n\n\n".join(rendered_query_classes),
-        _render_gql_fn(gql_fn_name, rendered_overloads, query_cases),
+        _render_gql_fn(queries, package_name, gql_fn_name),
     ]
     return "\n\n\n".join(section for section in sections if section)
 
@@ -748,8 +762,8 @@ def render_query_classes(
             typ = field_type(v.type, scalars, ctx=ctx)
             args.append(f"{py_name}: {typ}")
             variables.append(f'"{v.name}": runtime.serialize_var({py_name})')
-        variable_values = (
-            f"request.variable_values = {{{', '.join(variables)}}}" if variables else ""
+        variables_arg = (
+            f"\n            {{{', '.join(variables)}}}," if variables else ""
         )
 
         query_classes.append(
@@ -757,11 +771,9 @@ def render_query_classes(
 
 class {capitalize_first(query.name)}(runtime.GQLQuery):
     async def execute({", ".join(args)}) -> {capitalize_first(query.name)}Result:
-        request = gql.gql({query.exec_source!r})
-        {variable_values}
         return await {package_name.upper()}_CLIENT.query(
             {capitalize_first(query.name)}Result,
-            request,
+            {query.exec_source!r},{variables_arg}
             headers=self.headers,
             upload_files=self.upload_files,
         )
@@ -872,36 +884,6 @@ def _input_py_type(
         case _:
             logger.warning(f"Unknown GraphQL type {gql_type.name} {type(gql_type)}")
             return False, "object"
-
-
-def render_overloads(queries: list[Query], gql_fn_name: str) -> list[str]:
-    overloads = []
-    for query in queries:
-        stmt = query.stmt.raw_text
-        overloads.append(
-            f"""
-
-@overload
-def {gql_fn_name}(stmt: Literal[{stmt!r}]) -> {capitalize_first(query.name)}: ...
-
-            """.strip()
-        )
-    return overloads
-
-
-def render_query_cases(queries: list[Query]) -> list[str]:
-    cases = []
-    for query in queries:
-        stmt = query.stmt.raw_text
-        cases.append(
-            f"""
-
-if stmt == {stmt!r}:
-    return {capitalize_first(query.name)}()
-
-            """.strip()
-        )
-    return cases
 
 
 def field_type(

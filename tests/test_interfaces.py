@@ -64,7 +64,7 @@ async def test_union_result_validation(
     def resolve_count(_root, _info):
         return 3
 
-    with test_project.server(
+    async with test_project.server(
         httpserver,
         schema=schema,
         queries=query_source,
@@ -128,7 +128,7 @@ async def test_union_with_interface_fragment(
             return {"__typename": "User", "id": id, "name": "Morty"}
         return {"__typename": "Admin", "id": id, "permissions": ["portal"]}
 
-    with test_project.server(
+    async with test_project.server(
         httpserver,
         schema=schema,
         queries=query_source,
@@ -187,7 +187,7 @@ async def test_interface_without_fragments(
             return {"__typename": "User", "id": id, "name": "Morty"}
         return {"__typename": "Post", "id": id, "title": "GraphQL 101"}
 
-    with test_project.server(
+    async with test_project.server(
         httpserver,
         schema=schema,
         queries=query_source,
@@ -254,7 +254,7 @@ async def test_interface_with_fragments(
             return {"__typename": "Post", "id": id, "title": "GraphQL 101"}
         return {"__typename": "Comment", "id": id, "body": "First!"}
 
-    with test_project.server(
+    async with test_project.server(
         httpserver,
         schema=schema,
         queries=query_source,
@@ -324,7 +324,7 @@ async def test_nested_interface(test_project: ProjectBuilder, httpserver: HTTPSe
             "child": {"__typename": "Comment", "id": "child-1"},
         }
 
-    with test_project.server(
+    async with test_project.server(
         httpserver,
         schema=schema,
         queries=query_source,
@@ -393,7 +393,7 @@ async def test_interface_hierarchy(
             }
         return {"__typename": "Post", "id": id, "title": "GraphQL 101"}
 
-    with test_project.server(
+    async with test_project.server(
         httpserver,
         schema=schema,
         queries=query_source,
@@ -651,7 +651,7 @@ async def test_nullable_union_result_validation(
             return {"__typename": "User", "id": id, "name": "Morty"}
         return {"__typename": "Admin", "id": id, "permissions": ["portal"]}
 
-    with test_project.server(
+    async with test_project.server(
         httpserver,
         schema=schema,
         queries=query_source,
@@ -716,7 +716,7 @@ async def test_list_wrapped_union(test_project: ProjectBuilder, httpserver: HTTP
             {"__typename": "Post", "id": "p-1", "title": "GraphQL 101"},
         ]
 
-    with test_project.server(
+    async with test_project.server(
         httpserver,
         schema=schema,
         queries=query_source,
