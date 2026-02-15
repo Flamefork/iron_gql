@@ -7,16 +7,23 @@
 
 `iron_gql` is a lightweight GraphQL code generator and runtime that turns schema SDL and real query documents into typed Python clients powered by Pydantic models. Use it to wire GraphQL APIs into services, CLIs, background jobs, or tests without hand-writing boilerplate.
 
+## Installation
+
+```bash
+pip install iron-gql            # runtime only (httpx + pydantic)
+pip install iron-gql[codegen]   # + graphql-core for code generation
+```
+
 ## Key Features
 - **Query discovery.** `generate_gql_package` scans your codebase for calls that look like `<package>_gql("""...""")`, validates each statement, and emits a module with strongly typed helpers.
 - **Typed inputs and results.** Generated Pydantic models mirror every selection set, enum, and input object referenced by the discovered queries.
 - **Async runtime.** `runtime.GQLClient` speaks to GraphQL endpoints over `httpx` and can shortcut network hops when pointed at an ASGI app.
-- **Deterministic validation.** `graphql-core` enforces schema compatibility and rejects duplicate operation names with incompatible bodies.
+- **Deterministic validation.** `graphql-core` (codegen dependency) enforces schema compatibility and rejects duplicate operation names with incompatible bodies.
 
 ## Package Layout
-- `generator.py` – orchestrates query discovery, validation, and module rendering.
-- `parser.py` – converts GraphQL AST into typed helper structures consumed by the renderer.
 - `runtime.py` – provides the async `GQLClient`, the reusable `GQLQuery` base class, and value serialization helpers.
+- `codegen/generator.py` – orchestrates query discovery, validation, and module rendering.
+- `codegen/parser.py` – converts GraphQL AST into typed helper structures consumed by the renderer.
 
 ## Getting Started
 1. **Describe your schema.** Point `generate_gql_package` at an SDL file (`schema.graphql`). Include whichever root types you rely on (query, mutation, subscription).
@@ -40,7 +47,7 @@
    ```python
    from pathlib import Path
 
-   from iron_gql.gen import generate_gql_package
+   from iron_gql.codegen import generate_gql_package
 
    generate_gql_package(
        schema_path=Path("schema.graphql"),

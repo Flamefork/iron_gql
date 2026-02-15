@@ -11,7 +11,7 @@ import graphql
 import pydantic
 from graphql.utilities import value_from_ast_untyped
 
-from iron_gql.util import capitalize_first
+from iron_gql.codegen.util import capitalize_first
 
 
 @dataclass(kw_only=True)

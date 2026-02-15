@@ -18,10 +18,12 @@ classifiers = [
 
 requires-python = ">=3.13"
 dependencies = [
-    "graphql-core>=3.2.6,<4",
     "httpx>=0.28.1,<1",
     "pydantic>=2.12.3,<3",
 ]
+
+[project.optional-dependencies]
+codegen = ["graphql-core>=3.2.6,<4"]
 
 [project.urls]
 Homepage = "https://github.com/Flamefork/iron_gql"
@@ -34,6 +36,7 @@ build-backend = "uv_build"
 
 [dependency-groups]
 dev = [
+    "iron-gql[codegen]",
     "basedpyright>=1.31.7",
     "pytest>=8.4.2",
     "pytest-asyncio>=1.2.0",

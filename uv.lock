@@ -183,14 +183,19 @@ name = "iron-gql"
 version = "0.3.0"
 source = { editable = "." }
 dependencies = [
-    { name = "graphql-core" },
     { name = "httpx" },
     { name = "pydantic" },
+]
+
+[package.optional-dependencies]
+codegen = [
+    { name = "graphql-core" },
 ]
 
 [package.dev-dependencies]
 dev = [
     { name = "basedpyright" },
+    { name = "iron-gql", extra = ["codegen"] },
     { name = "pytest" },
     { name = "pytest-asyncio" },
     { name = "pytest-cov" },
@@ -201,14 +206,16 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "graphql-core", specifier = ">=3.2.6,<4" },
+    { name = "graphql-core", marker = "extra == 'codegen'", specifier = ">=3.2.6,<4" },
     { name = "httpx", specifier = ">=0.28.1,<1" },
     { name = "pydantic", specifier = ">=2.12.3,<3" },
 ]
+provides-extras = ["codegen"]
 
 [package.metadata.requires-dev]
 dev = [
     { name = "basedpyright", specifier = ">=1.31.7" },
+    { name = "iron-gql", extras = ["codegen"] },
     { name = "pytest", specifier = ">=8.4.2" },
     { name = "pytest-asyncio", specifier = ">=1.2.0" },
     { name = "pytest-cov", specifier = ">=7.0.0" },

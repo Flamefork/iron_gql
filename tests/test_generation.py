@@ -1,11 +1,10 @@
 import importlib
 
-import graphql
 import pytest
 from pydantic import alias_generators
 
 from iron_gql import runtime
-from iron_gql.gen import generate_gql_package
+from iron_gql.codegen import generate_gql_package
 from tests.conftest import ProjectBuilder
 
 
@@ -57,16 +56,9 @@ ping = api_gql(
     )
     assert changed is True
 
-    module_path = workspace / "sample_app/gql/api.py"
-    expected_schema_ref = schema_path.resolve().relative_to(
-        workspace.resolve(), walk_up=True
-    )
-    generated = module_path.read_text(encoding="utf-8")
-    assert f'Path("{expected_schema_ref}")' in generated
-
     test_project.clear_modules()
     api_module = importlib.import_module("sample_app.gql.api")
-    assert isinstance(api_module.API_CLIENT.schema, graphql.GraphQLSchema)
+    assert isinstance(api_module.API_CLIENT, runtime.GQLClient)
 
 
 def test_duplicate_operations_raise(test_project: ProjectBuilder):

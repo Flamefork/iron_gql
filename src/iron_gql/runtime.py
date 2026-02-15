@@ -5,12 +5,10 @@ from collections.abc import Callable
 from collections.abc import MutableMapping
 from dataclasses import dataclass
 from http import HTTPStatus
-from pathlib import Path
 from typing import IO
 from typing import Any
 from typing import Self
 
-import graphql
 import httpx
 import pydantic
 
@@ -89,14 +87,9 @@ class GQLClient:
         *,
         base_url: str,
         target_app: _ASGIApp | None = None,
-        schema: str | Path,
         headers: dict[str, str] | None = None,
         query_timeout: int = DEFAULT_QUERY_TIMEOUT,
     ):
-        if isinstance(schema, Path):
-            with schema.open(encoding="utf-8") as f:
-                schema = f.read()
-        self.schema = graphql.build_ast_schema(graphql.parse(schema))
         self._endpoint_url = httpx.URL(base_url)
         transport = httpx.ASGITransport(app=target_app) if target_app else None
         self._client = httpx.AsyncClient(

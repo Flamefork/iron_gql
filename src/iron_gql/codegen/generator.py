@@ -10,17 +10,17 @@ from pathlib import Path
 import graphql
 from pydantic import alias_generators
 
-from iron_gql.parser import GQLListType
-from iron_gql.parser import GQLObjectType
-from iron_gql.parser import GQLSingularType
-from iron_gql.parser import GQLType
-from iron_gql.parser import GQLVar
-from iron_gql.parser import Query
-from iron_gql.parser import Statement
-from iron_gql.parser import get_transitive_interfaces
-from iron_gql.parser import parse_gql_queries
-from iron_gql.parser import parse_input_type
-from iron_gql.util import capitalize_first
+from iron_gql.codegen.parser import GQLListType
+from iron_gql.codegen.parser import GQLObjectType
+from iron_gql.codegen.parser import GQLSingularType
+from iron_gql.codegen.parser import GQLType
+from iron_gql.codegen.parser import GQLVar
+from iron_gql.codegen.parser import Query
+from iron_gql.codegen.parser import Statement
+from iron_gql.codegen.parser import get_transitive_interfaces
+from iron_gql.codegen.parser import parse_gql_queries
+from iron_gql.codegen.parser import parse_input_type
+from iron_gql.codegen.util import capitalize_first
 
 logger = logging.getLogger(__name__)
 
@@ -152,14 +152,9 @@ def generate_gql_package(
         logger.error(parse_res.error)
         return False
 
-    schema_base = schema_path.resolve()
-    src_base = src_path.resolve()
-    schema_for_render = schema_base.relative_to(src_base, walk_up=True)
-
     new_content = render_package(
         base_url_import_package=base_url_import_package,
         base_url_import_path=base_url_import_path,
-        schema_path=schema_for_render,
         package_name=package_name,
         gql_fn_name=gql_fn_name,
         queries=sorted(parse_res.queries, key=lambda q: q.name),
@@ -231,7 +226,6 @@ def _render_imports(
     base_url_symbol = base_url_import_path.split(".", maxsplit=1)[0]
     return f"""\
 import datetime
-from pathlib import Path
 from typing import Annotated
 from typing import Literal
 from typing import overload
@@ -250,13 +244,11 @@ from {base_url_import_package} import {base_url_symbol}"""
 def _render_client_init(
     package_name: str,
     base_url_import_path: str,
-    schema_path: Path,
     to_camel_fn_full_name: str,
 ) -> str:
     return f"""\
 {package_name.upper()}_CLIENT = runtime.GQLClient(
     base_url={base_url_import_path},
-    schema=Path("{schema_path}"),
 )
 
 
@@ -305,7 +297,6 @@ def {gql_fn_name}(stmt: str) -> runtime.GQLQuery:
 def render_package(
     base_url_import_package: str,
     base_url_import_path: str,
-    schema_path: Path,
     package_name: str,
     gql_fn_name: str,
     queries: list[Query],
@@ -343,9 +334,7 @@ def render_package(
             base_url_import_package,
             base_url_import_path,
         ),
-        _render_client_init(
-            package_name, base_url_import_path, schema_path, to_camel_fn_full_name
-        ),
+        _render_client_init(package_name, base_url_import_path, to_camel_fn_full_name),
         "\n".join(rendered_enums),
         "\n\n\n".join(rendered_result_models),
         "\n\n\n".join(rendered_input_types),
