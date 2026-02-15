@@ -199,6 +199,23 @@ def test_serialize_var_handles_nested_structures():
     assert serialize_var(mixed) == {"a": [1, {"b": 2}]}
 
 
+def test_serialize_var_handles_custom_scalar_types():
+    import datetime
+    from decimal import Decimal
+
+    dt = datetime.datetime(2024, 1, 15, 10, 30, 0, tzinfo=datetime.timezone.utc)
+    assert serialize_var(dt) == "2024-01-15T10:30:00Z"
+
+    d = datetime.date(2024, 6, 1)
+    assert serialize_var(d) == "2024-06-01"
+
+    assert serialize_var(Decimal("12.50")) == "12.50"
+
+    assert serialize_var({"dates": [dt, d]}) == {
+        "dates": ["2024-01-15T10:30:00Z", "2024-06-01"]
+    }
+
+
 def test_query_with_file_uploads():
     query = GQLQuery()
     assert query.upload_files is False
@@ -435,6 +452,54 @@ async def test_file_upload_multipart(
         assert received["file_name"] == "test.txt"
     finally:
         await api_module.API_CLIENT.close()
+
+
+async def test_custom_scalar_in_variables_and_response(
+    test_project: ProjectBuilder, httpserver: HTTPServer
+):
+    schema = """
+        scalar DateTime
+
+        type Query {
+            events(since: DateTime!): [Event!]!
+        }
+
+        type Event {
+            name: String!
+            startedAt: DateTime!
+        }
+    """
+
+    query_source = """
+        from sample_app.gql.api import api_gql
+
+        get_events = api_gql(
+            '''
+            query GetEvents($since: DateTime!) {
+                events(since: $since) {
+                    name
+                    startedAt
+                }
+            }
+            '''
+        )
+    """
+
+    def resolve_events(_root, _info, *, since: str):
+        return [{"name": "Launch", "startedAt": since}]
+
+    async with test_project.server(
+        httpserver,
+        schema=schema,
+        queries=query_source,
+        resolvers={"Query": {"events": resolve_events}},
+    ) as (_, queries):
+        import datetime
+
+        dt = datetime.datetime(2024, 1, 15, 10, 30, 0, tzinfo=datetime.timezone.utc)
+        result = await queries.get_events.execute(since=dt)
+        assert result.events[0].name == "Launch"
+        assert result.events[0].started_at == dt
 
 
 async def test_base_url_without_trailing_slash_calls_exact_endpoint(

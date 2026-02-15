@@ -73,8 +73,36 @@ pip install iron-gql[codegen]   # + graphql-core for code generation
        return result.user
    ```
 
+## Custom Scalars
+
+The generator maps GraphQL scalars to Python types in two layers:
+
+**Built-in scalars** are mapped automatically:
+
+| GraphQL | Python |
+|---------|--------|
+| `String`, `Int`, `Float`, `Boolean` | `str`, `int`, `float`, `bool` |
+| `Date` | `datetime.date` |
+| `DateTime` | `datetime.datetime` |
+| `JSON` | `object` |
+| `Upload` | `iron_gql.FileVar` |
+
+**Custom scalars** are configured via the `scalars` parameter in `"module:type"` format:
+
+```python
+generate_gql_package(
+    ...,
+    scalars={
+        "ID": "builtins:str",
+        "Money": "decimal:Decimal",
+        "ULID": "ulid:ULID",
+    },
+)
+```
+
+Custom scalar types must be Pydantic-compatible — i.e. Pydantic should know how to parse them from JSON (deserialization) and serialize them to JSON. This works out of the box for standard library types (`datetime`, `Decimal`, `UUID`, `Enum`) and for any type that implements `__get_pydantic_core_schema__`. Unknown scalars fall back to `object` with a log warning.
+
 ## Customization Hooks
-- **Scalar mapping.** Provide `scalars={"DateTime": "datetime:datetime"}` to map schema scalars onto importable Python types. Unknown scalars fall back to `object` with a log warning.
 - **Naming conventions.** Supply `to_camel_fn_full_name` (module:path string) and a `to_snake_fn` callable to align casing with your own `alias_generator`.
 - **Endpoint configuration.** `base_url_import` is written verbatim into the generated module; point it at a global string, config object, or helper that returns the GraphQL endpoint.
 
@@ -82,7 +110,7 @@ pip install iron-gql[codegen]   # + graphql-core for code generation
 - `GQLClient` accepts ASGI `target_app` so you can reuse the runtime for production HTTP calls or in-process ASGI execution.
 - `GQLQuery.with_headers` and `GQLQuery.with_file_uploads` clone the query object, making per-call customization trivial.
 - `Upload` scalars map to `iron_gql.FileVar` for multipart file handling.
-- `serialize_var` converts nested Pydantic models, dicts, lists, and primitives into JSON-friendly structures for variable payloads.
+- `serialize_var` converts variables to JSON-friendly structures via Pydantic's `TypeAdapter`, supporting custom scalar types alongside nested models, dicts, and lists.
 
 ## Example
 

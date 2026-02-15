@@ -164,6 +164,9 @@ class GQLClient:
         await self._client.aclose()
 
 
+_adapter_cache: dict[type, pydantic.TypeAdapter[object]] = {}
+
+
 def serialize_var(value: Any) -> Any:
     match value:
         case list() | tuple():
@@ -172,5 +175,10 @@ def serialize_var(value: Any) -> Any:
             return {k: serialize_var(v) for k, v in value.items()}
         case pydantic.BaseModel():
             return value.model_dump(mode="json", by_alias=True, exclude_unset=True)
-        case _:
+        case FileVar():
             return value
+        case _:
+            tp = type(value)
+            if tp not in _adapter_cache:
+                _adapter_cache[tp] = pydantic.TypeAdapter(tp)
+            return _adapter_cache[tp].dump_python(value, mode="json")
