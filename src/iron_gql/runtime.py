@@ -3,7 +3,6 @@ import json
 from collections.abc import Awaitable
 from collections.abc import Callable
 from collections.abc import MutableMapping
-from dataclasses import dataclass
 from http import HTTPStatus
 from typing import IO
 from typing import Any
@@ -24,11 +23,24 @@ _ASGIApp = Callable[
 ]
 
 
-@dataclass(slots=True)
 class FileVar:
-    f: IO[bytes] | bytes
-    filename: str | None = None
-    content_type: str | None = None
+    """A file to be uploaded via GraphQL multipart request."""
+
+    def __init__(
+        self,
+        f: IO[bytes] | bytes,
+        *,
+        filename: str | None = None,
+        content_type: str | None = None,
+    ):
+        """Args:
+        f: File-like object opened in binary mode, or raw bytes.
+        filename: Name sent to the server; defaults to a numeric index.
+        content_type: MIME type; when omitted, httpx infers it.
+        """
+        self.f = f
+        self.filename = filename
+        self.content_type = content_type
 
 
 class GraphQLResponseError(Exception):
@@ -164,8 +176,13 @@ class GQLClient:
         await self._client.aclose()
 
 
+_adapter_cache: dict[type, pydantic.TypeAdapter[object]] = {}
+
+
 def serialize_var(value: Any) -> Any:
     match value:
+        case str() | int() | float() | bool() | FileVar() | None:
+            return value
         case list() | tuple():
             return [serialize_var(v) for v in value]
         case dict():
@@ -173,4 +190,7 @@ def serialize_var(value: Any) -> Any:
         case pydantic.BaseModel():
             return value.model_dump(mode="json", by_alias=True, exclude_unset=True)
         case _:
-            return value
+            tp = type(value)
+            if tp not in _adapter_cache:
+                _adapter_cache[tp] = pydantic.TypeAdapter(tp)
+            return _adapter_cache[tp].dump_python(value, mode="json")

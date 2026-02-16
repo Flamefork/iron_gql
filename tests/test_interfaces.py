@@ -801,6 +801,145 @@ async def test_list_wrapped_union(test_project: ProjectBuilder, httpserver: HTTP
         assert result.nodes[1].title == "GraphQL 101"
 
 
+async def test_interface_with_named_fragment_type_condition(
+    test_project: ProjectBuilder, httpserver: HTTPServer
+):
+    schema = """
+        interface Node {
+            id: ID!
+        }
+
+        type User implements Node {
+            id: ID!
+            name: String
+        }
+
+        type Post implements Node {
+            id: ID!
+            title: String
+        }
+
+        type Query {
+            node(id: ID!): Node
+        }
+    """
+
+    query_source = """
+        from sample_app.gql.api import api_gql
+
+        user_fields = api_gql(
+            '''
+            fragment UserFields on User {
+                name
+            }
+            '''
+        )
+
+        get_node = api_gql(
+            '''
+            query GetNode($id: ID!) {
+                node(id: $id) {
+                    __typename
+                    id
+                    ...UserFields
+                }
+            }
+            '''
+        )
+    """
+
+    def resolve_node(_root, _info, *, id: str):
+        if id == "user-1":
+            return {"__typename": "User", "id": id, "name": "Morty"}
+        return {"__typename": "Post", "id": id, "title": "GraphQL 101"}
+
+    async with test_project.server(
+        httpserver,
+        schema=schema,
+        queries=query_source,
+        resolvers={"Query": {"node": resolve_node}},
+    ) as (api, queries):
+        user_result = await queries.get_node.execute(id="user-1")
+        assert isinstance(user_result.node, api.GetNodeResultNodeUser)
+        assert user_result.node.name == "Morty"
+
+        post_result = await queries.get_node.execute(id="post-1")
+        assert isinstance(post_result.node, api.GetNodeResultNodeNode)
+        assert post_result.node.id == "post-1"
+
+
+async def test_interface_typename_in_named_fragment(
+    test_project: ProjectBuilder, httpserver: HTTPServer
+):
+    schema = """
+        interface Node {
+            id: ID!
+        }
+
+        type User implements Node {
+            id: ID!
+            name: String
+        }
+
+        type Post implements Node {
+            id: ID!
+            title: String
+        }
+
+        type Query {
+            node(id: ID!): Node
+        }
+    """
+
+    query_source = """
+        from sample_app.gql.api import api_gql
+
+        node_base = api_gql(
+            '''
+            fragment NodeBase on Node {
+                __typename
+                id
+            }
+            '''
+        )
+
+        get_node = api_gql(
+            '''
+            query GetNode($id: ID!) {
+                node(id: $id) {
+                    ...NodeBase
+                    ... on User {
+                        name
+                    }
+                    ... on Post {
+                        title
+                    }
+                }
+            }
+            '''
+        )
+    """
+
+    def resolve_node(_root, _info, *, id: str):
+        if id == "user-1":
+            return {"__typename": "User", "id": id, "name": "Morty"}
+        return {"__typename": "Post", "id": id, "title": "GraphQL 101"}
+
+    async with test_project.server(
+        httpserver,
+        schema=schema,
+        queries=query_source,
+        resolvers={"Query": {"node": resolve_node}},
+    ) as (api, queries):
+        user_result = await queries.get_node.execute(id="user-1")
+        assert isinstance(user_result.node, api.GetNodeResultNodeUser)
+        assert user_result.node.name == "Morty"
+
+        post_result = await queries.get_node.execute(id="post-1")
+        assert isinstance(post_result.node, api.GetNodeResultNodePost)
+        assert post_result.node.title == "GraphQL 101"
+
+
 def test_interface_exhaustively_covered(test_project: ProjectBuilder):
     schema = """
         interface Node {

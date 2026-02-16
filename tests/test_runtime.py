@@ -1,5 +1,7 @@
+import datetime
 import io
 import json
+from decimal import Decimal
 
 import httpx
 import pytest
@@ -197,6 +199,20 @@ def test_serialize_var_handles_nested_structures():
 
     mixed = {"a": [1, {"b": 2}]}
     assert serialize_var(mixed) == {"a": [1, {"b": 2}]}
+
+
+def test_serialize_var_handles_custom_scalar_types():
+    dt = datetime.datetime(2024, 1, 15, 10, 30, 0, tzinfo=datetime.UTC)
+    assert serialize_var(dt) == "2024-01-15T10:30:00Z"
+
+    d = datetime.date(2024, 6, 1)
+    assert serialize_var(d) == "2024-06-01"
+
+    assert serialize_var(Decimal("12.50")) == "12.50"
+
+    assert serialize_var({"dates": [dt, d]}) == {
+        "dates": ["2024-01-15T10:30:00Z", "2024-06-01"]
+    }
 
 
 def test_query_with_file_uploads():
@@ -437,6 +453,52 @@ async def test_file_upload_multipart(
         await api_module.API_CLIENT.close()
 
 
+async def test_custom_scalar_in_variables_and_response(
+    test_project: ProjectBuilder, httpserver: HTTPServer
+):
+    schema = """
+        scalar DateTime
+
+        type Query {
+            events(since: DateTime!): [Event!]!
+        }
+
+        type Event {
+            name: String!
+            startedAt: DateTime!
+        }
+    """
+
+    query_source = """
+        from sample_app.gql.api import api_gql
+
+        get_events = api_gql(
+            '''
+            query GetEvents($since: DateTime!) {
+                events(since: $since) {
+                    name
+                    startedAt
+                }
+            }
+            '''
+        )
+    """
+
+    def resolve_events(_root, _info, *, since: str):
+        return [{"name": "Launch", "startedAt": since}]
+
+    async with test_project.server(
+        httpserver,
+        schema=schema,
+        queries=query_source,
+        resolvers={"Query": {"events": resolve_events}},
+    ) as (_, queries):
+        dt = datetime.datetime(2024, 1, 15, 10, 30, 0, tzinfo=datetime.UTC)
+        result = await queries.get_events.execute(since=dt)
+        assert result.events[0].name == "Launch"
+        assert result.events[0].started_at == dt
+
+
 async def test_base_url_without_trailing_slash_calls_exact_endpoint(
     test_project: ProjectBuilder, httpserver: HTTPServer
 ):
@@ -588,5 +650,135 @@ async def test_redirect_response_raises_http_status_error(
             match=r"Unexpected 3xx response \(307\) to /graphql/",
         ):
             await queries_module.ping.execute()
+    finally:
+        await api_module.API_CLIENT.close()
+
+
+async def test_redirect_without_location_header(
+    test_project: ProjectBuilder, httpserver: HTTPServer
+):
+    schema = """
+        type Query {
+            ping: String!
+        }
+    """
+
+    def redirect_handler(_request):
+        return Response("moved", status=302, mimetype="text/plain")
+
+    httpserver.expect_request("/graphql", method="POST").respond_with_handler(
+        redirect_handler
+    )
+    base_url = httpserver.url_for("/graphql")
+    test_project.prepare(
+        schema=schema,
+        queries="""
+        from sample_app.gql.api import api_gql
+        ping = api_gql("query Ping { ping }")
+        """,
+        base_url=base_url,
+    )
+    api_module, queries_module = test_project.generate_and_import()
+    try:
+        with pytest.raises(
+            httpx.HTTPStatusError,
+            match=r"Unexpected 3xx response \(302\)",
+        ):
+            await queries_module.ping.execute()
+    finally:
+        await api_module.API_CLIENT.close()
+
+
+async def test_no_data_in_response(
+    test_project: ProjectBuilder, httpserver: HTTPServer
+):
+    schema = """
+        type Query {
+            ping: String!
+        }
+    """
+
+    def no_data_handler(_request):
+        return Response(
+            json.dumps({"extensions": {"tracing": True}}),
+            status=200,
+            mimetype="application/json",
+        )
+
+    httpserver.expect_request("/graphql/", method="POST").respond_with_handler(
+        no_data_handler
+    )
+    base_url = httpserver.url_for("/graphql/")
+    test_project.prepare(
+        schema=schema,
+        queries="""
+        from sample_app.gql.api import api_gql
+        ping = api_gql("query Ping { ping }")
+        """,
+        base_url=base_url,
+    )
+    _, queries_module = test_project.generate_and_import()
+    try:
+        with pytest.raises(GraphQLResponseError, match="No data in response"):
+            await queries_module.ping.execute()
+    finally:
+        await test_project.import_api().API_CLIENT.close()
+
+
+async def test_file_upload_with_content_type(
+    test_project: ProjectBuilder, httpserver: HTTPServer
+):
+    schema = """
+        scalar Upload
+
+        type Query {
+            _dummy: String
+        }
+
+        type Mutation {
+            uploadFile(file: Upload!): String!
+        }
+    """
+
+    received: dict = {}
+
+    def upload_handler(request):
+        received["content_type"] = request.files["0"].content_type
+        received["file_name"] = request.files["0"].filename
+        return Response(
+            json.dumps({"data": {"uploadFile": "ok"}}),
+            status=200,
+            mimetype="application/json",
+        )
+
+    httpserver.expect_request("/graphql/", method="POST").respond_with_handler(
+        upload_handler
+    )
+    base_url = httpserver.url_for("/graphql/")
+    test_project.prepare(
+        schema=schema,
+        queries="""
+        from sample_app.gql.api import api_gql
+
+        upload = api_gql(
+            '''
+            mutation Upload($file: Upload!) {
+                uploadFile(file: $file)
+            }
+            '''
+        )
+        """,
+        base_url=base_url,
+    )
+    api_module, queries_module = test_project.generate_and_import()
+    try:
+        file_data = io.BytesIO(b"image data")
+        query = queries_module.upload.with_file_uploads()
+        result = await query.execute(
+            file=FileVar(file_data, filename="photo.png", content_type="image/png")
+        )
+        assert result.upload_file == "ok"
+        assert received["content_type"] == "image/png"
+        assert received["file_name"] == "photo.png"
     finally:
         await api_module.API_CLIENT.close()
