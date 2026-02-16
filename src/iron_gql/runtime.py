@@ -181,14 +181,14 @@ _adapter_cache: dict[type, pydantic.TypeAdapter[object]] = {}
 
 def serialize_var(value: Any) -> Any:
     match value:
+        case str() | int() | float() | bool() | FileVar() | None:
+            return value
         case list() | tuple():
             return [serialize_var(v) for v in value]
         case dict():
             return {k: serialize_var(v) for k, v in value.items()}
         case pydantic.BaseModel():
             return value.model_dump(mode="json", by_alias=True, exclude_unset=True)
-        case FileVar():
-            return value
         case _:
             tp = type(value)
             if tp not in _adapter_cache:
