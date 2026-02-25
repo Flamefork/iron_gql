@@ -1,6 +1,6 @@
 import asyncio
 
-from myapp.gql.api import CreateUserInput, SearchResultSearchPost, SearchResultSearchUser, api_gql
+from myapp.gql.api import CreateUserInput, FindUserByEmail, FindUserById, SearchResultSearchPost, SearchResultSearchUser, api_gql
 
 
 async def main():
@@ -61,6 +61,30 @@ async def main():
                 print(f"User: {item.name}, role: {item.role}")
             case SearchResultSearchPost():
                 print(f"Post: {item.title} by {item.author.name}")
+
+    found = await api_gql("""
+        query FindUser($by: FindUserBy!) {
+            findUser(by: $by) {
+                id
+                name
+                email
+            }
+        }
+    """).execute(by=FindUserById(id="1"))
+    if found.find_user:
+        print(f"Found by ID: {found.find_user.name}")
+
+    found = await api_gql("""
+        query FindUser($by: FindUserBy!) {
+            findUser(by: $by) {
+                id
+                name
+                email
+            }
+        }
+    """).execute(by=FindUserByEmail(email="alice@example.com"))
+    if found.find_user:
+        print(f"Found by email: {found.find_user.name}")
 
 if __name__ == "__main__":
     asyncio.run(main())
