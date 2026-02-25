@@ -62,9 +62,9 @@ class FindUserResult(GQLModel):
 class GetProfileResultUser(GQLModel):
     id: builtins.str
     name: str
+    role: Role
     email: str | None = None
     phone: str | None = None
-    role: Role
 
 
 class GetProfileResult(GQLModel):
