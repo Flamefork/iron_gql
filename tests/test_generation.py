@@ -4,6 +4,7 @@ import pytest
 from pydantic import alias_generators
 
 from iron_gql import runtime
+from iron_gql.codegen import GraphQLGenerationError
 from iron_gql.codegen import UnknownGQLTypeWarning
 from iron_gql.codegen import generate_gql_package
 from tests.conftest import ProjectBuilder
@@ -149,9 +150,7 @@ def test_nested_input_objects_missing(test_project: ProjectBuilder):
     api.UpdateUserInput(id="u-1", address=address)
 
 
-def test_invalid_query_reports_error(
-    test_project: ProjectBuilder, caplog: pytest.LogCaptureFixture
-):
+def test_invalid_query_reports_error(test_project: ProjectBuilder):
     schema = """
         type Query {
             user: String
@@ -173,15 +172,11 @@ def test_invalid_query_reports_error(
         """,
     )
 
-    caplog.set_level("ERROR")
-    changed = test_project.generate()
-    assert changed is False
-    assert "missingField" in caplog.text
+    with pytest.raises(GraphQLGenerationError, match="missingField"):
+        test_project.generate()
 
 
-def test_fragment_cycle_reports_error(
-    test_project: ProjectBuilder, caplog: pytest.LogCaptureFixture
-):
+def test_fragment_cycle_reports_error(test_project: ProjectBuilder):
     schema = """
         type Query {
             user: User
@@ -228,11 +223,8 @@ def test_fragment_cycle_reports_error(
         """,
     )
 
-    caplog.set_level("ERROR")
-    changed = test_project.generate()
-    assert changed is False
-    assert "Cannot spread fragment" in caplog.text
-    assert not (test_project.root / "sample_app/gql/api.py").exists()
+    with pytest.raises(GraphQLGenerationError, match="Cannot spread fragment"):
+        test_project.generate()
 
 
 def test_input_type_dependency_ordering(test_project: ProjectBuilder):

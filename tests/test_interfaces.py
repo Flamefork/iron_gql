@@ -1,6 +1,7 @@
 import pytest
 from pytest_httpserver import HTTPServer
 
+from iron_gql.codegen import GraphQLGenerationError
 from tests.conftest import ProjectBuilder
 
 
@@ -522,9 +523,7 @@ def test_interface_fragment_requires_typename(test_project: ProjectBuilder):
         test_project.generate()
 
 
-def test_invalid_interface_fragment_reports_error(
-    test_project: ProjectBuilder, caplog: pytest.LogCaptureFixture
-):
+def test_invalid_interface_fragment_reports_error(test_project: ProjectBuilder):
     schema = """
         interface Node {
             id: ID!
@@ -566,11 +565,8 @@ def test_invalid_interface_fragment_reports_error(
         """,
     )
 
-    caplog.set_level("ERROR")
-    changed = test_project.generate()
-    assert changed is False
-    assert "Post" in caplog.text
-    assert "Node" in caplog.text
+    with pytest.raises(GraphQLGenerationError, match="Post"):
+        test_project.generate()
 
 
 def test_union_fragment_requires_typename(test_project: ProjectBuilder):
