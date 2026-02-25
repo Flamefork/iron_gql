@@ -59,6 +59,18 @@ class FindUserResult(GQLModel):
     find_user: FindUserResultFindUser | None
 
 
+class GetProfileResultUser(GQLModel):
+    id: builtins.str
+    name: str
+    role: Role
+    email: str | None = None
+    phone: str | None = None
+
+
+class GetProfileResult(GQLModel):
+    user: GetProfileResultUser | None
+
+
 class GetUserResultUserPosts(GQLModel):
     id: builtins.str
     title: str
@@ -68,6 +80,7 @@ class GetUserResultUser(GQLModel):
     id: builtins.str
     name: str
     email: str
+    phone: str
     role: Role
     posts: list[GetUserResultUserPosts]
 
@@ -140,11 +153,22 @@ class FindUser(runtime.GQLQuery):
         )
 
 
+class GetProfile(runtime.GQLQuery):
+    async def execute(self, *, id: builtins.str, with_email: bool, skip_phone: bool) -> GetProfileResult:
+        return await API_CLIENT.query(
+            GetProfileResult,
+            'query GetProfile($id: ID!, $withEmail: Boolean!, $skipPhone: Boolean!) {\n  user(id: $id) {\n    id\n    name\n    email @include(if: $withEmail)\n    phone @skip(if: $skipPhone)\n    role\n  }\n}',
+            {"id": runtime.serialize_var(id), "withEmail": runtime.serialize_var(with_email), "skipPhone": runtime.serialize_var(skip_phone)},
+            headers=self.headers,
+            upload_files=self.upload_files,
+        )
+
+
 class GetUser(runtime.GQLQuery):
     async def execute(self, *, id: builtins.str) -> GetUserResult:
         return await API_CLIENT.query(
             GetUserResult,
-            'query GetUser($id: ID!) {\n  user(id: $id) {\n    ...UserFields\n    posts {\n      id\n      title\n    }\n  }\n}\n\nfragment UserFields on User {\n  id\n  name\n  email\n  role\n}',
+            'query GetUser($id: ID!) {\n  user(id: $id) {\n    ...UserFields\n    posts {\n      id\n      title\n    }\n  }\n}\n\nfragment UserFields on User {\n  id\n  name\n  email\n  phone\n  role\n}',
             {"id": runtime.serialize_var(id)},
             headers=self.headers,
             upload_files=self.upload_files,
@@ -167,7 +191,9 @@ def api_gql(stmt: Literal['\n        mutation CreateUser($input: CreateUserInput
 @overload
 def api_gql(stmt: Literal['\n        query FindUser($by: FindUserBy!) {\n            findUser(by: $by) {\n                id\n                name\n                email\n            }\n        }\n    ']) -> FindUser: ...
 @overload
-def api_gql(stmt: Literal['\n        query GetUser($id: ID!) {\n            user(id: $id) {\n                ...UserFields\n                posts { id title }\n            }\n        }\n\n        fragment UserFields on User {\n            id\n            name\n            email\n            role\n        }\n    ']) -> GetUser: ...
+def api_gql(stmt: Literal['\n        query GetProfile($id: ID!, $withEmail: Boolean!, $skipPhone: Boolean!) {\n            user(id: $id) {\n                id\n                name\n                email @include(if: $withEmail)\n                phone @skip(if: $skipPhone)\n                role\n            }\n        }\n    ']) -> GetProfile: ...
+@overload
+def api_gql(stmt: Literal['\n        query GetUser($id: ID!) {\n            user(id: $id) {\n                ...UserFields\n                posts { id title }\n            }\n        }\n\n        fragment UserFields on User {\n            id\n            name\n            email\n            phone\n            role\n        }\n    ']) -> GetUser: ...
 @overload
 def api_gql(stmt: Literal['\n        query Search($query: String!) {\n            search(query: $query) {\n                __typename\n                ... on User {\n                    id\n                    name\n                    role\n                }\n                ... on Post {\n                    id\n                    title\n                    author { name }\n                }\n            }\n        }\n    ']) -> Search: ...
 @overload
@@ -177,7 +203,8 @@ def api_gql(stmt: str) -> runtime.GQLQuery: ...
 _API_GQL_DISPATCH: dict[str, type[runtime.GQLQuery]] = {
     '\n        mutation CreateUser($input: CreateUserInput!) {\n            createUser(input: $input) {\n                id\n                name\n                email\n                role\n            }\n        }\n    ': CreateUser,
     '\n        query FindUser($by: FindUserBy!) {\n            findUser(by: $by) {\n                id\n                name\n                email\n            }\n        }\n    ': FindUser,
-    '\n        query GetUser($id: ID!) {\n            user(id: $id) {\n                ...UserFields\n                posts { id title }\n            }\n        }\n\n        fragment UserFields on User {\n            id\n            name\n            email\n            role\n        }\n    ': GetUser,
+    '\n        query GetProfile($id: ID!, $withEmail: Boolean!, $skipPhone: Boolean!) {\n            user(id: $id) {\n                id\n                name\n                email @include(if: $withEmail)\n                phone @skip(if: $skipPhone)\n                role\n            }\n        }\n    ': GetProfile,
+    '\n        query GetUser($id: ID!) {\n            user(id: $id) {\n                ...UserFields\n                posts { id title }\n            }\n        }\n\n        fragment UserFields on User {\n            id\n            name\n            email\n            phone\n            role\n        }\n    ': GetUser,
     '\n        query Search($query: String!) {\n            search(query: $query) {\n                __typename\n                ... on User {\n                    id\n                    name\n                    role\n                }\n                ... on Post {\n                    id\n                    title\n                    author { name }\n                }\n            }\n        }\n    ': Search,
 }
 
