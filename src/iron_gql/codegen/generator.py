@@ -823,15 +823,37 @@ class {capitalize_first(query.name)}(runtime.GQLQuery):
     ) -> list[str]:
         rendered: list[str] = []
         for typ in ordered_input_types:
-            fields: list[str] = []
-            for field_name, gql_field in typ.fields.items():
-                typ_str = render_type(gql_field.type, self.scalars, enums=self.enums)
-                if gql_field.default_value != graphql.Undefined:
-                    typ_str += f" = {gql_field.default_value!r}"
-                elif not isinstance(gql_field.type, graphql.GraphQLNonNull):
-                    typ_str += " = None"
-                fields.append(f"{self.to_snake_fn(field_name)}: {typ_str}")
-            rendered.append(render_pydantic_class(typ.name, "GQLModel", fields))
+            if typ.is_one_of:
+                rendered.extend(self._render_one_of_input_type(typ))
+            else:
+                rendered.append(self._render_regular_input_type(typ))
+        return rendered
+
+    def _render_regular_input_type(self, typ: graphql.GraphQLInputObjectType) -> str:
+        fields: list[str] = []
+        for field_name, gql_field in typ.fields.items():
+            typ_str = render_type(gql_field.type, self.scalars, enums=self.enums)
+            if gql_field.default_value != graphql.Undefined:
+                typ_str += f" = {gql_field.default_value!r}"
+            elif not isinstance(gql_field.type, graphql.GraphQLNonNull):
+                typ_str += " = None"
+            fields.append(f"{self.to_snake_fn(field_name)}: {typ_str}")
+        return render_pydantic_class(typ.name, "GQLModel", fields)
+
+    def _render_one_of_input_type(
+        self, typ: graphql.GraphQLInputObjectType
+    ) -> list[str]:
+        variant_names: list[str] = []
+        rendered: list[str] = []
+        for field_name, gql_field in typ.fields.items():
+            variant_name = typ.name + capitalize_first(field_name)
+            variant_names.append(variant_name)
+            typ_str = render_type(
+                gql_field.type, self.scalars, nullable=False, enums=self.enums
+            )
+            fields = [f"{self.to_snake_fn(field_name)}: {typ_str}"]
+            rendered.append(render_pydantic_class(variant_name, "GQLModel", fields))
+        rendered.append(f"type {typ.name} = {' | '.join(variant_names)}")
         return rendered
 
     def render_enums(self) -> list[str]:

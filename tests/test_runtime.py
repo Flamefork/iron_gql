@@ -725,6 +725,54 @@ async def test_no_data_in_response(
         await test_project.import_api().API_CLIENT.close()
 
 
+async def test_one_of_input_runtime(
+    test_project: ProjectBuilder, httpserver: HTTPServer
+):
+    schema = """
+        type Query {
+            search(criteria: SearchCriteria!): String!
+        }
+
+        input SearchCriteria @oneOf {
+            name: String
+            email: String
+        }
+    """
+
+    query_source = """
+        from sample_app.gql.api import api_gql
+
+        search = api_gql(
+            '''
+            query Search($criteria: SearchCriteria!) {
+                search(criteria: $criteria)
+            }
+            '''
+        )
+    """
+
+    def resolve_search(_root, _info, *, criteria: dict):
+        if "name" in criteria:
+            return f"found by name: {criteria['name']}"
+        if "email" in criteria:
+            return f"found by email: {criteria['email']}"
+        return "not found"
+
+    async with test_project.server(
+        httpserver,
+        schema=schema,
+        queries=query_source,
+        resolvers={"Query": {"search": resolve_search}},
+    ) as (api, queries):
+        by_name = api.SearchCriteriaName(name="Alice")
+        result = await queries.search.execute(criteria=by_name)
+        assert result.search == "found by name: Alice"
+
+        by_email = api.SearchCriteriaEmail(email="bob@example.com")
+        result = await queries.search.execute(criteria=by_email)
+        assert result.search == "found by email: bob@example.com"
+
+
 async def test_file_upload_with_content_type(
     test_project: ProjectBuilder, httpserver: HTTPServer
 ):

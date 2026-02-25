@@ -49,6 +49,16 @@ class CreateUserResult(GQLModel):
     create_user: CreateUserResultCreateUser
 
 
+class FindUserResultFindUser(GQLModel):
+    id: builtins.str
+    name: str
+    email: str
+
+
+class FindUserResult(GQLModel):
+    find_user: FindUserResultFindUser | None
+
+
 class GetUserResultUserPosts(GQLModel):
     id: builtins.str
     title: str
@@ -97,12 +107,34 @@ class CreateUserInput(GQLModel):
     role: Role
 
 
+class FindUserById(GQLModel):
+    id: builtins.str
+
+
+class FindUserByEmail(GQLModel):
+    email: str
+
+
+type FindUserBy = FindUserById | FindUserByEmail
+
+
 class CreateUser(runtime.GQLQuery):
     async def execute(self, *, input: CreateUserInput) -> CreateUserResult:
         return await API_CLIENT.query(
             CreateUserResult,
             'mutation CreateUser($input: CreateUserInput!) {\n  createUser(input: $input) {\n    id\n    name\n    email\n    role\n  }\n}',
             {"input": runtime.serialize_var(input)},
+            headers=self.headers,
+            upload_files=self.upload_files,
+        )
+
+
+class FindUser(runtime.GQLQuery):
+    async def execute(self, *, by: FindUserBy) -> FindUserResult:
+        return await API_CLIENT.query(
+            FindUserResult,
+            'query FindUser($by: FindUserBy!) {\n  findUser(by: $by) {\n    id\n    name\n    email\n  }\n}',
+            {"by": runtime.serialize_var(by)},
             headers=self.headers,
             upload_files=self.upload_files,
         )
@@ -133,6 +165,8 @@ class Search(runtime.GQLQuery):
 @overload
 def api_gql(stmt: Literal['\n        mutation CreateUser($input: CreateUserInput!) {\n            createUser(input: $input) {\n                id\n                name\n                email\n                role\n            }\n        }\n    ']) -> CreateUser: ...
 @overload
+def api_gql(stmt: Literal['\n        query FindUser($by: FindUserBy!) {\n            findUser(by: $by) {\n                id\n                name\n                email\n            }\n        }\n    ']) -> FindUser: ...
+@overload
 def api_gql(stmt: Literal['\n        query GetUser($id: ID!) {\n            user(id: $id) {\n                ...UserFields\n                posts { id title }\n            }\n        }\n\n        fragment UserFields on User {\n            id\n            name\n            email\n            role\n        }\n    ']) -> GetUser: ...
 @overload
 def api_gql(stmt: Literal['\n        query Search($query: String!) {\n            search(query: $query) {\n                __typename\n                ... on User {\n                    id\n                    name\n                    role\n                }\n                ... on Post {\n                    id\n                    title\n                    author { name }\n                }\n            }\n        }\n    ']) -> Search: ...
@@ -142,6 +176,7 @@ def api_gql(stmt: str) -> runtime.GQLQuery: ...
 
 _API_GQL_DISPATCH: dict[str, type[runtime.GQLQuery]] = {
     '\n        mutation CreateUser($input: CreateUserInput!) {\n            createUser(input: $input) {\n                id\n                name\n                email\n                role\n            }\n        }\n    ': CreateUser,
+    '\n        query FindUser($by: FindUserBy!) {\n            findUser(by: $by) {\n                id\n                name\n                email\n            }\n        }\n    ': FindUser,
     '\n        query GetUser($id: ID!) {\n            user(id: $id) {\n                ...UserFields\n                posts { id title }\n            }\n        }\n\n        fragment UserFields on User {\n            id\n            name\n            email\n            role\n        }\n    ': GetUser,
     '\n        query Search($query: String!) {\n            search(query: $query) {\n                __typename\n                ... on User {\n                    id\n                    name\n                    role\n                }\n                ... on Post {\n                    id\n                    title\n                    author { name }\n                }\n            }\n        }\n    ': Search,
 }

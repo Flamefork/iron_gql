@@ -2,6 +2,12 @@ type Query {
   user(id: ID!): User
   users(role: Role): [User!]!
   search(query: String!): [SearchItem!]!
+  findUser(by: FindUserBy!): User
+}
+
+input FindUserBy @oneOf {
+  id: ID
+  email: String
 }
 
 type Mutation {
