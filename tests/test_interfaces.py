@@ -569,6 +569,108 @@ def test_invalid_interface_fragment_reports_error(test_project: ProjectBuilder):
         test_project.generate()
 
 
+def test_union_generates_named_type(test_project: ProjectBuilder):
+    schema = """
+        union SearchResult = User | Post
+
+        type User {
+            id: ID!
+            name: String!
+        }
+
+        type Post {
+            id: ID!
+            title: String!
+        }
+
+        type Query {
+            search(q: String!): SearchResult
+        }
+    """
+
+    test_project.prepare(
+        schema=schema,
+        queries="""
+        from sample_app.gql.api import api_gql
+
+        search = api_gql(
+            '''
+            query Search($q: String!) {
+                search(q: $q) {
+                    __typename
+                    ... on User {
+                        id
+                        name
+                    }
+                    ... on Post {
+                        id
+                        title
+                    }
+                }
+            }
+            '''
+        )
+        """,
+    )
+
+    assert test_project.generate() is True
+    generated = (test_project.root / "sample_app/gql/api.py").read_text()
+
+    assert "type SearchResultSearch = Annotated[" in generated
+    assert "search: SearchResultSearch | None" in generated
+
+
+def test_union_non_null_generates_named_type(test_project: ProjectBuilder):
+    schema = """
+        union SearchResult = User | Post
+
+        type User {
+            id: ID!
+            name: String!
+        }
+
+        type Post {
+            id: ID!
+            title: String!
+        }
+
+        type Query {
+            search(q: String!): SearchResult!
+        }
+    """
+
+    test_project.prepare(
+        schema=schema,
+        queries="""
+        from sample_app.gql.api import api_gql
+
+        search = api_gql(
+            '''
+            query Search($q: String!) {
+                search(q: $q) {
+                    __typename
+                    ... on User {
+                        id
+                        name
+                    }
+                    ... on Post {
+                        id
+                        title
+                    }
+                }
+            }
+            '''
+        )
+        """,
+    )
+
+    assert test_project.generate() is True
+    generated = (test_project.root / "sample_app/gql/api.py").read_text()
+
+    assert "type SearchResultSearch = Annotated[" in generated
+    assert "search: SearchResultSearch\n" in generated
+
+
 def test_union_fragment_requires_typename(test_project: ProjectBuilder):
     schema = """
         union SearchResult = User | Post
@@ -796,6 +898,10 @@ async def test_list_wrapped_union(test_project: ProjectBuilder, httpserver: HTTP
         assert isinstance(result.nodes[1], api.GetNodesResultNodesPost)
         assert result.nodes[1].title == "GraphQL 101"
 
+    generated = (test_project.root / "sample_app/gql/api.py").read_text()
+    assert "type GetNodesResultNodes = Annotated[" in generated
+    assert "nodes: list[GetNodesResultNodes]" in generated
+
 
 async def test_interface_with_named_fragment_type_condition(
     test_project: ProjectBuilder, httpserver: HTTPServer
@@ -984,5 +1090,6 @@ def test_interface_exhaustively_covered(test_project: ProjectBuilder):
     # We verify that no "Node" fallback model is generated or used,
     # and the union is just User | Post
     generated = (test_project.root / "sample_app/gql/api.py").read_text()
-    assert "GetNodeResultNodePost | GetNodeResultNodeUser" in generated
+    assert "type GetNodeResultNode = Annotated[GetNodeResultNodePost | GetNodeResultNodeUser" in generated
+    assert "node: GetNodeResultNode | None" in generated
     assert "GetNodeResultNodeNode" not in generated

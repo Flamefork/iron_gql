@@ -54,6 +54,15 @@ class GeneratedModel:
 
 
 @dataclass(kw_only=True, frozen=True)
+class GeneratedTypeAlias:
+    name: str
+    type_expr: str
+
+
+type GeneratedArtifact = GeneratedModel | GeneratedTypeAlias
+
+
+@dataclass(kw_only=True, frozen=True)
 class RenderContext:
     fragments: dict[str, graphql.FragmentDefinitionNode]
     variable_values: dict[str, Any]
@@ -212,26 +221,6 @@ def render_type(
         case _:
             msg = f"Unknown GraphQL type: {gql_type}"
             raise TypeError(msg)
-    if nullable:
-        typ += " | None"
-    return typ
-
-
-def format_discriminated_union_type(
-    branch_types: list[str],
-    gql_type: graphql.GraphQLType,
-    *,
-    nullable: bool = True,
-) -> str:
-    match gql_type:
-        case graphql.GraphQLNonNull(of_type=inner):
-            return format_discriminated_union_type(branch_types, inner, nullable=False)
-        case graphql.GraphQLList(of_type=inner):
-            inner_str = format_discriminated_union_type(branch_types, inner)
-            typ = f"list[{inner_str}]"
-        case _:
-            union_str = " | ".join(branch_types)
-            typ = f'Annotated[{union_str}, pydantic.Field(discriminator="typename__")]'
     if nullable:
         typ += " | None"
     return typ
@@ -520,7 +509,7 @@ class PackageRenderer:
     schema: graphql.GraphQLSchema
     enums: set[graphql.GraphQLEnumType] = field(default_factory=set)
 
-    def render_operation_models(self, query: Query) -> list[GeneratedModel]:
+    def render_operation_models(self, query: Query) -> list[GeneratedArtifact]:
         ctx = RenderContext(
             fragments=query.fragments,
             variable_values=build_codegen_variable_values(query.doc, query.variables),
@@ -541,7 +530,7 @@ class PackageRenderer:
         ctx: RenderContext,
         typename_type: str | None = None,
         require_typename_for: str | None = None,
-    ) -> list[GeneratedModel]:
+    ) -> list[GeneratedArtifact]:
         fields_by_key = collect_fields(
             self.schema,
             ctx.fragments,
@@ -553,7 +542,7 @@ class PackageRenderer:
             msg = f"Missing __typename in selection set for '{require_typename_for}'"
             raise ValueError(msg)
 
-        child_models: list[GeneratedModel] = []
+        child_models: list[GeneratedArtifact] = []
         fields_mapping: dict[str, str] = {}
         for response_key, field_nodes in fields_by_key.items():
             representative = field_nodes[0]
@@ -609,7 +598,7 @@ class PackageRenderer:
         gql_type: graphql.GraphQLType,
         field_nodes: list[graphql.FieldNode],
         ctx: RenderContext,
-    ) -> tuple[list[GeneratedModel], str]:
+    ) -> tuple[list[GeneratedArtifact], str]:
         selection_set = merge_selection_sets(field_nodes)
         if selection_set is None:
             return [], render_type(gql_type, self.scalars, enums=self.enums)
@@ -712,7 +701,7 @@ class PackageRenderer:
         ctx: RenderContext,
         field_gql_type: graphql.GraphQLType,
         require_typename_for: str,
-    ) -> tuple[list[GeneratedModel], str]:
+    ) -> tuple[list[GeneratedArtifact], str]:
         if not explicit_types:
             child_models = self._render_object_model(
                 model_name_base=base_name,
@@ -731,7 +720,7 @@ class PackageRenderer:
                 ),
             )
 
-        child_models: list[GeneratedModel] = []
+        child_models: list[GeneratedArtifact] = []
         union_types: list[str] = []
         for obj_type in sorted(explicit_types, key=lambda t: t.name):
             model_name = base_name + obj_type.name
@@ -766,17 +755,32 @@ class PackageRenderer:
             )
             union_types.append(fallback_name)
 
+        union_str = " | ".join(union_types)
+        alias_value = (
+            f'Annotated[{union_str}, pydantic.Field(discriminator="typename__")]'
+        )
         return (
-            child_models,
-            format_discriminated_union_type(union_types, field_gql_type),
+            [*child_models, GeneratedTypeAlias(name=base_name, type_expr=alias_value)],
+            render_type(
+                field_gql_type,
+                self.scalars,
+                child_model_name=base_name,
+                enums=self.enums,
+            ),
         )
 
     def render_result_models(self, queries: list[Query]) -> list[str]:
-        return [
-            render_pydantic_class(model.name, "GQLModel", model.fields)
-            for query in queries
-            for model in self.render_operation_models(query)
-        ]
+        rendered: list[str] = []
+        for query in queries:
+            for item in self.render_operation_models(query):
+                match item:
+                    case GeneratedModel():
+                        rendered.append(
+                            render_pydantic_class(item.name, "GQLModel", item.fields)
+                        )
+                    case GeneratedTypeAlias():
+                        rendered.append(f"type {item.name} = {item.type_expr}")
+        return rendered
 
     def render_query_classes(
         self, queries: list[Query], package_name: str

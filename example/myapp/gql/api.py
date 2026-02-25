@@ -84,8 +84,11 @@ class SearchResultSearchUser(GQLModel):
     role: Role
 
 
+type SearchResultSearch = Annotated[SearchResultSearchPost | SearchResultSearchUser, pydantic.Field(discriminator="typename__")]
+
+
 class SearchResult(GQLModel):
-    search: list[Annotated[SearchResultSearchPost | SearchResultSearchUser, pydantic.Field(discriminator="typename__")]]
+    search: list[SearchResultSearch]
 
 
 class CreateUserInput(GQLModel):
