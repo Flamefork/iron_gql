@@ -1090,6 +1090,9 @@ def test_interface_exhaustively_covered(test_project: ProjectBuilder):
     # We verify that no "Node" fallback model is generated or used,
     # and the union is just User | Post
     generated = (test_project.root / "sample_app/gql/api.py").read_text()
-    assert "type GetNodeResultNode = Annotated[GetNodeResultNodePost | GetNodeResultNodeUser" in generated
+    assert (
+        "type GetNodeResultNode = Annotated[GetNodeResultNodePost | GetNodeResultNodeUser"  # noqa: E501
+        in generated
+    )
     assert "node: GetNodeResultNode | None" in generated
     assert "GetNodeResultNodeNode" not in generated
