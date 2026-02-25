@@ -1,5 +1,4 @@
 import ast
-import logging
 import warnings
 from collections.abc import Callable
 from collections.abc import Iterable
@@ -23,9 +22,14 @@ from iron_gql.codegen.util import capitalize_first
 from iron_gql.codegen.util import indent_block
 from iron_gql.codegen.util import write_if_changed
 
-logger = logging.getLogger(__name__)
-
 type StrTransform = Callable[[str], str]
+
+
+class GraphQLGenerationError(Exception):
+    def __init__(self, errors: list[str]) -> None:
+        self.errors = errors
+        super().__init__("\n".join(errors))
+
 
 BUILTIN_SCALARS = {
     "String": "str",
@@ -269,6 +273,9 @@ def generate_gql_package(
 
     Returns:
         True if the generated file was modified, False if content unchanged
+
+    Raises:
+        GraphQLGenerationError: If any query fails schema validation
     """
     if scalars is None:
         scalars = {}
@@ -289,9 +296,8 @@ def generate_gql_package(
         debug_path=debug_path,
     )
 
-    if parse_res.error:
-        logger.error(parse_res.error)
-        return False
+    if parse_res.errors:
+        raise GraphQLGenerationError(parse_res.errors)
 
     new_content = render_package(
         base_url_import_package=base_url_import_package,
@@ -303,10 +309,7 @@ def generate_gql_package(
         to_camel_fn_full_name=to_camel_fn_full_name,
         to_snake_fn=to_snake_fn,
     )
-    changed = write_if_changed(target_package_path, new_content + "\n")
-    if changed:
-        logger.info(f"Generated GQL package {package_full_name}")
-    return changed
+    return write_if_changed(target_package_path, new_content + "\n")
 
 
 def find_fn_calls(

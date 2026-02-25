@@ -100,7 +100,7 @@ class Query:
 @dataclass(kw_only=True, frozen=True)
 class ParseResult:
     queries: list[Query]
-    error: str | None
+    errors: list[str]
 
 
 def parse_documents(
@@ -248,7 +248,7 @@ def parse_gql_queries(
             ],
         )
 
-    return ParseResult(queries=queries, error="\n".join(errors) if errors else None)
+    return ParseResult(queries=queries, errors=errors)
 
 
 def dump_json(path: Path, obj: object) -> None:
