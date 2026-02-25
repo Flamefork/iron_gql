@@ -1,9 +1,11 @@
 import importlib
+import warnings
 
 import pytest
 from pydantic import alias_generators
 
 from iron_gql import runtime
+from iron_gql.codegen import GraphQLDeprecationWarning
 from iron_gql.codegen import GraphQLGenerationError
 from iron_gql.codegen import UnknownGQLTypeWarning
 from iron_gql.codegen import generate_gql_package
@@ -595,9 +597,9 @@ def test_include_skip_directives(test_project: ProjectBuilder):
 
     assert test_project.generate() is True
     generated = (test_project.root / "sample_app/gql/api.py").read_text()
-    assert "name: str" in generated
-    assert "email: str" in generated
-    assert "phone: str" in generated
+    assert "name: str\n" in generated
+    assert "email: str | None = None" in generated
+    assert "phone: str | None = None" in generated
 
 
 def test_regeneration_is_idempotent(test_project: ProjectBuilder):
@@ -1026,3 +1028,816 @@ def test_one_of_referencing_one_of(test_project: ProjectBuilder):
 
     outer_direct = api.OuterChoiceDirect(direct="world")
     assert runtime.serialize_var(outer_direct) == {"direct": "world"}
+
+
+def test_deprecated_result_field_warning(test_project: ProjectBuilder):
+    schema = """
+        type Query {
+            user: User
+        }
+
+        type User {
+            id: ID!
+            name: String @deprecated(reason: "Use fullName instead")
+        }
+    """
+
+    test_project.prepare(
+        schema=schema,
+        queries="""
+        from sample_app.gql.api import api_gql
+
+        get_user = api_gql(
+            '''
+            query GetUser {
+                user {
+                    id
+                    name
+                }
+            }
+            '''
+        )
+        """,
+    )
+
+    with pytest.warns(
+        GraphQLDeprecationWarning,
+        match=(
+            r"Query 'GetUser': field 'User\.name'"
+            r" is deprecated: Use fullName instead"
+        ),
+    ):
+        test_project.generate()
+
+
+def test_deprecated_argument_warning(test_project: ProjectBuilder):
+    schema = """
+        type Query {
+            users(
+                limit: Int
+                first: Int @deprecated(reason: "Use limit instead")
+            ): [String]
+        }
+    """
+
+    test_project.prepare(
+        schema=schema,
+        queries="""
+        from sample_app.gql.api import api_gql
+
+        get_users = api_gql(
+            '''
+            query GetUsers($first: Int) {
+                users(first: $first)
+            }
+            '''
+        )
+        """,
+    )
+
+    with pytest.warns(
+        GraphQLDeprecationWarning,
+        match=(
+            r"Query 'GetUsers': argument 'first'"
+            r" on 'Query\.users' is deprecated:"
+            r" Use limit instead"
+        ),
+    ):
+        test_project.generate()
+
+
+def test_deprecated_input_field_warning(test_project: ProjectBuilder):
+    schema = """
+        type Query {
+            ping: Boolean
+        }
+
+        type Mutation {
+            update(input: UpdateInput!): Boolean
+        }
+
+        input UpdateInput {
+            name: String!
+            legacyName: String @deprecated(reason: "Use name instead")
+        }
+    """
+
+    test_project.prepare(
+        schema=schema,
+        queries="""
+        from sample_app.gql.api import api_gql
+
+        update = api_gql(
+            '''
+            mutation Update($input: UpdateInput!) {
+                update(input: $input)
+            }
+            '''
+        )
+        """,
+    )
+
+    with pytest.warns(
+        GraphQLDeprecationWarning,
+        match=r"Input field 'UpdateInput\.legacyName' is deprecated: Use name instead",
+    ):
+        test_project.generate()
+
+
+def test_deprecated_enum_value_warning(test_project: ProjectBuilder):
+    schema = """
+        type Query {
+            status: Status
+        }
+
+        enum Status {
+            ACTIVE
+            INACTIVE @deprecated(reason: "Use DISABLED instead")
+            DISABLED
+        }
+    """
+
+    test_project.prepare(
+        schema=schema,
+        queries="""
+        from sample_app.gql.api import api_gql
+
+        get_status = api_gql(
+            '''
+            query GetStatus {
+                status
+            }
+            '''
+        )
+        """,
+    )
+
+    with pytest.warns(
+        GraphQLDeprecationWarning,
+        match=r"Enum value 'Status\.INACTIVE' is deprecated: Use DISABLED instead",
+    ):
+        test_project.generate()
+
+
+def test_deprecated_one_of_input_field_warning(test_project: ProjectBuilder):
+    schema = """
+        type Query {
+            ping: Boolean
+        }
+
+        type Mutation {
+            search(criteria: SearchCriteria!): Boolean
+        }
+
+        input SearchCriteria @oneOf {
+            name: String
+            legacyId: ID @deprecated(reason: "Use name instead")
+        }
+    """
+
+    test_project.prepare(
+        schema=schema,
+        queries="""
+        from sample_app.gql.api import api_gql
+
+        search = api_gql(
+            '''
+            mutation Search($criteria: SearchCriteria!) {
+                search(criteria: $criteria)
+            }
+            '''
+        )
+        """,
+    )
+
+    with pytest.warns(
+        GraphQLDeprecationWarning,
+        match=r"Input field 'SearchCriteria\.legacyId' is deprecated: Use name instead",
+    ):
+        test_project.generate()
+
+
+def test_deprecated_field_without_reason(test_project: ProjectBuilder):
+    schema = """
+        type Query {
+            user: User
+        }
+
+        type User {
+            id: ID!
+            oldField: String @deprecated
+        }
+    """
+
+    test_project.prepare(
+        schema=schema,
+        queries="""
+        from sample_app.gql.api import api_gql
+
+        get_user = api_gql(
+            '''
+            query GetUser {
+                user {
+                    id
+                    oldField
+                }
+            }
+            '''
+        )
+        """,
+    )
+
+    with pytest.warns(
+        GraphQLDeprecationWarning,
+        match=(
+            r"Query 'GetUser': field 'User\.oldField'"
+            r" is deprecated: No longer supported"
+        ),
+    ):
+        test_project.generate()
+
+
+def test_deprecated_field_in_union(test_project: ProjectBuilder):
+    schema = """
+        type Query {
+            search: SearchResult
+        }
+
+        union SearchResult = User | Post
+
+        type User {
+            id: ID!
+            legacyName: String @deprecated(reason: "Use name instead")
+        }
+
+        type Post {
+            id: ID!
+            title: String
+        }
+    """
+
+    test_project.prepare(
+        schema=schema,
+        queries="""
+        from sample_app.gql.api import api_gql
+
+        search = api_gql(
+            '''
+            query Search {
+                search {
+                    __typename
+                    ... on User {
+                        id
+                        legacyName
+                    }
+                    ... on Post {
+                        id
+                        title
+                    }
+                }
+            }
+            '''
+        )
+        """,
+    )
+
+    with pytest.warns(
+        GraphQLDeprecationWarning,
+        match=(
+            r"Query 'Search': field 'User\.legacyName'"
+            r" is deprecated: Use name instead"
+        ),
+    ):
+        test_project.generate()
+
+
+def test_deprecated_argument_not_used_no_warning(test_project: ProjectBuilder):
+    schema = """
+        type Query {
+            users(
+                limit: Int
+                first: Int @deprecated(reason: "Use limit instead")
+            ): [String]
+        }
+    """
+
+    test_project.prepare(
+        schema=schema,
+        queries="""
+        from sample_app.gql.api import api_gql
+
+        get_users = api_gql(
+            '''
+            query GetUsers($limit: Int) {
+                users(limit: $limit)
+            }
+            '''
+        )
+        """,
+    )
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", GraphQLDeprecationWarning)
+        test_project.generate()
+
+
+def test_no_deprecated_no_warnings(test_project: ProjectBuilder):
+    schema = """
+        type Query {
+            user: User
+        }
+
+        type User {
+            id: ID!
+            name: String
+        }
+    """
+
+    test_project.prepare(
+        schema=schema,
+        queries="""
+        from sample_app.gql.api import api_gql
+
+        get_user = api_gql(
+            '''
+            query GetUser {
+                user {
+                    id
+                    name
+                }
+            }
+            '''
+        )
+        """,
+    )
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", GraphQLDeprecationWarning)
+        test_project.generate()
+
+
+def test_include_on_non_null_field(test_project: ProjectBuilder):
+    schema = """
+        type Query {
+            user: User
+        }
+        type User {
+            id: ID!
+            name: String!
+        }
+    """
+    test_project.prepare(
+        schema=schema,
+        queries="""
+        from sample_app.gql.api import api_gql
+
+        q = api_gql(
+            '''
+            query GetUser($withName: Boolean!) {
+                user {
+                    id
+                    name @include(if: $withName)
+                }
+            }
+            '''
+        )
+        """,
+    )
+
+    assert test_project.generate() is True
+    generated = (test_project.root / "sample_app/gql/api.py").read_text()
+    assert "id: builtins.str\n" in generated
+    assert "name: str | None = None" in generated
+
+
+def test_skip_on_non_null_field(test_project: ProjectBuilder):
+    schema = """
+        type Query {
+            user: User
+        }
+        type User {
+            id: ID!
+            name: String!
+        }
+    """
+    test_project.prepare(
+        schema=schema,
+        queries="""
+        from sample_app.gql.api import api_gql
+
+        q = api_gql(
+            '''
+            query GetUser($skipName: Boolean!) {
+                user {
+                    id
+                    name @skip(if: $skipName)
+                }
+            }
+            '''
+        )
+        """,
+    )
+
+    assert test_project.generate() is True
+    generated = (test_project.root / "sample_app/gql/api.py").read_text()
+    assert "id: builtins.str\n" in generated
+    assert "name: str | None = None" in generated
+
+
+def test_include_on_nullable_field(test_project: ProjectBuilder):
+    schema = """
+        type Query {
+            user: User
+        }
+        type User {
+            id: ID!
+            name: String
+        }
+    """
+    test_project.prepare(
+        schema=schema,
+        queries="""
+        from sample_app.gql.api import api_gql
+
+        q = api_gql(
+            '''
+            query GetUser($withName: Boolean!) {
+                user {
+                    id
+                    name @include(if: $withName)
+                }
+            }
+            '''
+        )
+        """,
+    )
+
+    assert test_project.generate() is True
+    generated = (test_project.root / "sample_app/gql/api.py").read_text()
+    assert "id: builtins.str\n" in generated
+    assert "name: str | None = None" in generated
+
+
+def test_include_on_inline_fragment(test_project: ProjectBuilder):
+    schema = """
+        type Query {
+            user: User
+        }
+        type User {
+            id: ID!
+            name: String!
+            email: String!
+        }
+    """
+    test_project.prepare(
+        schema=schema,
+        queries="""
+        from sample_app.gql.api import api_gql
+
+        q = api_gql(
+            '''
+            query GetUser($withDetails: Boolean!) {
+                user {
+                    id
+                    ... @include(if: $withDetails) {
+                        name
+                        email
+                    }
+                }
+            }
+            '''
+        )
+        """,
+    )
+
+    assert test_project.generate() is True
+    generated = (test_project.root / "sample_app/gql/api.py").read_text()
+    assert "id: builtins.str\n" in generated
+    assert "name: str | None = None" in generated
+    assert "email: str | None = None" in generated
+
+
+def test_field_both_conditional_and_unconditional(test_project: ProjectBuilder):
+    schema = """
+        type Query {
+            user: User
+        }
+        type User {
+            id: ID!
+            name: String!
+        }
+    """
+    test_project.prepare(
+        schema=schema,
+        queries="""
+        from sample_app.gql.api import api_gql
+
+        q = api_gql(
+            '''
+            query GetUser($withDetails: Boolean!) {
+                user {
+                    id
+                    name
+                    ... @include(if: $withDetails) {
+                        name
+                    }
+                }
+            }
+            '''
+        )
+        """,
+    )
+
+    assert test_project.generate() is True
+    generated = (test_project.root / "sample_app/gql/api.py").read_text()
+    assert "id: builtins.str\n" in generated
+    assert "name: str\n" in generated
+
+
+def test_skip_with_literal_false(test_project: ProjectBuilder):
+    schema = """
+        type Query {
+            user: User
+        }
+        type User {
+            id: ID!
+            name: String!
+        }
+    """
+    test_project.prepare(
+        schema=schema,
+        queries="""
+        from sample_app.gql.api import api_gql
+
+        q = api_gql(
+            '''
+            query GetUser {
+                user {
+                    id
+                    name @skip(if: false)
+                }
+            }
+            '''
+        )
+        """,
+    )
+
+    assert test_project.generate() is True
+    generated = (test_project.root / "sample_app/gql/api.py").read_text()
+    assert "id: builtins.str\n" in generated
+    assert "name: str\n" in generated
+
+
+def test_include_and_skip_on_same_field(test_project: ProjectBuilder):
+    schema = """
+        type Query {
+            user: User
+        }
+        type User {
+            id: ID!
+            name: String!
+        }
+    """
+    test_project.prepare(
+        schema=schema,
+        queries="""
+        from sample_app.gql.api import api_gql
+
+        q = api_gql(
+            '''
+            query GetUser($show: Boolean!, $hide: Boolean!) {
+                user {
+                    id
+                    name @include(if: $show) @skip(if: $hide)
+                }
+            }
+            '''
+        )
+        """,
+    )
+
+    assert test_project.generate() is True
+    generated = (test_project.root / "sample_app/gql/api.py").read_text()
+    assert "name: str | None = None" in generated
+
+
+def test_include_on_camel_case_field(test_project: ProjectBuilder):
+    schema = """
+        type Query {
+            user: User
+        }
+        type User {
+            id: ID!
+            firstName: String!
+        }
+    """
+    test_project.prepare(
+        schema=schema,
+        queries="""
+        from sample_app.gql.api import api_gql
+
+        q = api_gql(
+            '''
+            query GetUser($withName: Boolean!) {
+                user {
+                    id
+                    firstName @include(if: $withName)
+                }
+            }
+            '''
+        )
+        """,
+    )
+
+    assert test_project.generate() is True
+    generated = (test_project.root / "sample_app/gql/api.py").read_text()
+    assert "first_name: str | None = None" in generated
+
+
+def test_include_on_non_null_list_of_nullable(test_project: ProjectBuilder):
+    schema = """
+        type Query {
+            user: User
+        }
+        type User {
+            id: ID!
+            tags: [String]!
+        }
+    """
+    test_project.prepare(
+        schema=schema,
+        queries="""
+        from sample_app.gql.api import api_gql
+
+        q = api_gql(
+            '''
+            query GetUser($withTags: Boolean!) {
+                user {
+                    id
+                    tags @include(if: $withTags)
+                }
+            }
+            '''
+        )
+        """,
+    )
+
+    assert test_project.generate() is True
+    generated = (test_project.root / "sample_app/gql/api.py").read_text()
+    assert "tags: list[str | None] | None = None" in generated
+
+
+def test_include_with_literal_true(test_project: ProjectBuilder):
+    schema = """
+        type Query {
+            user: User
+        }
+        type User {
+            id: ID!
+            name: String!
+        }
+    """
+    test_project.prepare(
+        schema=schema,
+        queries="""
+        from sample_app.gql.api import api_gql
+
+        q = api_gql(
+            '''
+            query GetUser {
+                user {
+                    id
+                    name @include(if: true)
+                }
+            }
+            '''
+        )
+        """,
+    )
+
+    assert test_project.generate() is True
+    generated = (test_project.root / "sample_app/gql/api.py").read_text()
+    assert "id: builtins.str\n" in generated
+    assert "name: str\n" in generated
+
+
+def test_include_on_nested_object_field(test_project: ProjectBuilder):
+    schema = """
+        type Query {
+            user: User
+        }
+        type User {
+            id: ID!
+            address: Address!
+        }
+        type Address {
+            city: String!
+            zip: String!
+        }
+    """
+    test_project.prepare(
+        schema=schema,
+        queries="""
+        from sample_app.gql.api import api_gql
+
+        q = api_gql(
+            '''
+            query GetUser($withAddress: Boolean!) {
+                user {
+                    id
+                    address @include(if: $withAddress) {
+                        city
+                        zip
+                    }
+                }
+            }
+            '''
+        )
+        """,
+    )
+
+    assert test_project.generate() is True
+    generated = (test_project.root / "sample_app/gql/api.py").read_text()
+    assert "id: builtins.str\n" in generated
+    assert "address: GetUserResultUserAddress | None = None" in generated
+    assert "class GetUserResultUserAddress(GQLModel):" in generated
+    assert "city: str\n" in generated
+    assert "zip: str\n" in generated
+
+
+def test_shared_variable_in_include_and_skip(test_project: ProjectBuilder):
+    schema = """
+        type Query {
+            user: User
+        }
+        type User {
+            id: ID!
+            email: String!
+            phone: String!
+        }
+    """
+    test_project.prepare(
+        schema=schema,
+        queries="""
+        from sample_app.gql.api import api_gql
+
+        q = api_gql(
+            '''
+            query GetUser($flag: Boolean!) {
+                user {
+                    id
+                    email @include(if: $flag)
+                    phone @skip(if: $flag)
+                }
+            }
+            '''
+        )
+        """,
+    )
+
+    assert test_project.generate() is True
+    generated = (test_project.root / "sample_app/gql/api.py").read_text()
+    assert "id: builtins.str\n" in generated
+    assert "email: str | None = None" in generated
+    assert "phone: str | None = None" in generated
+
+
+def test_include_skip_inside_named_fragment(test_project: ProjectBuilder):
+    schema = """
+        type Query {
+            user: User
+        }
+        type User {
+            id: ID!
+            name: String!
+            email: String!
+        }
+    """
+    test_project.prepare(
+        schema=schema,
+        queries="""
+        from sample_app.gql.api import api_gql
+
+        q = api_gql(
+            '''
+            query GetUser($withEmail: Boolean!) {
+                user {
+                    id
+                    ...UserDetails
+                }
+            }
+
+            fragment UserDetails on User {
+                name
+                email @include(if: $withEmail)
+            }
+            '''
+        )
+        """,
+    )
+
+    assert test_project.generate() is True
+    generated = (test_project.root / "sample_app/gql/api.py").read_text()
+    assert "id: builtins.str\n" in generated
+    assert "name: str\n" in generated
+    assert "email: str | None = None" in generated

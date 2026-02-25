@@ -47,6 +47,10 @@ class UnknownGQLTypeWarning(UserWarning):
     pass
 
 
+class GraphQLDeprecationWarning(UserWarning):
+    pass
+
+
 @dataclass(kw_only=True, frozen=True)
 class GeneratedModel:
     name: str
@@ -64,8 +68,10 @@ type GeneratedArtifact = GeneratedModel | GeneratedTypeAlias
 
 @dataclass(kw_only=True, frozen=True)
 class RenderContext:
+    query_name: str
     fragments: dict[str, graphql.FragmentDefinitionNode]
     variable_values: dict[str, Any]
+    excluded_variable_values: dict[str, Any]
 
 
 def merge_selection_sets(
@@ -153,9 +159,12 @@ def interface_has_base_typename(
     return False
 
 
-def build_codegen_variable_values(
+def _collect_directive_variable_values(
     doc: graphql.DocumentNode,
     variables: Iterable[GQLVar],
+    *,
+    include_value: bool,
+    skip_value: bool,
 ) -> dict[str, Any]:
     values: dict[str, Any] = {
         var.name: var.default_value
@@ -163,15 +172,16 @@ def build_codegen_variable_values(
         if var.default_value != graphql.Undefined
     }
     desired: dict[str, bool] = {}
+    directive_targets = {"include": include_value, "skip": skip_value}
+    # When building "include" values (include_value=True), max keeps True if any
+    # directive wants the field included. When building "exclude" values
+    # (include_value=False), min keeps False if any directive wants it excluded.
+    merge = max if include_value else min
 
     class DirectiveVarCollector(graphql.Visitor):
         def enter_directive(self, node: graphql.DirectiveNode, *_args: object) -> None:
-            directive_name = node.name.value
-            if directive_name == "include":
-                include_value = True
-            elif directive_name == "skip":
-                include_value = False
-            else:
+            target = directive_targets.get(node.name.value)
+            if target is None:
                 return
 
             for arg in node.arguments or []:
@@ -180,16 +190,31 @@ def build_codegen_variable_values(
                 if isinstance(arg.value, graphql.VariableNode):
                     var_name = arg.value.name.value
                     prev = desired.get(var_name)
-                    if prev is None:
-                        desired[var_name] = include_value
-                    else:
-                        desired[var_name] = prev or include_value
+                    desired[var_name] = target if prev is None else merge(prev, target)
 
     graphql.visit(doc, DirectiveVarCollector())
     for name, value in desired.items():
         if name not in values:
             values[name] = value
     return values
+
+
+def build_codegen_variable_values(
+    doc: graphql.DocumentNode,
+    variables: Iterable[GQLVar],
+) -> dict[str, Any]:
+    return _collect_directive_variable_values(
+        doc, variables, include_value=True, skip_value=False
+    )
+
+
+def build_excluded_variable_values(
+    doc: graphql.DocumentNode,
+    variables: Iterable[GQLVar],
+) -> dict[str, Any]:
+    return _collect_directive_variable_values(
+        doc, variables, include_value=False, skip_value=True
+    )
 
 
 def render_type(
@@ -502,6 +527,47 @@ def get_unique_queries(queries: list[Query]) -> list[Query]:
     return list(unique_queries.values())
 
 
+def _warn_deprecated_input_field(
+    type_name: str,
+    field_name: str,
+    deprecation_reason: str,
+) -> None:
+    warnings.warn(
+        f"Input field '{type_name}.{field_name}' is deprecated: {deprecation_reason}",
+        GraphQLDeprecationWarning,
+        stacklevel=2,
+    )
+
+
+def _warn_deprecated_field(
+    query_name: str,
+    runtime_type: graphql.GraphQLObjectType,
+    representative: graphql.FieldNode,
+    field_def: graphql.GraphQLField,
+) -> None:
+    if field_def.deprecation_reason is not None:
+        warnings.warn(
+            f"Query '{query_name}': field"
+            f" '{runtime_type.name}.{representative.name.value}'"
+            f" is deprecated: {field_def.deprecation_reason}",
+            GraphQLDeprecationWarning,
+            stacklevel=2,
+        )
+    if representative.arguments:
+        for arg_node in representative.arguments:
+            schema_arg = field_def.args[arg_node.name.value]
+            if schema_arg.deprecation_reason is not None:
+                warnings.warn(
+                    f"Query '{query_name}': argument"
+                    f" '{arg_node.name.value}'"
+                    f" on '{runtime_type.name}.{representative.name.value}'"
+                    f" is deprecated:"
+                    f" {schema_arg.deprecation_reason}",
+                    GraphQLDeprecationWarning,
+                    stacklevel=2,
+                )
+
+
 @dataclass(kw_only=True)
 class PackageRenderer:
     scalars: dict[str, str]
@@ -511,8 +577,12 @@ class PackageRenderer:
 
     def render_operation_models(self, query: Query) -> list[GeneratedArtifact]:
         ctx = RenderContext(
+            query_name=query.name,
             fragments=query.fragments,
             variable_values=build_codegen_variable_values(query.doc, query.variables),
+            excluded_variable_values=build_excluded_variable_values(
+                query.doc, query.variables
+            ),
         )
         return self._render_object_model(
             model_name_base=f"{capitalize_first(query.name)}Result",
@@ -531,16 +601,28 @@ class PackageRenderer:
         typename_type: str | None = None,
         require_typename_for: str | None = None,
     ) -> list[GeneratedArtifact]:
-        fields_by_key = collect_fields(
+        codegen_fields = collect_fields(
             self.schema,
             ctx.fragments,
             ctx.variable_values,
             runtime_type,
             selection_set,
         )
-        if require_typename_for is not None and "__typename" not in fields_by_key:
+        if require_typename_for is not None and "__typename" not in codegen_fields:
             msg = f"Missing __typename in selection set for '{require_typename_for}'"
             raise ValueError(msg)
+
+        excluded_fields = collect_fields(
+            self.schema,
+            ctx.fragments,
+            ctx.excluded_variable_values,
+            runtime_type,
+            selection_set,
+        )
+        fields_by_key = {**excluded_fields, **codegen_fields}
+        conditional_keys = fields_by_key.keys() - (
+            codegen_fields.keys() & excluded_fields.keys()
+        )
 
         child_models: list[GeneratedArtifact] = []
         fields_mapping: dict[str, str] = {}
@@ -566,6 +648,9 @@ class PackageRenderer:
                         f"'{runtime_type.name}'"
                     )
                     raise ValueError(msg)
+                _warn_deprecated_field(
+                    ctx.query_name, runtime_type, representative, field_def
+                )
                 field_child_models, field_type = self._render_typed_field(
                     model_name_base=model_name_base,
                     response_key=response_key,
@@ -575,8 +660,18 @@ class PackageRenderer:
                 )
                 child_models.extend(field_child_models)
 
-            if py_alias:
+            is_conditional = response_key in conditional_keys
+            if is_conditional and not field_type.endswith("| None"):
+                field_type += " | None"
+
+            if py_alias and is_conditional:
+                field_type = (
+                    f'{field_type} = pydantic.Field(alias="{py_alias}", default=None)'
+                )
+            elif py_alias:
                 field_type = f'{field_type} = pydantic.Field(alias="{py_alias}")'
+            elif is_conditional:
+                field_type += " = None"
             fields_mapping[py_name] = field_type
 
         return [
@@ -832,6 +927,10 @@ class {capitalize_first(query.name)}(runtime.GQLQuery):
     def _render_regular_input_type(self, typ: graphql.GraphQLInputObjectType) -> str:
         fields: list[str] = []
         for field_name, gql_field in typ.fields.items():
+            if gql_field.deprecation_reason is not None:
+                _warn_deprecated_input_field(
+                    typ.name, field_name, gql_field.deprecation_reason
+                )
             typ_str = render_type(gql_field.type, self.scalars, enums=self.enums)
             if gql_field.default_value != graphql.Undefined:
                 typ_str += f" = {gql_field.default_value!r}"
@@ -846,6 +945,10 @@ class {capitalize_first(query.name)}(runtime.GQLQuery):
         variant_names: list[str] = []
         rendered: list[str] = []
         for field_name, gql_field in typ.fields.items():
+            if gql_field.deprecation_reason is not None:
+                _warn_deprecated_input_field(
+                    typ.name, field_name, gql_field.deprecation_reason
+                )
             variant_name = typ.name + capitalize_first(field_name)
             variant_names.append(variant_name)
             typ_str = render_type(
@@ -857,10 +960,19 @@ class {capitalize_first(query.name)}(runtime.GQLQuery):
         return rendered
 
     def render_enums(self) -> list[str]:
-        return [
-            f"type {typ.name} = Literal[{', '.join(repr(name) for name in typ.values)}]"
-            for typ in sorted(self.enums, key=lambda t: t.name)
-        ]
+        result: list[str] = []
+        for typ in sorted(self.enums, key=lambda t: t.name):
+            for value_name, enum_value in typ.values.items():
+                if enum_value.deprecation_reason is not None:
+                    warnings.warn(
+                        f"Enum value '{typ.name}.{value_name}' is deprecated:"
+                        f" {enum_value.deprecation_reason}",
+                        GraphQLDeprecationWarning,
+                        stacklevel=2,
+                    )
+            values = ", ".join(repr(name) for name in typ.values)
+            result.append(f"type {typ.name} = Literal[{values}]")
+        return result
 
 
 def collect_input_types(
