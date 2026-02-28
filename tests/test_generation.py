@@ -636,7 +636,9 @@ def test_no_queries_generates_module(test_project: ProjectBuilder):
     assert test_project.generate() is True
     generated = (test_project.root / "sample_app/gql/api.py").read_text()
     assert "GQLClient" in generated
-    assert "_API_GQL_DISPATCH: dict[str, type[runtime.GQLQuery]] = {\n\n}" in generated
+    assert (
+        "_API_GQL_DISPATCH: dict[str, type[runtime.GQLOperation]] = {\n\n}" in generated
+    )
 
 
 def test_invalid_gql_call_arguments(test_project: ProjectBuilder):

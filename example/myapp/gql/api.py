@@ -131,58 +131,53 @@ class FindUserByEmail(GQLModel):
 type FindUserBy = FindUserById | FindUserByEmail
 
 
-class CreateUser(runtime.GQLQuery):
+class CreateUser(runtime.GQLOperation):
     async def execute(self, *, input: CreateUserInput) -> CreateUserResult:
         return await API_CLIENT.query(
             CreateUserResult,
             'mutation CreateUser($input: CreateUserInput!) {\n  createUser(input: $input) {\n    id\n    name\n    email\n    role\n  }\n}',
             {"input": runtime.serialize_var(input)},
             headers=self.headers,
-            upload_files=self.upload_files,
         )
 
 
-class FindUser(runtime.GQLQuery):
+class FindUser(runtime.GQLOperation):
     async def execute(self, *, by: FindUserBy) -> FindUserResult:
         return await API_CLIENT.query(
             FindUserResult,
             'query FindUser($by: FindUserBy!) {\n  findUser(by: $by) {\n    id\n    name\n    email\n  }\n}',
             {"by": runtime.serialize_var(by)},
             headers=self.headers,
-            upload_files=self.upload_files,
         )
 
 
-class GetProfile(runtime.GQLQuery):
+class GetProfile(runtime.GQLOperation):
     async def execute(self, *, id: builtins.str, with_email: bool, skip_phone: bool) -> GetProfileResult:
         return await API_CLIENT.query(
             GetProfileResult,
             'query GetProfile($id: ID!, $withEmail: Boolean!, $skipPhone: Boolean!) {\n  user(id: $id) {\n    id\n    name\n    email @include(if: $withEmail)\n    phone @skip(if: $skipPhone)\n    role\n  }\n}',
             {"id": runtime.serialize_var(id), "withEmail": runtime.serialize_var(with_email), "skipPhone": runtime.serialize_var(skip_phone)},
             headers=self.headers,
-            upload_files=self.upload_files,
         )
 
 
-class GetUser(runtime.GQLQuery):
+class GetUser(runtime.GQLOperation):
     async def execute(self, *, id: builtins.str) -> GetUserResult:
         return await API_CLIENT.query(
             GetUserResult,
             'query GetUser($id: ID!) {\n  user(id: $id) {\n    ...UserFields\n    posts {\n      id\n      title\n    }\n  }\n}\n\nfragment UserFields on User {\n  id\n  name\n  email\n  phone\n  role\n}',
             {"id": runtime.serialize_var(id)},
             headers=self.headers,
-            upload_files=self.upload_files,
         )
 
 
-class Search(runtime.GQLQuery):
+class Search(runtime.GQLOperation):
     async def execute(self, *, query: str) -> SearchResult:
         return await API_CLIENT.query(
             SearchResult,
             'query Search($query: String!) {\n  search(query: $query) {\n    __typename\n    ... on User {\n      id\n      name\n      role\n    }\n    ... on Post {\n      id\n      title\n      author {\n        name\n      }\n    }\n  }\n}',
             {"query": runtime.serialize_var(query)},
             headers=self.headers,
-            upload_files=self.upload_files,
         )
 
 
@@ -197,10 +192,10 @@ def api_gql(stmt: Literal['\n        query GetUser($id: ID!) {\n            user
 @overload
 def api_gql(stmt: Literal['\n        query Search($query: String!) {\n            search(query: $query) {\n                __typename\n                ... on User {\n                    id\n                    name\n                    role\n                }\n                ... on Post {\n                    id\n                    title\n                    author { name }\n                }\n            }\n        }\n    ']) -> Search: ...
 @overload
-def api_gql(stmt: str) -> runtime.GQLQuery: ...
+def api_gql(stmt: str) -> runtime.GQLOperation: ...
 
 
-_API_GQL_DISPATCH: dict[str, type[runtime.GQLQuery]] = {
+_API_GQL_DISPATCH: dict[str, type[runtime.GQLOperation]] = {
     '\n        mutation CreateUser($input: CreateUserInput!) {\n            createUser(input: $input) {\n                id\n                name\n                email\n                role\n            }\n        }\n    ': CreateUser,
     '\n        query FindUser($by: FindUserBy!) {\n            findUser(by: $by) {\n                id\n                name\n                email\n            }\n        }\n    ': FindUser,
     '\n        query GetProfile($id: ID!, $withEmail: Boolean!, $skipPhone: Boolean!) {\n            user(id: $id) {\n                id\n                name\n                email @include(if: $withEmail)\n                phone @skip(if: $skipPhone)\n                role\n            }\n        }\n    ': GetProfile,
@@ -209,8 +204,8 @@ _API_GQL_DISPATCH: dict[str, type[runtime.GQLQuery]] = {
 }
 
 
-def api_gql(stmt: str) -> runtime.GQLQuery:
+def api_gql(stmt: str) -> runtime.GQLOperation:
     query_cls = _API_GQL_DISPATCH.get(stmt)
     if query_cls is not None:
         return query_cls()
-    return runtime.GQLQuery()
+    return runtime.GQLOperation()

@@ -438,19 +438,19 @@ def render_gql_fn(
     return f"""\
 {overloads}
 @overload
-def {gql_fn_name}(stmt: str) -> runtime.GQLQuery: ...
+def {gql_fn_name}(stmt: str) -> runtime.GQLOperation: ...
 
 
-{dict_name}: dict[str, type[runtime.GQLQuery]] = {{
+{dict_name}: dict[str, type[runtime.GQLOperation]] = {{
 {dict_entries}
 }}
 
 
-def {gql_fn_name}(stmt: str) -> runtime.GQLQuery:
+def {gql_fn_name}(stmt: str) -> runtime.GQLOperation:
     query_cls = {dict_name}.get(stmt)
     if query_cls is not None:
         return query_cls()
-    return runtime.GQLQuery()"""
+    return runtime.GQLOperation()"""
 
 
 def render_package(
@@ -900,13 +900,12 @@ class PackageRenderer:
             query_classes.append(
                 f"""
 
-class {capitalize_first(query.name)}(runtime.GQLQuery):
+class {capitalize_first(query.name)}(runtime.GQLOperation):
     async def execute({", ".join(args)}) -> {capitalize_first(query.name)}Result:
         return await {package_name.upper()}_CLIENT.query(
             {capitalize_first(query.name)}Result,
             {query.exec_source!r},{variables_arg}
             headers=self.headers,
-            upload_files=self.upload_files,
         )
 
                 """.strip()

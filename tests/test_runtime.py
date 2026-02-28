@@ -10,7 +10,7 @@ from werkzeug import Response
 
 from iron_gql import FileVar
 from iron_gql import GraphQLResponseError
-from iron_gql.runtime import GQLQuery
+from iron_gql.runtime import GQLOperation
 from iron_gql.runtime import extract_files
 from iron_gql.runtime import serialize_var
 from tests.conftest import ProjectBuilder
@@ -215,13 +215,21 @@ def test_serialize_var_handles_custom_scalar_types():
     }
 
 
-def test_query_with_file_uploads():
-    query = GQLQuery()
-    assert query.upload_files is False
+def test_query_auto_detects_file_uploads():
+    variables = {"name": "test", "file": FileVar(b"data", filename="f.txt")}
+    nulled, files = extract_files(variables)
+    assert nulled["name"] == "test"
+    assert nulled["file"] is None
+    assert "variables.file" in files
 
-    new_query = query.with_file_uploads()
-    assert new_query.upload_files is True
-    assert query.upload_files is False  # Original unchanged
+
+def test_gql_operation_with_headers():
+    op = GQLOperation()
+    assert op.headers == {}
+
+    op2 = op.with_headers({"Authorization": "Bearer token"})
+    assert op2.headers == {"Authorization": "Bearer token"}
+    assert op.headers == {}
 
 
 async def test_close(test_project: ProjectBuilder, httpserver: HTTPServer):
@@ -438,8 +446,7 @@ async def test_file_upload_multipart(
     api_module, queries_module = test_project.generate_and_import()
     try:
         file_data = io.BytesIO(b"hello world")
-        query = queries_module.upload_file.with_file_uploads()
-        result = await query.execute(
+        result = await queries_module.upload_file.execute(
             file=FileVar(file_data, filename="test.txt"), label="my-label"
         )
 
@@ -592,8 +599,7 @@ async def test_file_upload_multipart_base_url_without_trailing_slash(
     api_module, queries_module = test_project.generate_and_import()
     try:
         file_data = io.BytesIO(b"hello world")
-        query = queries_module.upload_file.with_file_uploads()
-        result = await query.execute(
+        result = await queries_module.upload_file.execute(
             file=FileVar(file_data, filename="test.txt"), label="my-label"
         )
 
@@ -821,8 +827,7 @@ async def test_file_upload_with_content_type(
     api_module, queries_module = test_project.generate_and_import()
     try:
         file_data = io.BytesIO(b"image data")
-        query = queries_module.upload.with_file_uploads()
-        result = await query.execute(
+        result = await queries_module.upload.execute(
             file=FileVar(file_data, filename="photo.png", content_type="image/png")
         )
         assert result.upload_file == "ok"

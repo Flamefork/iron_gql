@@ -21,7 +21,7 @@ pip install iron-gql[codegen]   # + graphql-core for code generation
 - **Deterministic validation.** `graphql-core` (codegen dependency) enforces schema compatibility and rejects duplicate operation names with incompatible bodies.
 
 ## Package Layout
-- `runtime.py` – provides the async `GQLClient`, the reusable `GQLQuery` base class, and value serialization helpers.
+- `runtime.py` – provides the async `GQLClient`, the reusable `GQLOperation` base class, and value serialization helpers.
 - `codegen/generator.py` – orchestrates query discovery, validation, and module rendering.
 - `codegen/parser.py` – converts GraphQL AST into typed helper structures consumed by the renderer.
 
@@ -108,8 +108,8 @@ Custom scalar types must be Pydantic-compatible — i.e. Pydantic should know ho
 
 ## Runtime Highlights
 - `GQLClient` accepts ASGI `target_app` so you can reuse the runtime for production HTTP calls or in-process ASGI execution.
-- `GQLQuery.with_headers` and `GQLQuery.with_file_uploads` clone the query object, making per-call customization trivial.
-- `Upload` scalars map to `iron_gql.FileVar` for multipart file handling.
+- `GQLOperation.with_headers` clones the operation object, making per-call customization trivial.
+- `Upload` scalars map to `iron_gql.FileVar`; multipart upload per the [GraphQL multipart request spec](https://github.com/jaydenseric/graphql-multipart-request-spec) is triggered automatically when variables contain `FileVar` instances.
 - `serialize_var` converts variables to JSON-friendly structures via Pydantic's `TypeAdapter`, supporting custom scalar types alongside nested models, dicts, and lists.
 
 ## Example

@@ -1,15 +1,15 @@
-import copy
 import json
 from collections.abc import Awaitable
 from collections.abc import Callable
 from collections.abc import MutableMapping
-from http import HTTPStatus
 from typing import IO
 from typing import Any
 from typing import Self
 
 import httpx
 import pydantic
+
+from iron_gql.errors import GraphQLResponseError
 
 DEFAULT_QUERY_TIMEOUT = 10
 
@@ -43,13 +43,6 @@ class FileVar:
         self.content_type = content_type
 
 
-class GraphQLResponseError(Exception):
-    def __init__(self, errors: list[dict[str, Any]]):
-        self.errors = errors
-        messages = "; ".join(e.get("message", str(e)) for e in errors)
-        super().__init__(messages)
-
-
 def extract_files(
     variables: dict[str, Any],
 ) -> tuple[dict[str, Any], dict[str, FileVar]]:
@@ -71,25 +64,18 @@ def extract_files(
     return nulled, files
 
 
-class GQLQuery:
+class GQLOperation:
     def __init__(self):
         self.headers: dict[str, str] = {}
-        self.upload_files: bool = False
 
-    def __deepcopy__(self, memo: dict[int, Any] | None):
+    def _copy(self) -> Self:
         q = self.__class__()
-        q.headers = copy.deepcopy(self.headers, memo)
-        q.upload_files = self.upload_files
+        q.headers = dict(self.headers)
         return q
 
     def with_headers(self, headers: dict[str, str]) -> Self:
-        q = copy.deepcopy(self)
-        q.headers = headers
-        return q
-
-    def with_file_uploads(self) -> Self:
-        q = copy.deepcopy(self)
-        q.upload_files = True
+        q = self._copy()
+        q.headers = dict(headers)
         return q
 
 
@@ -117,18 +103,19 @@ class GQLClient:
         variables: dict[str, Any] | None = None,
         *,
         headers: dict[str, str] | None = None,
-        upload_files: bool = False,
     ) -> T:
         payload: dict[str, Any] = {"query": query}
         if variables:
-            payload["variables"] = variables
-        if upload_files and variables:
-            response = await self._post_multipart(payload, headers)
+            nulled_vars, files = extract_files(variables)
+            payload["variables"] = nulled_vars
+            if files:
+                response = await self._post_multipart_request(payload, files, headers)
+            else:
+                response = await self._post_normal_request(payload, headers)
         else:
-            response = await self._client.post(
-                self._endpoint_url, json=payload, headers=headers or {}
-            )
-        if HTTPStatus.MULTIPLE_CHOICES <= response.status_code < HTTPStatus.BAD_REQUEST:
+            response = await self._post_normal_request(payload, headers)
+
+        if httpx.codes.is_redirect(response.status_code):
             location = response.headers.get("Location")
             message = f"Unexpected 3xx response ({response.status_code})"
             if location:
@@ -139,21 +126,34 @@ class GQLClient:
         response.raise_for_status()
         body = response.json()
         errors = body.get("errors")
+
         if errors:
             raise GraphQLResponseError(errors)
         if body.get("data") is None:
             raise GraphQLResponseError([{"message": "No data in response"}])
+
         return result_type.model_validate(body["data"])
 
-    async def _post_multipart(
+    async def _post_normal_request(
         self,
         payload: dict[str, Any],
         headers: dict[str, str] | None,
     ) -> httpx.Response:
-        nulled_vars, files = extract_files(payload["variables"])
-        payload["variables"] = nulled_vars
+        return await self._client.post(
+            self._endpoint_url,
+            json=payload,
+            headers=headers,
+        )
+
+    async def _post_multipart_request(
+        self,
+        payload: dict[str, Any],
+        files: dict[str, FileVar],
+        headers: dict[str, str] | None,
+    ) -> httpx.Response:
         file_map: dict[str, list[str]] = {}
         file_streams: dict[str, tuple[str, Any] | tuple[str, Any, str]] = {}
+
         for i, (path, file_var) in enumerate(files.items()):
             key = str(i)
             file_map[key] = [path]
@@ -162,6 +162,7 @@ class GQLClient:
                 file_streams[key] = (name, file_var.f, file_var.content_type)
             else:
                 file_streams[key] = (name, file_var.f)
+
         return await self._client.post(
             self._endpoint_url,
             data={
@@ -169,7 +170,7 @@ class GQLClient:
                 "map": json.dumps(file_map),
             },
             files=file_streams,
-            headers=headers or {},
+            headers=headers,
         )
 
     async def close(self) -> None:
