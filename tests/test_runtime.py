@@ -18,8 +18,7 @@ from iron_gql import GraphQLResponseError
 from iron_gql import websockets
 from iron_gql.runtime import GQLClient
 from iron_gql.runtime import GQLOperation
-from iron_gql.runtime import extract_files
-from iron_gql.runtime import serialize_var
+from iron_gql.runtime import serialize_variables
 from tests.conftest import ProjectBuilder
 
 
@@ -197,34 +196,45 @@ async def test_variable_defaults_optional(
         assert explicit_result.posts == [0, 1]
 
 
-def test_serialize_var_handles_nested_structures():
-    nested_list = [[1, 2], [3, 4]]
-    assert serialize_var(nested_list) == [[1, 2], [3, 4]]
+def test_prepare_variables_handles_nested_structures():
+    nested_list = {"x": [[1, 2], [3, 4]]}
+    result, files = serialize_variables(nested_list)
+    assert result == {"x": [[1, 2], [3, 4]]}
+    assert files == {}
 
     nested_dict = {"a": {"b": 1}, "c": [1, 2]}
-    assert serialize_var(nested_dict) == {"a": {"b": 1}, "c": [1, 2]}
+    result, files = serialize_variables(nested_dict)
+    assert result == {"a": {"b": 1}, "c": [1, 2]}
+    assert files == {}
 
     mixed = {"a": [1, {"b": 2}]}
-    assert serialize_var(mixed) == {"a": [1, {"b": 2}]}
+    result, files = serialize_variables(mixed)
+    assert result == {"a": [1, {"b": 2}]}
+    assert files == {}
 
 
-def test_serialize_var_handles_custom_scalar_types():
+def test_prepare_variables_handles_custom_scalar_types():
     dt = datetime.datetime(2024, 1, 15, 10, 30, 0, tzinfo=datetime.UTC)
-    assert serialize_var(dt) == "2024-01-15T10:30:00Z"
-
     d = datetime.date(2024, 6, 1)
-    assert serialize_var(d) == "2024-06-01"
 
-    assert serialize_var(Decimal("12.50")) == "12.50"
-
-    assert serialize_var({"dates": [dt, d]}) == {
-        "dates": ["2024-01-15T10:30:00Z", "2024-06-01"]
+    result, files = serialize_variables({
+        "dt": dt,
+        "d": d,
+        "dec": Decimal("12.50"),
+        "dates": [dt, d],
+    })
+    assert result == {
+        "dt": "2024-01-15T10:30:00Z",
+        "d": "2024-06-01",
+        "dec": "12.50",
+        "dates": ["2024-01-15T10:30:00Z", "2024-06-01"],
     }
+    assert files == {}
 
 
-def test_query_auto_detects_file_uploads():
+def test_prepare_variables_detects_file_uploads():
     variables = {"name": "test", "file": FileVar(b"data", filename="f.txt")}
-    nulled, files = extract_files(variables)
+    nulled, files = serialize_variables(variables)
     assert nulled["name"] == "test"
     assert nulled["file"] is None
     assert "variables.file" in files
@@ -263,24 +273,24 @@ async def test_close(test_project: ProjectBuilder, httpserver: HTTPServer):
         assert api.API_CLIENT._client.is_closed  # noqa: SLF001
 
 
-def test_extract_files_single():
+def test_prepare_variables_single_file():
     f = io.BytesIO(b"hello")
     variables = {"file": FileVar(f, filename="test.txt")}
-    nulled, files = extract_files(variables)
+    nulled, files = serialize_variables(variables)
     assert nulled == {"file": None}
     assert list(files.keys()) == ["variables.file"]
     assert files["variables.file"].f is f
     assert files["variables.file"].filename == "test.txt"
 
 
-def test_extract_files_nested():
+def test_prepare_variables_nested_files():
     f1 = io.BytesIO(b"one")
     f2 = io.BytesIO(b"two")
     variables = {
         "input": {"avatar": FileVar(f1, filename="a.png"), "name": "Morty"},
         "cover": FileVar(f2, filename="c.jpg", content_type="image/jpeg"),
     }
-    nulled, files = extract_files(variables)
+    nulled, files = serialize_variables(variables)
     assert nulled == {"input": {"avatar": None, "name": "Morty"}, "cover": None}
     assert "variables.input.avatar" in files
     assert "variables.cover" in files
@@ -288,19 +298,19 @@ def test_extract_files_nested():
     assert files["variables.cover"].content_type == "image/jpeg"
 
 
-def test_extract_files_in_list():
+def test_prepare_variables_files_in_list():
     f1 = io.BytesIO(b"a")
     f2 = io.BytesIO(b"b")
     variables = {"files": [FileVar(f1), FileVar(f2)]}
-    nulled, files = extract_files(variables)
+    nulled, files = serialize_variables(variables)
     assert nulled == {"files": [None, None]}
     assert "variables.files.0" in files
     assert "variables.files.1" in files
 
 
-def test_extract_files_no_files():
+def test_prepare_variables_no_files():
     variables = {"name": "Morty", "age": 14}
-    nulled, files = extract_files(variables)
+    nulled, files = serialize_variables(variables)
     assert nulled == {"name": "Morty", "age": 14}
     assert files == {}
 
@@ -945,7 +955,7 @@ async def test_subscribe_asgi():
     client = GQLClient(base_url="http://testserver/graphql", target_app=app)
     try:
         async with client.subscribe(
-            _CounterResult, "subscription { counter }"
+            _CounterResult, "subscription { counter }", variables={}, headers={}
         ) as stream:
             results = [item.counter async for item in stream]
         assert results == [1, 2, 3]
@@ -965,7 +975,7 @@ async def test_subscribe_error():
 
         async def consume():
             async with client.subscribe(
-                _CounterResult, "subscription { counter }"
+                _CounterResult, "subscription { counter }", variables={}, headers={}
             ) as stream:
                 async for item in stream:
                     results.append(item.counter)  # noqa: PERF401
@@ -991,7 +1001,7 @@ async def test_subscribe_next_with_errors():
 
         async def consume():
             async with client.subscribe(
-                _CounterResult, "subscription { counter }"
+                _CounterResult, "subscription { counter }", variables={}, headers={}
             ) as stream:
                 async for _ in stream:
                     pass
@@ -1084,7 +1094,7 @@ async def test_subscribe_connection_rejected():
 
         async def consume():
             async with client.subscribe(
-                _CounterResult, "subscription { counter }"
+                _CounterResult, "subscription { counter }", variables={}, headers={}
             ) as stream:
                 async for _ in stream:
                     pass
@@ -1105,7 +1115,7 @@ async def test_subscribe_no_data_in_next():
 
         async def consume():
             async with client.subscribe(
-                _CounterResult, "subscription { counter }"
+                _CounterResult, "subscription { counter }", variables={}, headers={}
             ) as stream:
                 async for _ in stream:
                     pass
@@ -1126,7 +1136,7 @@ async def test_subscribe_unexpected_message_type():
 
         async def consume():
             async with client.subscribe(
-                _CounterResult, "subscription { counter }"
+                _CounterResult, "subscription { counter }", variables={}, headers={}
             ) as stream:
                 async for _ in stream:
                     pass
@@ -1155,6 +1165,7 @@ async def test_subscribe_with_headers_propagation():
         async with client.subscribe(
             _CounterResult,
             "subscription { counter }",
+            variables={},
             headers={"Authorization": "Bearer token"},
         ) as stream:
             async for _ in stream:
@@ -1181,7 +1192,7 @@ async def test_subscribe_ping_pong():
     client = GQLClient(base_url="http://testserver/graphql", target_app=app)
     try:
         async with client.subscribe(
-            _CounterResult, "subscription { counter }"
+            _CounterResult, "subscription { counter }", variables={}, headers={}
         ) as stream:
             results = [item.counter async for item in stream]
         assert results == [1, 2, 3]
@@ -1204,7 +1215,7 @@ async def test_subscribe_ping_before_connection_ack():
     client = GQLClient(base_url="http://testserver/graphql", target_app=app)
     try:
         async with client.subscribe(
-            _CounterResult, "subscription { counter }"
+            _CounterResult, "subscription { counter }", variables={}, headers={}
         ) as stream:
             results = [item.counter async for item in stream]
         assert results == [1]
@@ -1226,6 +1237,7 @@ async def test_subscribe_with_headers_override_case_insensitive():
         async with client.subscribe(
             _CounterResult,
             "subscription { counter }",
+            variables={},
             headers={"authorization": "Bearer override-token"},
         ) as stream:
             async for _ in stream:
@@ -1293,11 +1305,13 @@ async def test_subscribe_carries_http_cookies():
 
     client = GQLClient(base_url="http://testserver/graphql", target_app=app)
     try:
-        result = await client.query(_PingResult, "query { ping }")
+        result = await client.query(
+            _PingResult, "query { ping }", variables={}, headers={}
+        )
         assert result.ping == "pong"
 
         async with client.subscribe(
-            _CounterResult, "subscription { counter }"
+            _CounterResult, "subscription { counter }", variables={}, headers={}
         ) as stream:
             async for _ in stream:
                 pass
@@ -1341,7 +1355,7 @@ async def test_subscribe_disconnect_before_connection_ack():
 
         async def consume():
             async with client.subscribe(
-                _CounterResult, "subscription { counter }"
+                _CounterResult, "subscription { counter }", variables={}, headers={}
             ) as stream:
                 async for _ in stream:
                     pass
@@ -1390,7 +1404,7 @@ async def test_subscribe_connection_ack_timeout(monkeypatch: pytest.MonkeyPatch)
 
         async def consume():
             async with client.subscribe(
-                _CounterResult, "subscription { counter }"
+                _CounterResult, "subscription { counter }", variables={}, headers={}
             ) as stream:
                 async for _ in stream:
                     pass
@@ -1413,7 +1427,7 @@ async def test_subscribe_url_scheme_https_to_wss():
     )
     try:
         async with client.subscribe(
-            _CounterResult, "subscription { counter }"
+            _CounterResult, "subscription { counter }", variables={}, headers={}
         ) as stream:
             async for _ in stream:
                 pass
@@ -1434,7 +1448,7 @@ async def test_subscribe_malformed_message_no_type():
 
         async def consume():
             async with client.subscribe(
-                _CounterResult, "subscription { counter }"
+                _CounterResult, "subscription { counter }", variables={}, headers={}
             ) as stream:
                 async for _ in stream:
                     pass
@@ -1454,7 +1468,7 @@ async def test_subscribe_no_variables_key_when_none():
     client = GQLClient(base_url="http://testserver/graphql", target_app=app)
     try:
         async with client.subscribe(
-            _CounterResult, "subscription { counter }"
+            _CounterResult, "subscription { counter }", variables={}, headers={}
         ) as stream:
             async for _ in stream:
                 pass
@@ -1473,7 +1487,7 @@ async def test_subscribe_error_without_payload():
 
         async def consume():
             async with client.subscribe(
-                _CounterResult, "subscription { counter }"
+                _CounterResult, "subscription { counter }", variables={}, headers={}
             ) as stream:
                 async for _ in stream:
                     pass
@@ -1495,7 +1509,7 @@ async def test_subscribe_pong_during_messages():
     client = GQLClient(base_url="http://testserver/graphql", target_app=app)
     try:
         async with client.subscribe(
-            _CounterResult, "subscription { counter }"
+            _CounterResult, "subscription { counter }", variables={}, headers={}
         ) as stream:
             results = [item.counter async for item in stream]
         assert results == [1, 2]
@@ -1517,7 +1531,7 @@ async def test_subscribe_pong_before_connection_ack():
     client = GQLClient(base_url="http://testserver/graphql", target_app=app)
     try:
         async with client.subscribe(
-            _CounterResult, "subscription { counter }"
+            _CounterResult, "subscription { counter }", variables={}, headers={}
         ) as stream:
             results = [item.counter async for item in stream]
         assert results == [1]
@@ -1535,7 +1549,7 @@ async def test_subscribe_next_without_payload_key():
 
         async def consume():
             async with client.subscribe(
-                _CounterResult, "subscription { counter }"
+                _CounterResult, "subscription { counter }", variables={}, headers={}
             ) as stream:
                 async for _ in stream:
                     pass
@@ -1557,7 +1571,7 @@ async def test_subscribe_pre_ack_messages_exhaustion():
 
         async def consume():
             async with client.subscribe(
-                _CounterResult, "subscription { counter }"
+                _CounterResult, "subscription { counter }", variables={}, headers={}
             ) as stream:
                 async for _ in stream:
                     pass
@@ -1576,7 +1590,7 @@ async def test_subscribe_unsupported_url_scheme():
 
         async def consume():
             async with client.subscribe(
-                _CounterResult, "subscription { counter }"
+                _CounterResult, "subscription { counter }", variables={}, headers={}
             ) as stream:
                 async for _ in stream:
                     pass
@@ -1605,7 +1619,7 @@ async def test_subscribe_next_with_data_and_errors():
 
         async def consume():
             async with client.subscribe(
-                _CounterResult, "subscription { counter }"
+                _CounterResult, "subscription { counter }", variables={}, headers={}
             ) as stream:
                 async for _ in stream:
                     pass
@@ -1682,7 +1696,7 @@ async def test_subscribe_normal_closure_during_messages():
     client = GQLClient(base_url="http://testserver/graphql", target_app=app)
     try:
         async with client.subscribe(
-            _CounterResult, "subscription { counter }"
+            _CounterResult, "subscription { counter }", variables={}, headers={}
         ) as stream:
             results = [item.counter async for item in stream]
         assert results == [1, 2]
@@ -1705,7 +1719,7 @@ async def test_subscribe_abnormal_disconnect_during_messages():
 
         async def consume():
             async with client.subscribe(
-                _CounterResult, "subscription { counter }"
+                _CounterResult, "subscription { counter }", variables={}, headers={}
             ) as stream:
                 async for item in stream:
                     results.append(item.counter)  # noqa: PERF401
@@ -1758,7 +1772,7 @@ async def test_subscribe_disconnect_before_ack_with_reason():
 
         async def consume():
             async with client.subscribe(
-                _CounterResult, "subscription { counter }"
+                _CounterResult, "subscription { counter }", variables={}, headers={}
             ) as stream:
                 async for _ in stream:
                     pass
@@ -1816,7 +1830,7 @@ async def test_subscribe_invalid_json_during_messages():
 
         async def consume():
             async with client.subscribe(
-                _CounterResult, "subscription { counter }"
+                _CounterResult, "subscription { counter }", variables={}, headers={}
             ) as stream:
                 async for _ in stream:
                     pass
@@ -1865,7 +1879,7 @@ async def test_subscribe_invalid_json_during_handshake():
 
         async def consume():
             async with client.subscribe(
-                _CounterResult, "subscription { counter }"
+                _CounterResult, "subscription { counter }", variables={}, headers={}
             ) as stream:
                 async for _ in stream:
                     pass
@@ -1888,7 +1902,7 @@ async def test_subscribe_validation_error():
 
         async def consume():
             async with client.subscribe(
-                _CounterResult, "subscription { counter }"
+                _CounterResult, "subscription { counter }", variables={}, headers={}
             ) as stream:
                 async for _ in stream:
                     pass

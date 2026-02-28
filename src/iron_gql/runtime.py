@@ -49,27 +49,6 @@ class FileVar:
         self.content_type = content_type
 
 
-def extract_files(
-    variables: dict[str, Any],
-) -> tuple[dict[str, Any], dict[str, FileVar]]:
-    files: dict[str, FileVar] = {}
-
-    def walk(path: str, obj: Any) -> Any:
-        match obj:
-            case FileVar():
-                files[path] = obj
-                return None
-            case dict():
-                return {k: walk(f"{path}.{k}", v) for k, v in obj.items()}
-            case list():
-                return [walk(f"{path}.{i}", v) for i, v in enumerate(obj)]
-            case _:
-                return obj
-
-    nulled = walk("variables", variables)
-    return nulled, files
-
-
 class GQLOperation:
     def __init__(self):
         self.headers: dict[str, str] = {}
@@ -107,18 +86,16 @@ class GQLClient:
         self,
         result_type: type[T],
         query: str,
-        variables: dict[str, Any] | None = None,
         *,
-        headers: dict[str, str] | None = None,
+        variables: dict[str, Any],
+        headers: dict[str, str],
     ) -> T:
         payload: dict[str, Any] = {"query": query}
-        if variables:
-            nulled_vars, files = extract_files(variables)
-            payload["variables"] = nulled_vars
-            if files:
-                response = await self._post_multipart_request(payload, files, headers)
-            else:
-                response = await self._post_normal_request(payload, headers)
+        sierialized_vars, files = serialize_variables(variables)
+        if sierialized_vars:
+            payload["variables"] = sierialized_vars
+        if files:
+            response = await self._post_multipart_request(payload, files, headers)
         else:
             response = await self._post_normal_request(payload, headers)
 
@@ -144,7 +121,7 @@ class GQLClient:
     async def _post_normal_request(
         self,
         payload: dict[str, Any],
-        headers: dict[str, str] | None,
+        headers: dict[str, str],
     ) -> httpx.Response:
         return await self._client.post(
             self._endpoint_url,
@@ -156,7 +133,7 @@ class GQLClient:
         self,
         payload: dict[str, Any],
         files: dict[str, FileVar],
-        headers: dict[str, str] | None,
+        headers: dict[str, str],
     ) -> httpx.Response:
         file_map: dict[str, list[str]] = {}
         file_streams: dict[str, tuple[str, Any] | tuple[str, Any, str]] = {}
@@ -185,24 +162,29 @@ class GQLClient:
         self,
         result_type: type[T],
         query: str,
-        variables: dict[str, Any] | None = None,
         *,
-        headers: dict[str, str] | None = None,
+        variables: dict[str, Any],
+        headers: dict[str, str],
     ) -> AsyncGenerator[AsyncGenerator[T]]:
-        merged_headers = httpx.Headers(self._client.headers)
-        if headers:
-            merged_headers.update(headers)
+        serialized_vars, files = serialize_variables(variables)
+        if files:
+            msg = "File uploads are not supported in subscriptions"
+            raise TypeError(msg)
         transport = (
             SafeASGIWebSocketTransport(self._target_app) if self._target_app else None
         )
-        cookies = httpx.Cookies(self._client.cookies)
         url = str(ws_url(self._endpoint_url))
         async with (
             httpx.AsyncClient(
-                transport=transport, headers=merged_headers, cookies=cookies
+                transport=transport,
+                headers={
+                    **httpx.Headers(self._client.headers),
+                    **headers,
+                },
+                cookies=httpx.Cookies(self._client.cookies),
             ) as client,
             aconnect_ws(url, client, subprotocols=["graphql-transport-ws"]) as ws,
-            graphql_ws_subscribe(ws, result_type, query, variables) as stream,
+            graphql_ws_subscribe(ws, result_type, query, serialized_vars) as stream,
         ):
             yield stream
 
@@ -213,24 +195,7 @@ class GQLClient:
 _adapter_cache: dict[type, pydantic.TypeAdapter[object]] = {}
 
 
-def serialize_var(value: Any) -> Any:
-    match value:
-        case str() | int() | float() | bool() | FileVar() | None:
-            return value
-        case list() | tuple():
-            return [serialize_var(v) for v in value]
-        case dict():
-            return {k: serialize_var(v) for k, v in value.items()}
-        case pydantic.BaseModel():
-            return value.model_dump(mode="json", by_alias=True, exclude_unset=True)
-        case _:
-            tp = type(value)
-            if tp not in _adapter_cache:
-                _adapter_cache[tp] = pydantic.TypeAdapter(tp)
-            return _adapter_cache[tp].dump_python(value, mode="json")
-
-
-def extract_files(
+def serialize_variables(
     variables: dict[str, Any],
 ) -> tuple[dict[str, Any], dict[str, FileVar]]:
     files: dict[str, FileVar] = {}
@@ -240,12 +205,22 @@ def extract_files(
             case FileVar():
                 files[path] = obj
                 return None
+            case str() | int() | float() | bool() | None:
+                return obj
+            case list() | tuple():
+                return [walk(f"{path}.{i}", v) for i, v in enumerate(obj)]
             case dict():
                 return {k: walk(f"{path}.{k}", v) for k, v in obj.items()}
-            case list():
-                return [walk(f"{path}.{i}", v) for i, v in enumerate(obj)]
+            case pydantic.BaseModel():
+                dumped = obj.model_dump(
+                    mode="python", by_alias=True, exclude_unset=True
+                )
+                return walk(path, dumped)
             case _:
-                return obj
+                tp = type(obj)
+                if tp not in _adapter_cache:
+                    _adapter_cache[tp] = pydantic.TypeAdapter(tp)
+                return _adapter_cache[tp].dump_python(obj, mode="json")
 
-    nulled = walk("variables", variables)
-    return nulled, files
+    serialized = walk("variables", variables)
+    return serialized, files

@@ -896,10 +896,8 @@ class PackageRenderer:
                 if v.default_value != graphql.Undefined:
                     typ += f" = {v.default_value!r}"
                 args.append(f"{py_name}: {typ}")
-                variables.append(f'"{v.name}": runtime.serialize_var({py_name})')
-            variables_arg = (
-                f"\n            {{{', '.join(variables)}}}," if variables else ""
-            )
+                variables.append(f'"{v.name}": {py_name}')
+            variables_str = f"{{{', '.join(variables)}}}"
 
             class_name = capitalize_first(query.name)
             result_type = f"{class_name}Result"
@@ -912,7 +910,8 @@ class {class_name}(runtime.GQLOperation):
     async def execute({", ".join(args)}) -> AsyncGenerator[{result_type}]:
         async with {package_name.upper()}_CLIENT.subscribe(
             {result_type},
-            {query.exec_source!r},{variables_arg}
+            {query.exec_source!r},
+            variables={variables_str},
             headers=self.headers,
         ) as stream:
             async for item in stream:
@@ -928,7 +927,8 @@ class {class_name}(runtime.GQLOperation):
     async def execute({", ".join(args)}) -> {result_type}:
         return await {package_name.upper()}_CLIENT.query(
             {result_type},
-            {query.exec_source!r},{variables_arg}
+            {query.exec_source!r},
+            variables={variables_str},
             headers=self.headers,
         )
 

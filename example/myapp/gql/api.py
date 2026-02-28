@@ -152,7 +152,7 @@ class CreateUser(runtime.GQLOperation):
         return await API_CLIENT.query(
             CreateUserResult,
             'mutation CreateUser($input: CreateUserInput!) {\n  createUser(input: $input) {\n    id\n    name\n    email\n    role\n  }\n}',
-            {"input": runtime.serialize_var(input)},
+            variables={"input": input},
             headers=self.headers,
         )
 
@@ -162,7 +162,7 @@ class FindUser(runtime.GQLOperation):
         return await API_CLIENT.query(
             FindUserResult,
             'query FindUser($by: FindUserBy!) {\n  findUser(by: $by) {\n    id\n    name\n    email\n  }\n}',
-            {"by": runtime.serialize_var(by)},
+            variables={"by": by},
             headers=self.headers,
         )
 
@@ -172,7 +172,7 @@ class GetProfile(runtime.GQLOperation):
         return await API_CLIENT.query(
             GetProfileResult,
             'query GetProfile($id: ID!, $withEmail: Boolean!, $skipPhone: Boolean!) {\n  user(id: $id) {\n    id\n    name\n    email @include(if: $withEmail)\n    phone @skip(if: $skipPhone)\n    role\n  }\n}',
-            {"id": runtime.serialize_var(id), "withEmail": runtime.serialize_var(with_email), "skipPhone": runtime.serialize_var(skip_phone)},
+            variables={"id": id, "withEmail": with_email, "skipPhone": skip_phone},
             headers=self.headers,
         )
 
@@ -182,7 +182,7 @@ class GetUser(runtime.GQLOperation):
         return await API_CLIENT.query(
             GetUserResult,
             'query GetUser($id: ID!) {\n  user(id: $id) {\n    ...UserFields\n    posts {\n      id\n      title\n    }\n  }\n}\n\nfragment UserFields on User {\n  id\n  name\n  email\n  phone\n  role\n}',
-            {"id": runtime.serialize_var(id)},
+            variables={"id": id},
             headers=self.headers,
         )
 
@@ -192,7 +192,7 @@ class PostAdded(runtime.GQLOperation):
         async with API_CLIENT.subscribe(
             PostAddedResult,
             'subscription PostAdded($userId: ID!) {\n  postAdded(userId: $userId) {\n    id\n    title\n    body\n    author {\n      name\n    }\n  }\n}',
-            {"userId": runtime.serialize_var(user_id)},
+            variables={"userId": user_id},
             headers=self.headers,
         ) as stream:
             async for item in stream:
@@ -204,7 +204,7 @@ class Search(runtime.GQLOperation):
         return await API_CLIENT.query(
             SearchResult,
             'query Search($query: String!) {\n  search(query: $query) {\n    __typename\n    ... on User {\n      id\n      name\n      role\n    }\n    ... on Post {\n      id\n      title\n      author {\n        name\n      }\n    }\n  }\n}',
-            {"query": runtime.serialize_var(query)},
+            variables={"query": query},
             headers=self.headers,
         )
 

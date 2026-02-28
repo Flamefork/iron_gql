@@ -374,7 +374,7 @@ def test_input_enums_and_defaults(test_project: ProjectBuilder):
     update = api.UpdateInput(status="ACTIVE")
     assert isinstance(update.child, api.ChildInput)
     assert update.child.code == "X"
-    serialized = runtime.serialize_var(update)
+    serialized = runtime.serialize_variables({"x": update})[0]["x"]
     assert serialized == {"status": "ACTIVE"}
 
 
@@ -722,13 +722,15 @@ def test_one_of_basic_scalar_fields(test_project: ProjectBuilder):
 
     api = test_project.import_api()
     by_name = api.SearchCriteriaName(name="John")
-    assert runtime.serialize_var(by_name) == {"name": "John"}
+    assert runtime.serialize_variables({"x": by_name})[0]["x"] == {"name": "John"}
 
     by_email = api.SearchCriteriaEmail(email="j@example.com")
-    assert runtime.serialize_var(by_email) == {"email": "j@example.com"}
+    assert runtime.serialize_variables({"x": by_email})[0]["x"] == {
+        "email": "j@example.com"
+    }
 
     by_user_id = api.SearchCriteriaUserId(user_id="u-1")
-    assert runtime.serialize_var(by_user_id) == {"userId": "u-1"}
+    assert runtime.serialize_variables({"x": by_user_id})[0]["x"] == {"userId": "u-1"}
 
 
 def test_one_of_with_nested_input_type(test_project: ProjectBuilder):
@@ -780,7 +782,7 @@ def test_one_of_with_nested_input_type(test_project: ProjectBuilder):
     api = test_project.import_api()
     addr = api.AddressInput(street="Main St", city="NYC")
     action = api.UpdateActionSetAddress(set_address=addr)
-    assert runtime.serialize_var(action) == {
+    assert runtime.serialize_variables({"x": action})[0]["x"] == {
         "setAddress": {"street": "Main St", "city": "NYC"}
     }
 
@@ -831,7 +833,7 @@ def test_one_of_referenced_in_regular_input(test_project: ProjectBuilder):
     api = test_project.import_api()
     criteria = api.SearchCriteriaName(name="John")
     wrapper = api.WrapperInput(criteria=criteria, limit=10)
-    assert runtime.serialize_var(wrapper) == {
+    assert runtime.serialize_variables({"x": wrapper})[0]["x"] == {
         "criteria": {"name": "John"},
         "limit": 10,
     }
@@ -876,7 +878,7 @@ def test_one_of_single_field(test_project: ProjectBuilder):
 
     api = test_project.import_api()
     choice = api.SingleChoiceValue(value="hello")
-    assert runtime.serialize_var(choice) == {"value": "hello"}
+    assert runtime.serialize_variables({"x": choice})[0]["x"] == {"value": "hello"}
 
 
 def test_one_of_with_enum_field(test_project: ProjectBuilder):
@@ -926,10 +928,10 @@ def test_one_of_with_enum_field(test_project: ProjectBuilder):
 
     api = test_project.import_api()
     by_status = api.FilterByStatus(status="ACTIVE")
-    assert runtime.serialize_var(by_status) == {"status": "ACTIVE"}
+    assert runtime.serialize_variables({"x": by_status})[0]["x"] == {"status": "ACTIVE"}
 
     by_name = api.FilterByName(name="Alice")
-    assert runtime.serialize_var(by_name) == {"name": "Alice"}
+    assert runtime.serialize_variables({"x": by_name})[0]["x"] == {"name": "Alice"}
 
 
 def test_one_of_with_list_field(test_project: ProjectBuilder):
@@ -973,10 +975,12 @@ def test_one_of_with_list_field(test_project: ProjectBuilder):
 
     api = test_project.import_api()
     by_name = api.SearchByName(name="Alice")
-    assert runtime.serialize_var(by_name) == {"name": "Alice"}
+    assert runtime.serialize_variables({"x": by_name})[0]["x"] == {"name": "Alice"}
 
     by_tags = api.SearchByTags(tags=["python", "graphql"])
-    assert runtime.serialize_var(by_tags) == {"tags": ["python", "graphql"]}
+    assert runtime.serialize_variables({"x": by_tags})[0]["x"] == {
+        "tags": ["python", "graphql"]
+    }
 
 
 def test_one_of_referencing_one_of(test_project: ProjectBuilder):
@@ -1025,10 +1029,14 @@ def test_one_of_referencing_one_of(test_project: ProjectBuilder):
     api = test_project.import_api()
     inner = api.InnerChoiceX(x="hello")
     outer = api.OuterChoiceInner(inner=inner)
-    assert runtime.serialize_var(outer) == {"inner": {"x": "hello"}}
+    assert runtime.serialize_variables({"x": outer})[0]["x"] == {
+        "inner": {"x": "hello"}
+    }
 
     outer_direct = api.OuterChoiceDirect(direct="world")
-    assert runtime.serialize_var(outer_direct) == {"direct": "world"}
+    assert runtime.serialize_variables({"x": outer_direct})[0]["x"] == {
+        "direct": "world"
+    }
 
 
 def test_deprecated_result_field_warning(test_project: ProjectBuilder):
