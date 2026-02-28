@@ -385,6 +385,7 @@ def render_imports(
     base_url_symbol = base_url_import_path.split(".", maxsplit=1)[0]
     return f"""\
 import datetime
+from collections.abc import AsyncGenerator
 from typing import Annotated
 from typing import Literal
 from typing import overload
@@ -882,6 +883,9 @@ class PackageRenderer:
     ) -> list[str]:
         query_classes = []
         for query in queries:
+            is_subscription = (
+                query.operation_def.operation == graphql.OperationType.SUBSCRIPTION
+            )
             args = ["self"]
             variables = []
             if query.variables:
@@ -897,19 +901,39 @@ class PackageRenderer:
                 f"\n            {{{', '.join(variables)}}}," if variables else ""
             )
 
-            query_classes.append(
-                f"""
+            class_name = capitalize_first(query.name)
+            result_type = f"{class_name}Result"
 
-class {capitalize_first(query.name)}(runtime.GQLOperation):
-    async def execute({", ".join(args)}) -> {capitalize_first(query.name)}Result:
+            if is_subscription:
+                query_classes.append(
+                    f"""
+
+class {class_name}(runtime.GQLOperation):
+    async def execute({", ".join(args)}) -> AsyncGenerator[{result_type}]:
+        async with {package_name.upper()}_CLIENT.subscribe(
+            {result_type},
+            {query.exec_source!r},{variables_arg}
+            headers=self.headers,
+        ) as stream:
+            async for item in stream:
+                yield item
+
+                    """.strip()
+                )
+            else:
+                query_classes.append(
+                    f"""
+
+class {class_name}(runtime.GQLOperation):
+    async def execute({", ".join(args)}) -> {result_type}:
         return await {package_name.upper()}_CLIENT.query(
-            {capitalize_first(query.name)}Result,
+            {result_type},
             {query.exec_source!r},{variables_arg}
             headers=self.headers,
         )
 
-                """.strip()
-            )
+                    """.strip()
+                )
         return query_classes
 
     def render_input_types(

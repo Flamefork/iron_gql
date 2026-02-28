@@ -14,6 +14,10 @@ type Mutation {
   createUser(input: CreateUserInput!): User!
 }
 
+type Subscription {
+  postAdded(userId: ID!): Post!
+}
+
 enum Role {
   ADMIN
   MEMBER

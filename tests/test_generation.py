@@ -636,9 +636,8 @@ def test_no_queries_generates_module(test_project: ProjectBuilder):
     assert test_project.generate() is True
     generated = (test_project.root / "sample_app/gql/api.py").read_text()
     assert "GQLClient" in generated
-    assert (
-        "_API_GQL_DISPATCH: dict[str, type[runtime.GQLOperation]] = {\n\n}" in generated
-    )
+    dispatch_decl = "_API_GQL_DISPATCH: dict[str, type[runtime.GQLOperation]] = {\n\n}"
+    assert dispatch_decl in generated
 
 
 def test_invalid_gql_call_arguments(test_project: ProjectBuilder):
@@ -1843,3 +1842,94 @@ def test_include_skip_inside_named_fragment(test_project: ProjectBuilder):
     assert "id: builtins.str\n" in generated
     assert "name: str\n" in generated
     assert "email: str | None = None" in generated
+
+
+def test_subscription_generates_subscription_class(test_project: ProjectBuilder):
+    test_project.prepare(
+        schema="""
+            type Query {
+                _dummy: String
+            }
+
+            type Subscription {
+                events(channel: String!): Event!
+            }
+
+            type Event {
+                id: ID!
+                message: String!
+            }
+        """,
+        queries="""
+        from sample_app.gql.api import api_gql
+
+        events = api_gql(
+            '''
+            subscription Events($channel: String!) {
+                events(channel: $channel) {
+                    id
+                    message
+                }
+            }
+            '''
+        )
+        """,
+    )
+
+    api, queries = test_project.generate_and_import()
+
+    assert issubclass(api.Events, runtime.GQLOperation)
+    assert hasattr(queries.events, "execute")
+    assert not hasattr(queries.events, "subscribe")
+
+    assert hasattr(api, "EventsResult")
+    result_fields = api.EventsResult.model_fields
+    assert "events" in result_fields
+
+    events_type = api.EventsResultEvents
+    assert "id" in events_type.model_fields
+    assert "message" in events_type.model_fields
+
+    generated = (test_project.root / "sample_app/gql/api.py").read_text()
+    assert "class Events(runtime.GQLOperation):" in generated
+    assert "async def execute(" in generated
+    assert "AsyncGenerator[EventsResult]" in generated
+    assert "API_CLIENT.subscribe(" in generated
+
+
+def test_subscription_dispatch_fn(test_project: ProjectBuilder):
+    test_project.prepare(
+        schema="""
+            type Query {
+                ping: String!
+            }
+
+            type Subscription {
+                events: String!
+            }
+        """,
+        queries="""
+        from sample_app.gql.api import api_gql
+
+        ping = api_gql(
+            '''
+            query Ping {
+                ping
+            }
+            '''
+        )
+
+        events = api_gql(
+            '''
+            subscription Events {
+                events
+            }
+            '''
+        )
+        """,
+    )
+
+    _api, queries = test_project.generate_and_import()
+
+    assert isinstance(queries.ping, runtime.GQLOperation)
+    assert isinstance(queries.events, runtime.GQLOperation)

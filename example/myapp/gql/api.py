@@ -6,6 +6,7 @@ from __future__ import annotations
 
 
 import datetime
+from collections.abc import AsyncGenerator
 from typing import Annotated
 from typing import Literal
 from typing import overload
@@ -87,6 +88,21 @@ class GetUserResultUser(GQLModel):
 
 class GetUserResult(GQLModel):
     user: GetUserResultUser | None
+
+
+class PostAddedResultPostAddedAuthor(GQLModel):
+    name: str
+
+
+class PostAddedResultPostAdded(GQLModel):
+    id: builtins.str
+    title: str
+    body: str
+    author: PostAddedResultPostAddedAuthor
+
+
+class PostAddedResult(GQLModel):
+    post_added: PostAddedResultPostAdded
 
 
 class SearchResultSearchPostAuthor(GQLModel):
@@ -171,6 +187,18 @@ class GetUser(runtime.GQLOperation):
         )
 
 
+class PostAdded(runtime.GQLOperation):
+    async def execute(self, *, user_id: builtins.str) -> AsyncGenerator[PostAddedResult]:
+        async with API_CLIENT.subscribe(
+            PostAddedResult,
+            'subscription PostAdded($userId: ID!) {\n  postAdded(userId: $userId) {\n    id\n    title\n    body\n    author {\n      name\n    }\n  }\n}',
+            {"userId": runtime.serialize_var(user_id)},
+            headers=self.headers,
+        ) as stream:
+            async for item in stream:
+                yield item
+
+
 class Search(runtime.GQLOperation):
     async def execute(self, *, query: str) -> SearchResult:
         return await API_CLIENT.query(
@@ -190,6 +218,8 @@ def api_gql(stmt: Literal['\n        query GetProfile($id: ID!, $withEmail: Bool
 @overload
 def api_gql(stmt: Literal['\n        query GetUser($id: ID!) {\n            user(id: $id) {\n                ...UserFields\n                posts { id title }\n            }\n        }\n\n        fragment UserFields on User {\n            id\n            name\n            email\n            phone\n            role\n        }\n    ']) -> GetUser: ...
 @overload
+def api_gql(stmt: Literal['\n        subscription PostAdded($userId: ID!) {\n            postAdded(userId: $userId) {\n                id\n                title\n                body\n                author { name }\n            }\n        }\n    ']) -> PostAdded: ...
+@overload
 def api_gql(stmt: Literal['\n        query Search($query: String!) {\n            search(query: $query) {\n                __typename\n                ... on User {\n                    id\n                    name\n                    role\n                }\n                ... on Post {\n                    id\n                    title\n                    author { name }\n                }\n            }\n        }\n    ']) -> Search: ...
 @overload
 def api_gql(stmt: str) -> runtime.GQLOperation: ...
@@ -200,6 +230,7 @@ _API_GQL_DISPATCH: dict[str, type[runtime.GQLOperation]] = {
     '\n        query FindUser($by: FindUserBy!) {\n            findUser(by: $by) {\n                id\n                name\n                email\n            }\n        }\n    ': FindUser,
     '\n        query GetProfile($id: ID!, $withEmail: Boolean!, $skipPhone: Boolean!) {\n            user(id: $id) {\n                id\n                name\n                email @include(if: $withEmail)\n                phone @skip(if: $skipPhone)\n                role\n            }\n        }\n    ': GetProfile,
     '\n        query GetUser($id: ID!) {\n            user(id: $id) {\n                ...UserFields\n                posts { id title }\n            }\n        }\n\n        fragment UserFields on User {\n            id\n            name\n            email\n            phone\n            role\n        }\n    ': GetUser,
+    '\n        subscription PostAdded($userId: ID!) {\n            postAdded(userId: $userId) {\n                id\n                title\n                body\n                author { name }\n            }\n        }\n    ': PostAdded,
     '\n        query Search($query: String!) {\n            search(query: $query) {\n                __typename\n                ... on User {\n                    id\n                    name\n                    role\n                }\n                ... on Post {\n                    id\n                    title\n                    author { name }\n                }\n            }\n        }\n    ': Search,
 }
 

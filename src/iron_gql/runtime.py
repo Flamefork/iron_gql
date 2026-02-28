@@ -1,15 +1,21 @@
 import json
+from collections.abc import AsyncGenerator
 from collections.abc import Awaitable
 from collections.abc import Callable
 from collections.abc import MutableMapping
+from contextlib import asynccontextmanager
 from typing import IO
 from typing import Any
 from typing import Self
 
 import httpx
 import pydantic
+from httpx_ws import aconnect_ws
 
 from iron_gql.errors import GraphQLResponseError
+from iron_gql.websockets import SafeASGIWebSocketTransport
+from iron_gql.websockets import graphql_ws_subscribe
+from iron_gql.websockets import ws_url
 
 DEFAULT_QUERY_TIMEOUT = 10
 
@@ -89,6 +95,7 @@ class GQLClient:
         query_timeout: int = DEFAULT_QUERY_TIMEOUT,
     ):
         self._endpoint_url = httpx.URL(base_url)
+        self._target_app = target_app
         transport = httpx.ASGITransport(app=target_app) if target_app else None
         self._client = httpx.AsyncClient(
             transport=transport,
@@ -173,6 +180,32 @@ class GQLClient:
             headers=headers,
         )
 
+    @asynccontextmanager
+    async def subscribe[T: pydantic.BaseModel](
+        self,
+        result_type: type[T],
+        query: str,
+        variables: dict[str, Any] | None = None,
+        *,
+        headers: dict[str, str] | None = None,
+    ) -> AsyncGenerator[AsyncGenerator[T]]:
+        merged_headers = httpx.Headers(self._client.headers)
+        if headers:
+            merged_headers.update(headers)
+        transport = (
+            SafeASGIWebSocketTransport(self._target_app) if self._target_app else None
+        )
+        cookies = httpx.Cookies(self._client.cookies)
+        url = str(ws_url(self._endpoint_url))
+        async with (
+            httpx.AsyncClient(
+                transport=transport, headers=merged_headers, cookies=cookies
+            ) as client,
+            aconnect_ws(url, client, subprotocols=["graphql-transport-ws"]) as ws,
+            graphql_ws_subscribe(ws, result_type, query, variables) as stream,
+        ):
+            yield stream
+
     async def close(self) -> None:
         await self._client.aclose()
 
@@ -195,3 +228,24 @@ def serialize_var(value: Any) -> Any:
             if tp not in _adapter_cache:
                 _adapter_cache[tp] = pydantic.TypeAdapter(tp)
             return _adapter_cache[tp].dump_python(value, mode="json")
+
+
+def extract_files(
+    variables: dict[str, Any],
+) -> tuple[dict[str, Any], dict[str, FileVar]]:
+    files: dict[str, FileVar] = {}
+
+    def walk(path: str, obj: Any) -> Any:
+        match obj:
+            case FileVar():
+                files[path] = obj
+                return None
+            case dict():
+                return {k: walk(f"{path}.{k}", v) for k, v in obj.items()}
+            case list():
+                return [walk(f"{path}.{i}", v) for i, v in enumerate(obj)]
+            case _:
+                return obj
+
+    nulled = walk("variables", variables)
+    return nulled, files
