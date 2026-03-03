@@ -19,7 +19,7 @@ import pydantic.alias_generators
 
 import builtins
 
-from myapp.config import GRAPHQL_URL
+from example.config import GRAPHQL_URL
 
 
 API_CLIENT = runtime.GQLClient(
@@ -37,39 +37,6 @@ class GQLModel(pydantic.BaseModel):
 
 
 type Role = Literal['ADMIN', 'MEMBER']
-
-
-class CreateUserResultCreateUser(GQLModel):
-    id: builtins.str
-    name: str
-    email: str
-    role: Role
-
-
-class CreateUserResult(GQLModel):
-    create_user: CreateUserResultCreateUser
-
-
-class FindUserResultFindUser(GQLModel):
-    id: builtins.str
-    name: str
-    email: str
-
-
-class FindUserResult(GQLModel):
-    find_user: FindUserResultFindUser | None
-
-
-class GetProfileResultUser(GQLModel):
-    id: builtins.str
-    name: str
-    role: Role
-    email: str | None = None
-    phone: str | None = None
-
-
-class GetProfileResult(GQLModel):
-    user: GetProfileResultUser | None
 
 
 class GetUserResultUserPosts(GQLModel):
@@ -90,19 +57,15 @@ class GetUserResult(GQLModel):
     user: GetUserResultUser | None
 
 
-class PostAddedResultPostAddedAuthor(GQLModel):
-    name: str
-
-
-class PostAddedResultPostAdded(GQLModel):
+class CreateUserResultCreateUser(GQLModel):
     id: builtins.str
-    title: str
-    body: str
-    author: PostAddedResultPostAddedAuthor
+    name: str
+    email: str
+    role: Role
 
 
-class PostAddedResult(GQLModel):
-    post_added: PostAddedResultPostAdded
+class CreateUserResult(GQLModel):
+    create_user: CreateUserResultCreateUser
 
 
 class SearchResultSearchPostAuthor(GQLModel):
@@ -130,6 +93,43 @@ class SearchResult(GQLModel):
     search: list[SearchResultSearch]
 
 
+class GetProfileResultUser(GQLModel):
+    id: builtins.str
+    name: str
+    role: Role
+    email: str | None = None
+    phone: str | None = None
+
+
+class GetProfileResult(GQLModel):
+    user: GetProfileResultUser | None
+
+
+class FindUserResultFindUser(GQLModel):
+    id: builtins.str
+    name: str
+    email: str
+
+
+class FindUserResult(GQLModel):
+    find_user: FindUserResultFindUser | None
+
+
+class PostAddedResultPostAddedAuthor(GQLModel):
+    name: str
+
+
+class PostAddedResultPostAdded(GQLModel):
+    id: builtins.str
+    title: str
+    body: str
+    author: PostAddedResultPostAddedAuthor
+
+
+class PostAddedResult(GQLModel):
+    post_added: PostAddedResultPostAdded
+
+
 class CreateUserInput(GQLModel):
     name: str
     email: str
@@ -147,37 +147,8 @@ class FindUserByEmail(GQLModel):
 type FindUserBy = FindUserById | FindUserByEmail
 
 
-class CreateUser(runtime.GQLOperation):
-    async def execute(self, *, input: CreateUserInput) -> CreateUserResult:
-        return await API_CLIENT.query(
-            CreateUserResult,
-            'mutation CreateUser($input: CreateUserInput!) {\n  createUser(input: $input) {\n    id\n    name\n    email\n    role\n  }\n}',
-            variables={"input": input},
-            headers=self.headers,
-        )
-
-
-class FindUser(runtime.GQLOperation):
-    async def execute(self, *, by: FindUserBy) -> FindUserResult:
-        return await API_CLIENT.query(
-            FindUserResult,
-            'query FindUser($by: FindUserBy!) {\n  findUser(by: $by) {\n    id\n    name\n    email\n  }\n}',
-            variables={"by": by},
-            headers=self.headers,
-        )
-
-
-class GetProfile(runtime.GQLOperation):
-    async def execute(self, *, id: builtins.str, with_email: bool, skip_phone: bool) -> GetProfileResult:
-        return await API_CLIENT.query(
-            GetProfileResult,
-            'query GetProfile($id: ID!, $withEmail: Boolean!, $skipPhone: Boolean!) {\n  user(id: $id) {\n    id\n    name\n    email @include(if: $withEmail)\n    phone @skip(if: $skipPhone)\n    role\n  }\n}',
-            variables={"id": id, "withEmail": with_email, "skipPhone": skip_phone},
-            headers=self.headers,
-        )
-
-
 class GetUser(runtime.GQLOperation):
+    # See: example/main.py:12
     async def execute(self, *, id: builtins.str) -> GetUserResult:
         return await API_CLIENT.query(
             GetUserResult,
@@ -187,7 +158,52 @@ class GetUser(runtime.GQLOperation):
         )
 
 
+class CreateUser(runtime.GQLOperation):
+    # See: example/main.py:33
+    async def execute(self, *, input: CreateUserInput) -> CreateUserResult:
+        return await API_CLIENT.query(
+            CreateUserResult,
+            'mutation CreateUser($input: CreateUserInput!) {\n  createUser(input: $input) {\n    id\n    name\n    email\n    role\n  }\n}',
+            variables={"input": input},
+            headers=self.headers,
+        )
+
+
+class Search(runtime.GQLOperation):
+    # See: example/main.py:47
+    async def execute(self, *, query: str) -> SearchResult:
+        return await API_CLIENT.query(
+            SearchResult,
+            'query Search($query: String!) {\n  search(query: $query) {\n    __typename\n    ... on User {\n      id\n      name\n      role\n    }\n    ... on Post {\n      id\n      title\n      author {\n        name\n      }\n    }\n  }\n}',
+            variables={"query": query},
+            headers=self.headers,
+        )
+
+
+class GetProfile(runtime.GQLOperation):
+    # See: example/main.py:71
+    async def execute(self, *, id: builtins.str, with_email: bool, skip_phone: bool) -> GetProfileResult:
+        return await API_CLIENT.query(
+            GetProfileResult,
+            'query GetProfile($id: ID!, $withEmail: Boolean!, $skipPhone: Boolean!) {\n  user(id: $id) {\n    id\n    name\n    email @include(if: $withEmail)\n    phone @skip(if: $skipPhone)\n    role\n  }\n}',
+            variables={"id": id, "withEmail": with_email, "skipPhone": skip_phone},
+            headers=self.headers,
+        )
+
+
+class FindUser(runtime.GQLOperation):
+    # See: example/main.py:89, example/main.py:101
+    async def execute(self, *, by: FindUserBy) -> FindUserResult:
+        return await API_CLIENT.query(
+            FindUserResult,
+            'query FindUser($by: FindUserBy!) {\n  findUser(by: $by) {\n    id\n    name\n    email\n  }\n}',
+            variables={"by": by},
+            headers=self.headers,
+        )
+
+
 class PostAdded(runtime.GQLOperation):
+    # See: example/main.py:113
     async def execute(self, *, user_id: builtins.str) -> AsyncGenerator[PostAddedResult]:
         async with API_CLIENT.subscribe(
             PostAddedResult,
@@ -199,39 +215,29 @@ class PostAdded(runtime.GQLOperation):
                 yield item
 
 
-class Search(runtime.GQLOperation):
-    async def execute(self, *, query: str) -> SearchResult:
-        return await API_CLIENT.query(
-            SearchResult,
-            'query Search($query: String!) {\n  search(query: $query) {\n    __typename\n    ... on User {\n      id\n      name\n      role\n    }\n    ... on Post {\n      id\n      title\n      author {\n        name\n      }\n    }\n  }\n}',
-            variables={"query": query},
-            headers=self.headers,
-        )
-
-
-@overload
-def api_gql(stmt: Literal['\n        mutation CreateUser($input: CreateUserInput!) {\n            createUser(input: $input) {\n                id\n                name\n                email\n                role\n            }\n        }\n    ']) -> CreateUser: ...
-@overload
-def api_gql(stmt: Literal['\n        query FindUser($by: FindUserBy!) {\n            findUser(by: $by) {\n                id\n                name\n                email\n            }\n        }\n    ']) -> FindUser: ...
-@overload
-def api_gql(stmt: Literal['\n        query GetProfile($id: ID!, $withEmail: Boolean!, $skipPhone: Boolean!) {\n            user(id: $id) {\n                id\n                name\n                email @include(if: $withEmail)\n                phone @skip(if: $skipPhone)\n                role\n            }\n        }\n    ']) -> GetProfile: ...
 @overload
 def api_gql(stmt: Literal['\n        query GetUser($id: ID!) {\n            user(id: $id) {\n                ...UserFields\n                posts { id title }\n            }\n        }\n\n        fragment UserFields on User {\n            id\n            name\n            email\n            phone\n            role\n        }\n    ']) -> GetUser: ...
 @overload
-def api_gql(stmt: Literal['\n        subscription PostAdded($userId: ID!) {\n            postAdded(userId: $userId) {\n                id\n                title\n                body\n                author { name }\n            }\n        }\n    ']) -> PostAdded: ...
+def api_gql(stmt: Literal['\n        mutation CreateUser($input: CreateUserInput!) {\n            createUser(input: $input) {\n                id\n                name\n                email\n                role\n            }\n        }\n    ']) -> CreateUser: ...
 @overload
 def api_gql(stmt: Literal['\n        query Search($query: String!) {\n            search(query: $query) {\n                __typename\n                ... on User {\n                    id\n                    name\n                    role\n                }\n                ... on Post {\n                    id\n                    title\n                    author { name }\n                }\n            }\n        }\n    ']) -> Search: ...
+@overload
+def api_gql(stmt: Literal['\n        query GetProfile($id: ID!, $withEmail: Boolean!, $skipPhone: Boolean!) {\n            user(id: $id) {\n                id\n                name\n                email @include(if: $withEmail)\n                phone @skip(if: $skipPhone)\n                role\n            }\n        }\n    ']) -> GetProfile: ...
+@overload
+def api_gql(stmt: Literal['\n        query FindUser($by: FindUserBy!) {\n            findUser(by: $by) {\n                id\n                name\n                email\n            }\n        }\n    ']) -> FindUser: ...
+@overload
+def api_gql(stmt: Literal['\n        subscription PostAdded($userId: ID!) {\n            postAdded(userId: $userId) {\n                id\n                title\n                body\n                author { name }\n            }\n        }\n    ']) -> PostAdded: ...
 @overload
 def api_gql(stmt: str) -> runtime.GQLOperation: ...
 
 
 _API_GQL_DISPATCH: dict[str, type[runtime.GQLOperation]] = {
-    '\n        mutation CreateUser($input: CreateUserInput!) {\n            createUser(input: $input) {\n                id\n                name\n                email\n                role\n            }\n        }\n    ': CreateUser,
-    '\n        query FindUser($by: FindUserBy!) {\n            findUser(by: $by) {\n                id\n                name\n                email\n            }\n        }\n    ': FindUser,
-    '\n        query GetProfile($id: ID!, $withEmail: Boolean!, $skipPhone: Boolean!) {\n            user(id: $id) {\n                id\n                name\n                email @include(if: $withEmail)\n                phone @skip(if: $skipPhone)\n                role\n            }\n        }\n    ': GetProfile,
     '\n        query GetUser($id: ID!) {\n            user(id: $id) {\n                ...UserFields\n                posts { id title }\n            }\n        }\n\n        fragment UserFields on User {\n            id\n            name\n            email\n            phone\n            role\n        }\n    ': GetUser,
-    '\n        subscription PostAdded($userId: ID!) {\n            postAdded(userId: $userId) {\n                id\n                title\n                body\n                author { name }\n            }\n        }\n    ': PostAdded,
+    '\n        mutation CreateUser($input: CreateUserInput!) {\n            createUser(input: $input) {\n                id\n                name\n                email\n                role\n            }\n        }\n    ': CreateUser,
     '\n        query Search($query: String!) {\n            search(query: $query) {\n                __typename\n                ... on User {\n                    id\n                    name\n                    role\n                }\n                ... on Post {\n                    id\n                    title\n                    author { name }\n                }\n            }\n        }\n    ': Search,
+    '\n        query GetProfile($id: ID!, $withEmail: Boolean!, $skipPhone: Boolean!) {\n            user(id: $id) {\n                id\n                name\n                email @include(if: $withEmail)\n                phone @skip(if: $skipPhone)\n                role\n            }\n        }\n    ': GetProfile,
+    '\n        query FindUser($by: FindUserBy!) {\n            findUser(by: $by) {\n                id\n                name\n                email\n            }\n        }\n    ': FindUser,
+    '\n        subscription PostAdded($userId: ID!) {\n            postAdded(userId: $userId) {\n                id\n                title\n                body\n                author { name }\n            }\n        }\n    ': PostAdded,
 }
 
 
