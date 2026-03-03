@@ -1941,3 +1941,30 @@ def test_subscription_dispatch_fn(test_project: ProjectBuilder):
 
     assert isinstance(queries.ping, runtime.GQLOperation)
     assert isinstance(queries.events, runtime.GQLOperation)
+
+
+def test_syntax_error_in_scanned_file(test_project: ProjectBuilder):
+    test_project.prepare(
+        schema="""
+            type Query {
+                ping: String!
+            }
+        """,
+        queries="""
+        from sample_app.gql.api import api_gql
+
+        ping = api_gql(
+            '''
+            query Ping {
+                ping
+            }
+            '''
+        )
+        """,
+    )
+
+    broken = test_project.root / "sample_app" / "broken.py"
+    broken.write_text("api_gql(\ndef foo(\n", encoding="utf-8")
+
+    with pytest.raises(SyntaxError, match=r"Failed to parse.*broken\.py"):
+        test_project.generate()
