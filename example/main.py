@@ -1,10 +1,15 @@
 import asyncio
 
-from myapp.gql.api import CreateUserInput, FindUserByEmail, FindUserById, SearchResultSearchPost, SearchResultSearchUser, api_gql
+from example.gql.api import CreateUserInput
+from example.gql.api import FindUserByEmail
+from example.gql.api import FindUserById
+from example.gql.api import SearchResultSearchPost
+from example.gql.api import SearchResultSearchUser
+from example.gql.api import api_gql
 
 
 async def main():
-    query = api_gql("""
+    result = await api_gql("""
         query GetUser($id: ID!) {
             user(id: $id) {
                 ...UserFields
@@ -19,14 +24,13 @@ async def main():
             phone
             role
         }
-    """)
-    result = await query.execute(id="1")
+    """).execute(id="1")
     if result.user:
         print(f"{result.user.name} ({result.user.email}), role: {result.user.role}")
         for post in result.user.posts:
             print(f"  - {post.title}")
 
-    mutation = api_gql("""
+    new_user = await api_gql("""
         mutation CreateUser($input: CreateUserInput!) {
             createUser(input: $input) {
                 id
@@ -35,13 +39,12 @@ async def main():
                 role
             }
         }
-    """)
-    new_user = await mutation.execute(
+    """).execute(
         input=CreateUserInput(name="Alice", email="alice@example.com", role="ADMIN"),
     )
     print(f"Created: {new_user.create_user.name} (id={new_user.create_user.id})")
 
-    query = api_gql("""
+    results = await api_gql("""
         query Search($query: String!) {
             search(query: $query) {
                 __typename
@@ -57,8 +60,7 @@ async def main():
                 }
             }
         }
-    """)
-    results = await query.execute(query="python")
+    """).execute(query="python")
     for item in results.search:
         match item:
             case SearchResultSearchUser():
@@ -66,7 +68,7 @@ async def main():
             case SearchResultSearchPost():
                 print(f"Post: {item.title} by {item.author.name}")
 
-    query = api_gql("""
+    profile = await api_gql("""
         query GetProfile($id: ID!, $withEmail: Boolean!, $skipPhone: Boolean!) {
             user(id: $id) {
                 id
@@ -76,8 +78,7 @@ async def main():
                 role
             }
         }
-    """)
-    profile = await query.execute(id="1", with_email=True, skip_phone=False)
+    """).execute(id="1", with_email=True, skip_phone=False)
     if profile.user:
         print(f"Profile: {profile.user.name}")
         if profile.user.email is not None:
@@ -85,7 +86,7 @@ async def main():
         if profile.user.phone is not None:
             print(f"  phone: {profile.user.phone}")
 
-    query = api_gql("""
+    found = await api_gql("""
         query FindUser($by: FindUserBy!) {
             findUser(by: $by) {
                 id
@@ -93,12 +94,11 @@ async def main():
                 email
             }
         }
-    """)
-    found = await query.execute(by=FindUserById(id="1"))
+    """).execute(by=FindUserById(id="1"))
     if found.find_user:
         print(f"Found by ID: {found.find_user.name}")
 
-    query = api_gql("""
+    found = await api_gql("""
         query FindUser($by: FindUserBy!) {
             findUser(by: $by) {
                 id
@@ -106,8 +106,7 @@ async def main():
                 email
             }
         }
-    """)
-    found = await query.execute(by=FindUserByEmail(email="alice@example.com"))
+    """).execute(by=FindUserByEmail(email="alice@example.com"))
     if found.find_user:
         print(f"Found by email: {found.find_user.name}")
 
@@ -124,6 +123,7 @@ async def main():
     async for event in subscription.execute(user_id="1"):
         post = event.post_added
         print(f"New post: {post.title} by {post.author.name}")
+
 
 if __name__ == "__main__":
     asyncio.run(main())
