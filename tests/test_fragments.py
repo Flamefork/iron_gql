@@ -1,7 +1,9 @@
 import re
 
+import pytest
 from pytest_httpserver import HTTPServer
 
+from iron_gql.codegen import GraphQLGenerationError
 from tests.conftest import ProjectBuilder
 
 
@@ -435,3 +437,54 @@ async def test_exec_source_contains_expanded_fragments(
         result = await queries.get_user.execute(id="u-1")
         assert result.user is not None
         assert result.user.id == "u-1"
+
+
+def test_fragment_cycle_reports_error(test_project: ProjectBuilder):
+    schema = """
+        type Query {
+            user: User
+        }
+
+        type User {
+            id: ID!
+            name: String!
+        }
+    """
+
+    test_project.prepare(
+        schema=schema,
+        queries="""
+        from sample_app.gql.api import api_gql
+
+        fragment_a = api_gql(
+            '''
+            fragment A on User {
+                id
+                ...B
+            }
+            '''
+        )
+
+        fragment_b = api_gql(
+            '''
+            fragment B on User {
+                name
+                ...A
+            }
+            '''
+        )
+
+        get_user = api_gql(
+            '''
+            query GetUser {
+                user {
+                    ...A
+                }
+            }
+            '''
+        )
+        """,
+    )
+
+    with pytest.raises(GraphQLGenerationError, match="Cannot spread fragment"):
+        test_project.generate()

@@ -1,0 +1,1082 @@
+import asyncio
+import json
+from collections.abc import MutableMapping
+from typing import Any
+from urllib.parse import parse_qs
+
+import pydantic
+import pytest
+
+from iron_gql import GraphQLResponseError
+from iron_gql import websockets
+from iron_gql.runtime import GQLClient
+from iron_gql.runtime import GQLOperation
+from tests.conftest import ProjectBuilder
+
+
+def _make_ws_app(  # noqa: C901
+    messages: list[dict[str, Any]],
+    *,
+    pre_ack_messages: list[dict[str, Any]] | None = None,
+    ack_response: dict[str, str] | None = None,
+    captured: dict[str, Any] | None = None,
+) -> Any:
+    async def app(  # noqa: C901
+        scope: MutableMapping[str, Any],
+        receive: Any,
+        send: Any,
+    ) -> None:
+        if scope["type"] == "http":
+            await send({
+                "type": "http.response.start",
+                "status": 200,
+                "headers": [[b"content-type", b"text/plain"]],
+            })
+            await send({"type": "http.response.body", "body": b"ok"})
+            return
+
+        assert scope["type"] == "websocket"
+        if captured is not None:
+            scope_headers = [
+                (k.decode(), v.decode()) for k, v in scope.get("headers", [])
+            ]
+            captured["scope_raw_headers"] = scope_headers
+            captured["scope_headers"] = dict(scope_headers)
+            captured["scope_query_string"] = scope.get("query_string", b"").decode()
+        subprotocols = scope.get("subprotocols", [])
+        connect_event = await receive()
+        assert connect_event["type"] == "websocket.connect"
+        await send({
+            "type": "websocket.accept",
+            "subprotocol": "graphql-transport-ws"
+            if "graphql-transport-ws" in subprotocols
+            else None,
+        })
+
+        init_msg = json.loads((await receive())["text"])
+        assert init_msg["type"] == "connection_init"
+        for msg in pre_ack_messages or []:
+            await send({
+                "type": "websocket.send",
+                "text": json.dumps(msg),
+            })
+            if msg.get("type") == "ping":
+                pong_msg = json.loads((await receive())["text"])
+                if captured is not None:
+                    captured.setdefault("client_responses", []).append(pong_msg)
+        ack = ack_response or {"type": "connection_ack"}
+        await send({
+            "type": "websocket.send",
+            "text": json.dumps(ack),
+        })
+
+        if ack.get("type") != "connection_ack":
+            await receive()
+            return
+
+        subscribe_msg = json.loads((await receive())["text"])
+        assert subscribe_msg["type"] == "subscribe"
+        sub_id = subscribe_msg["id"]
+        if captured is not None:
+            captured["subscribe"] = subscribe_msg
+
+        for msg in messages:
+            if msg.get("type") == "ping":
+                await send({
+                    "type": "websocket.send",
+                    "text": json.dumps(msg),
+                })
+                pong_msg = json.loads((await receive())["text"])
+                if captured is not None:
+                    captured.setdefault("client_responses", []).append(pong_msg)
+            elif msg.get("type") == "pong":
+                await send({
+                    "type": "websocket.send",
+                    "text": json.dumps(msg),
+                })
+            else:
+                await send({
+                    "type": "websocket.send",
+                    "text": json.dumps({"id": sub_id, **msg}),
+                })
+
+        await receive()
+
+    return app
+
+
+def _make_ws_disconnect_app(
+    messages_before_close: list[dict[str, Any]],
+    close_code: int,
+    close_reason: str = "",
+) -> Any:
+    async def app(
+        scope: MutableMapping[str, Any],
+        receive: Any,
+        send: Any,
+    ) -> None:
+        if scope["type"] == "http":
+            await send({
+                "type": "http.response.start",
+                "status": 200,
+                "headers": [[b"content-type", b"text/plain"]],
+            })
+            await send({"type": "http.response.body", "body": b"ok"})
+            return
+
+        assert scope["type"] == "websocket"
+        subprotocols = scope.get("subprotocols", [])
+        connect_event = await receive()
+        assert connect_event["type"] == "websocket.connect"
+        await send({
+            "type": "websocket.accept",
+            "subprotocol": "graphql-transport-ws"
+            if "graphql-transport-ws" in subprotocols
+            else None,
+        })
+        init_msg = json.loads((await receive())["text"])
+        assert init_msg["type"] == "connection_init"
+        await send({
+            "type": "websocket.send",
+            "text": json.dumps({"type": "connection_ack"}),
+        })
+        subscribe_msg = json.loads((await receive())["text"])
+        assert subscribe_msg["type"] == "subscribe"
+        sub_id = subscribe_msg["id"]
+
+        for msg in messages_before_close:
+            await send({
+                "type": "websocket.send",
+                "text": json.dumps({"id": sub_id, **msg}),
+            })
+
+        await send({
+            "type": "websocket.close",
+            "code": close_code,
+            "reason": close_reason,
+        })
+
+    return app
+
+
+class _CounterResult(pydantic.BaseModel):
+    counter: int
+
+
+class _PingResult(pydantic.BaseModel):
+    ping: str
+
+
+async def test_subscribe_asgi():
+    app = _make_ws_app([
+        {"type": "next", "payload": {"data": {"counter": 1}}},
+        {"type": "next", "payload": {"data": {"counter": 2}}},
+        {"type": "next", "payload": {"data": {"counter": 3}}},
+        {"type": "complete"},
+    ])
+
+    client = GQLClient(base_url="http://testserver/graphql", target_app=app)
+    try:
+        async with client.subscribe(
+            _CounterResult, "subscription { counter }", variables={}, headers={}
+        ) as stream:
+            results = [item.counter async for item in stream]
+        assert results == [1, 2, 3]
+    finally:
+        await client.close()
+
+
+async def test_subscribe_error():
+    app = _make_ws_app([
+        {"type": "next", "payload": {"data": {"counter": 1}}},
+        {"type": "error", "payload": [{"message": "boom"}]},
+    ])
+
+    client = GQLClient(base_url="http://testserver/graphql", target_app=app)
+    try:
+        results: list[int] = []
+
+        async def consume():
+            async with client.subscribe(
+                _CounterResult, "subscription { counter }", variables={}, headers={}
+            ) as stream:
+                async for item in stream:
+                    results.append(item.counter)  # noqa: PERF401
+
+        with pytest.raises(GraphQLResponseError, match="boom"):
+            await consume()
+
+        assert results == [1]
+    finally:
+        await client.close()
+
+
+async def test_subscribe_next_with_errors():
+    app = _make_ws_app([
+        {
+            "type": "next",
+            "payload": {"data": None, "errors": [{"message": "partial"}]},
+        },
+    ])
+
+    client = GQLClient(base_url="http://testserver/graphql", target_app=app)
+    try:
+
+        async def consume():
+            async with client.subscribe(
+                _CounterResult, "subscription { counter }", variables={}, headers={}
+            ) as stream:
+                async for _ in stream:
+                    pass
+
+        with pytest.raises(GraphQLResponseError, match="partial"):
+            await consume()
+    finally:
+        await client.close()
+
+
+def test_gql_operation_with_headers():
+    op = GQLOperation()
+    assert op.headers == {}
+
+    op2 = op.with_headers({"Authorization": "Bearer token"})
+    assert op2.headers == {"Authorization": "Bearer token"}
+    assert op.headers == {}
+
+
+async def test_subscribe_codegen_asgi(test_project: ProjectBuilder):
+    messages = [
+        {
+            "type": "next",
+            "payload": {"data": {"events": {"id": "1", "message": "hello"}}},
+        },
+        {
+            "type": "next",
+            "payload": {"data": {"events": {"id": "2", "message": "world"}}},
+        },
+        {"type": "complete"},
+    ]
+
+    test_project.prepare(
+        schema="""
+            type Query {
+                _dummy: String
+            }
+
+            type Subscription {
+                events(channel: String!): Event!
+            }
+
+            type Event {
+                id: ID!
+                message: String!
+            }
+        """,
+        queries="""
+        from sample_app.gql.api import api_gql
+
+        events = api_gql(
+            '''
+            subscription Events($channel: String!) {
+                events(channel: $channel) {
+                    id
+                    message
+                }
+            }
+            '''
+        )
+        """,
+    )
+
+    captured: dict[str, Any] = {}
+    app = _make_ws_app(messages, captured=captured)
+
+    api_module, queries_module = test_project.generate_and_import()
+    api_module.API_CLIENT = GQLClient(  # pyright: ignore[reportAttributeAccessIssue]
+        base_url="http://testserver/graphql", target_app=app
+    )
+    try:
+        results = [
+            (item.events.id, item.events.message)
+            async for item in queries_module.events.execute(channel="test")
+        ]
+        assert results == [("1", "hello"), ("2", "world")]
+        assert captured["subscribe"]["payload"]["variables"] == {"channel": "test"}
+    finally:
+        await api_module.API_CLIENT.close()
+
+
+async def test_subscribe_connection_rejected():
+    app = _make_ws_app(
+        [],
+        ack_response={"type": "connection_error", "payload": "Unauthorized"},
+    )
+
+    client = GQLClient(base_url="http://testserver/graphql", target_app=app)
+    try:
+
+        async def consume():
+            async with client.subscribe(
+                _CounterResult, "subscription { counter }", variables={}, headers={}
+            ) as stream:
+                async for _ in stream:
+                    pass
+
+        with pytest.raises(GraphQLResponseError, match="Expected connection_ack"):
+            await consume()
+    finally:
+        await client.close()
+
+
+async def test_subscribe_no_data_in_next():
+    app = _make_ws_app([
+        {"type": "next", "payload": {"data": None}},
+    ])
+
+    client = GQLClient(base_url="http://testserver/graphql", target_app=app)
+    try:
+
+        async def consume():
+            async with client.subscribe(
+                _CounterResult, "subscription { counter }", variables={}, headers={}
+            ) as stream:
+                async for _ in stream:
+                    pass
+
+        with pytest.raises(GraphQLResponseError, match="No data in response"):
+            await consume()
+    finally:
+        await client.close()
+
+
+async def test_subscribe_unexpected_message_type():
+    app = _make_ws_app([
+        {"type": "unknown_type"},
+    ])
+
+    client = GQLClient(base_url="http://testserver/graphql", target_app=app)
+    try:
+
+        async def consume():
+            async with client.subscribe(
+                _CounterResult, "subscription { counter }", variables={}, headers={}
+            ) as stream:
+                async for _ in stream:
+                    pass
+
+        with pytest.raises(
+            GraphQLResponseError, match="Unexpected subscription message type"
+        ):
+            await consume()
+    finally:
+        await client.close()
+
+
+async def test_subscribe_with_headers_propagation():
+    captured: dict[str, Any] = {}
+    app = _make_ws_app(
+        [{"type": "complete"}],
+        captured=captured,
+    )
+
+    client = GQLClient(
+        base_url="http://testserver/graphql",
+        target_app=app,
+        headers={"X-Base": "base-value"},
+    )
+    try:
+        async with client.subscribe(
+            _CounterResult,
+            "subscription { counter }",
+            variables={},
+            headers={"Authorization": "Bearer token"},
+        ) as stream:
+            async for _ in stream:
+                pass
+        assert captured["scope_headers"]["authorization"] == "Bearer token"
+        assert captured["scope_headers"]["x-base"] == "base-value"
+    finally:
+        await client.close()
+
+
+async def test_subscribe_ping_pong():
+    captured: dict[str, Any] = {}
+    app = _make_ws_app(
+        [
+            {"type": "next", "payload": {"data": {"counter": 1}}},
+            {"type": "ping"},
+            {"type": "next", "payload": {"data": {"counter": 2}}},
+            {"type": "next", "payload": {"data": {"counter": 3}}},
+            {"type": "complete"},
+        ],
+        captured=captured,
+    )
+
+    client = GQLClient(base_url="http://testserver/graphql", target_app=app)
+    try:
+        async with client.subscribe(
+            _CounterResult, "subscription { counter }", variables={}, headers={}
+        ) as stream:
+            results = [item.counter async for item in stream]
+        assert results == [1, 2, 3]
+        assert captured["client_responses"] == [{"type": "pong"}]
+    finally:
+        await client.close()
+
+
+async def test_subscribe_ping_before_connection_ack():
+    captured: dict[str, Any] = {}
+    app = _make_ws_app(
+        [
+            {"type": "next", "payload": {"data": {"counter": 1}}},
+            {"type": "complete"},
+        ],
+        pre_ack_messages=[{"type": "ping"}],
+        captured=captured,
+    )
+
+    client = GQLClient(base_url="http://testserver/graphql", target_app=app)
+    try:
+        async with client.subscribe(
+            _CounterResult, "subscription { counter }", variables={}, headers={}
+        ) as stream:
+            results = [item.counter async for item in stream]
+        assert results == [1]
+        assert captured["client_responses"] == [{"type": "pong"}]
+    finally:
+        await client.close()
+
+
+async def test_subscribe_with_headers_override_case_insensitive():
+    captured: dict[str, Any] = {}
+    app = _make_ws_app([{"type": "complete"}], captured=captured)
+
+    client = GQLClient(
+        base_url="http://testserver/graphql",
+        target_app=app,
+        headers={"Authorization": "Bearer base-token"},
+    )
+    try:
+        async with client.subscribe(
+            _CounterResult,
+            "subscription { counter }",
+            variables={},
+            headers={"authorization": "Bearer override-token"},
+        ) as stream:
+            async for _ in stream:
+                pass
+        authorization_headers = [
+            value
+            for key, value in captured["scope_raw_headers"]
+            if key == "authorization"
+        ]
+        assert authorization_headers == ["Bearer override-token"]
+    finally:
+        await client.close()
+
+
+async def test_subscribe_carries_http_cookies():
+    captured: dict[str, Any] = {}
+
+    async def app(
+        scope: MutableMapping[str, Any],
+        receive: Any,
+        send: Any,
+    ) -> None:
+        if scope["type"] == "http":
+            request = await receive()
+            assert request["type"] == "http.request"
+            await send({
+                "type": "http.response.start",
+                "status": 200,
+                "headers": [
+                    [b"content-type", b"application/json"],
+                    [b"set-cookie", b"session=abc; Path=/; HttpOnly"],
+                ],
+            })
+            await send({
+                "type": "http.response.body",
+                "body": b'{"data":{"ping":"pong"}}',
+            })
+            return
+
+        assert scope["type"] == "websocket"
+        scope_headers = [(k.decode(), v.decode()) for k, v in scope.get("headers", [])]
+        captured["scope_headers"] = dict(scope_headers)
+        subprotocols = scope.get("subprotocols", [])
+        connect_event = await receive()
+        assert connect_event["type"] == "websocket.connect"
+        await send({
+            "type": "websocket.accept",
+            "subprotocol": "graphql-transport-ws"
+            if "graphql-transport-ws" in subprotocols
+            else None,
+        })
+        init_msg = json.loads((await receive())["text"])
+        assert init_msg["type"] == "connection_init"
+        await send({
+            "type": "websocket.send",
+            "text": json.dumps({"type": "connection_ack"}),
+        })
+        subscribe_msg = json.loads((await receive())["text"])
+        assert subscribe_msg["type"] == "subscribe"
+        await send({
+            "type": "websocket.send",
+            "text": json.dumps({"id": subscribe_msg["id"], "type": "complete"}),
+        })
+        await receive()
+
+    client = GQLClient(base_url="http://testserver/graphql", target_app=app)
+    try:
+        result = await client.query(
+            _PingResult, "query { ping }", variables={}, headers={}
+        )
+        assert result.ping == "pong"
+
+        async with client.subscribe(
+            _CounterResult, "subscription { counter }", variables={}, headers={}
+        ) as stream:
+            async for _ in stream:
+                pass
+
+        assert "session=abc" in captured["scope_headers"]["cookie"]
+    finally:
+        await client.close()
+
+
+async def test_subscribe_disconnect_before_connection_ack():
+    async def app(
+        scope: MutableMapping[str, Any],
+        receive: Any,
+        send: Any,
+    ) -> None:
+        if scope["type"] == "http":
+            await send({
+                "type": "http.response.start",
+                "status": 200,
+                "headers": [[b"content-type", b"text/plain"]],
+            })
+            await send({"type": "http.response.body", "body": b"ok"})
+            return
+
+        assert scope["type"] == "websocket"
+        subprotocols = scope.get("subprotocols", [])
+        connect_event = await receive()
+        assert connect_event["type"] == "websocket.connect"
+        await send({
+            "type": "websocket.accept",
+            "subprotocol": "graphql-transport-ws"
+            if "graphql-transport-ws" in subprotocols
+            else None,
+        })
+        init_msg = json.loads((await receive())["text"])
+        assert init_msg["type"] == "connection_init"
+        await send({"type": "websocket.close", "code": 4401, "reason": "Unauthorized"})
+
+    client = GQLClient(base_url="http://testserver/graphql", target_app=app)
+    try:
+
+        async def consume():
+            async with client.subscribe(
+                _CounterResult, "subscription { counter }", variables={}, headers={}
+            ) as stream:
+                async for _ in stream:
+                    pass
+
+        with pytest.raises(
+            GraphQLResponseError, match="before connection_ack with code 4401"
+        ):
+            await consume()
+    finally:
+        await client.close()
+
+
+async def test_subscribe_connection_ack_timeout(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(websockets, "_WS_CONNECTION_ACK_TIMEOUT_SECONDS", 0.01)
+
+    async def app(
+        scope: MutableMapping[str, Any],
+        receive: Any,
+        send: Any,
+    ) -> None:
+        if scope["type"] == "http":
+            await send({
+                "type": "http.response.start",
+                "status": 200,
+                "headers": [[b"content-type", b"text/plain"]],
+            })
+            await send({"type": "http.response.body", "body": b"ok"})
+            return
+
+        assert scope["type"] == "websocket"
+        subprotocols = scope.get("subprotocols", [])
+        connect_event = await receive()
+        assert connect_event["type"] == "websocket.connect"
+        await send({
+            "type": "websocket.accept",
+            "subprotocol": "graphql-transport-ws"
+            if "graphql-transport-ws" in subprotocols
+            else None,
+        })
+        init_msg = json.loads((await receive())["text"])
+        assert init_msg["type"] == "connection_init"
+        await asyncio.sleep(0.1)
+
+    client = GQLClient(base_url="http://testserver/graphql", target_app=app)
+    try:
+
+        async def consume():
+            async with client.subscribe(
+                _CounterResult, "subscription { counter }", variables={}, headers={}
+            ) as stream:
+                async for _ in stream:
+                    pass
+
+        with pytest.raises(
+            GraphQLResponseError, match="Timed out waiting for connection_ack"
+        ):
+            await consume()
+    finally:
+        await client.close()
+
+
+async def test_subscribe_url_scheme_https_to_wss():
+    captured: dict[str, Any] = {}
+    app = _make_ws_app([{"type": "complete"}], captured=captured)
+
+    client = GQLClient(
+        base_url="https://testserver/graphql?redirect=http://callback",
+        target_app=app,
+    )
+    try:
+        async with client.subscribe(
+            _CounterResult, "subscription { counter }", variables={}, headers={}
+        ) as stream:
+            async for _ in stream:
+                pass
+        assert parse_qs(captured["scope_query_string"])["redirect"] == [
+            "http://callback"
+        ]
+    finally:
+        await client.close()
+
+
+async def test_subscribe_malformed_message_no_type():
+    app = _make_ws_app([
+        {"payload": "no type field here"},
+    ])
+
+    client = GQLClient(base_url="http://testserver/graphql", target_app=app)
+    try:
+
+        async def consume():
+            async with client.subscribe(
+                _CounterResult, "subscription { counter }", variables={}, headers={}
+            ) as stream:
+                async for _ in stream:
+                    pass
+
+        with pytest.raises(
+            GraphQLResponseError, match="Unexpected subscription message type: None"
+        ):
+            await consume()
+    finally:
+        await client.close()
+
+
+async def test_subscribe_no_variables_key_when_none():
+    captured: dict[str, Any] = {}
+    app = _make_ws_app([{"type": "complete"}], captured=captured)
+
+    client = GQLClient(base_url="http://testserver/graphql", target_app=app)
+    try:
+        async with client.subscribe(
+            _CounterResult, "subscription { counter }", variables={}, headers={}
+        ) as stream:
+            async for _ in stream:
+                pass
+        assert "variables" not in captured["subscribe"]["payload"]
+    finally:
+        await client.close()
+
+
+async def test_subscribe_error_without_payload():
+    app = _make_ws_app([
+        {"type": "error"},
+    ])
+
+    client = GQLClient(base_url="http://testserver/graphql", target_app=app)
+    try:
+
+        async def consume():
+            async with client.subscribe(
+                _CounterResult, "subscription { counter }", variables={}, headers={}
+            ) as stream:
+                async for _ in stream:
+                    pass
+
+        with pytest.raises(GraphQLResponseError, match="Error without payload"):
+            await consume()
+    finally:
+        await client.close()
+
+
+async def test_subscribe_pong_during_messages():
+    app = _make_ws_app([
+        {"type": "next", "payload": {"data": {"counter": 1}}},
+        {"type": "pong"},
+        {"type": "next", "payload": {"data": {"counter": 2}}},
+        {"type": "complete"},
+    ])
+
+    client = GQLClient(base_url="http://testserver/graphql", target_app=app)
+    try:
+        async with client.subscribe(
+            _CounterResult, "subscription { counter }", variables={}, headers={}
+        ) as stream:
+            results = [item.counter async for item in stream]
+        assert results == [1, 2]
+    finally:
+        await client.close()
+
+
+async def test_subscribe_pong_before_connection_ack():
+    captured: dict[str, Any] = {}
+    app = _make_ws_app(
+        [
+            {"type": "next", "payload": {"data": {"counter": 1}}},
+            {"type": "complete"},
+        ],
+        pre_ack_messages=[{"type": "pong"}],
+        captured=captured,
+    )
+
+    client = GQLClient(base_url="http://testserver/graphql", target_app=app)
+    try:
+        async with client.subscribe(
+            _CounterResult, "subscription { counter }", variables={}, headers={}
+        ) as stream:
+            results = [item.counter async for item in stream]
+        assert results == [1]
+    finally:
+        await client.close()
+
+
+async def test_subscribe_next_without_payload_key():
+    app = _make_ws_app([
+        {"type": "next"},
+    ])
+
+    client = GQLClient(base_url="http://testserver/graphql", target_app=app)
+    try:
+
+        async def consume():
+            async with client.subscribe(
+                _CounterResult, "subscription { counter }", variables={}, headers={}
+            ) as stream:
+                async for _ in stream:
+                    pass
+
+        with pytest.raises(GraphQLResponseError, match="No data in response"):
+            await consume()
+    finally:
+        await client.close()
+
+
+async def test_subscribe_pre_ack_messages_exhaustion():
+    app = _make_ws_app(
+        [],
+        pre_ack_messages=[{"type": "pong"}] * 17,
+    )
+
+    client = GQLClient(base_url="http://testserver/graphql", target_app=app)
+    try:
+
+        async def consume():
+            async with client.subscribe(
+                _CounterResult, "subscription { counter }", variables={}, headers={}
+            ) as stream:
+                async for _ in stream:
+                    pass
+
+        with pytest.raises(
+            GraphQLResponseError, match="No connection_ack after 16 messages"
+        ):
+            await consume()
+    finally:
+        await client.close()
+
+
+async def test_subscribe_unsupported_url_scheme():
+    client = GQLClient(base_url="ftp://testserver/graphql", target_app=None)
+    try:
+
+        async def consume():
+            async with client.subscribe(
+                _CounterResult, "subscription { counter }", variables={}, headers={}
+            ) as stream:
+                async for _ in stream:
+                    pass
+
+        with pytest.raises(
+            ValueError, match="Unsupported URL scheme for WebSocket subscription: ftp"
+        ):
+            await consume()
+    finally:
+        await client.close()
+
+
+async def test_subscribe_next_with_data_and_errors():
+    app = _make_ws_app([
+        {
+            "type": "next",
+            "payload": {
+                "data": {"counter": 1},
+                "errors": [{"message": "partial failure"}],
+            },
+        },
+    ])
+
+    client = GQLClient(base_url="http://testserver/graphql", target_app=app)
+    try:
+
+        async def consume():
+            async with client.subscribe(
+                _CounterResult, "subscription { counter }", variables={}, headers={}
+            ) as stream:
+                async for _ in stream:
+                    pass
+
+        with pytest.raises(GraphQLResponseError, match="partial failure"):
+            await consume()
+    finally:
+        await client.close()
+
+
+async def test_subscribe_normal_closure_during_messages():
+    app = _make_ws_disconnect_app(
+        [
+            {"type": "next", "payload": {"data": {"counter": 1}}},
+            {"type": "next", "payload": {"data": {"counter": 2}}},
+        ],
+        close_code=1000,
+    )
+
+    client = GQLClient(base_url="http://testserver/graphql", target_app=app)
+    try:
+        async with client.subscribe(
+            _CounterResult, "subscription { counter }", variables={}, headers={}
+        ) as stream:
+            results = [item.counter async for item in stream]
+        assert results == [1, 2]
+    finally:
+        await client.close()
+
+
+async def test_subscribe_abnormal_disconnect_during_messages():
+    app = _make_ws_disconnect_app(
+        [
+            {"type": "next", "payload": {"data": {"counter": 1}}},
+        ],
+        close_code=1011,
+        close_reason="Internal Error",
+    )
+
+    client = GQLClient(base_url="http://testserver/graphql", target_app=app)
+    try:
+        results: list[int] = []
+
+        async def consume():
+            async with client.subscribe(
+                _CounterResult, "subscription { counter }", variables={}, headers={}
+            ) as stream:
+                async for item in stream:
+                    results.append(item.counter)  # noqa: PERF401
+
+        with pytest.raises(
+            GraphQLResponseError, match="disconnected with code 1011: Internal Error"
+        ):
+            await consume()
+
+        assert results == [1]
+    finally:
+        await client.close()
+
+
+async def test_subscribe_disconnect_before_ack_with_reason():
+    async def app(
+        scope: MutableMapping[str, Any],
+        receive: Any,
+        send: Any,
+    ) -> None:
+        if scope["type"] == "http":
+            await send({
+                "type": "http.response.start",
+                "status": 200,
+                "headers": [[b"content-type", b"text/plain"]],
+            })
+            await send({"type": "http.response.body", "body": b"ok"})
+            return
+
+        assert scope["type"] == "websocket"
+        subprotocols = scope.get("subprotocols", [])
+        connect_event = await receive()
+        assert connect_event["type"] == "websocket.connect"
+        await send({
+            "type": "websocket.accept",
+            "subprotocol": "graphql-transport-ws"
+            if "graphql-transport-ws" in subprotocols
+            else None,
+        })
+        init_msg = json.loads((await receive())["text"])
+        assert init_msg["type"] == "connection_init"
+        await send({
+            "type": "websocket.close",
+            "code": 4401,
+            "reason": "Unauthorized",
+        })
+
+    client = GQLClient(base_url="http://testserver/graphql", target_app=app)
+    try:
+
+        async def consume():
+            async with client.subscribe(
+                _CounterResult, "subscription { counter }", variables={}, headers={}
+            ) as stream:
+                async for _ in stream:
+                    pass
+
+        with pytest.raises(
+            GraphQLResponseError,
+            match="before connection_ack with code 4401: Unauthorized",
+        ):
+            await consume()
+    finally:
+        await client.close()
+
+
+async def test_subscribe_invalid_json_during_messages():
+    async def app(
+        scope: MutableMapping[str, Any],
+        receive: Any,
+        send: Any,
+    ) -> None:
+        if scope["type"] == "http":
+            await send({
+                "type": "http.response.start",
+                "status": 200,
+                "headers": [[b"content-type", b"text/plain"]],
+            })
+            await send({"type": "http.response.body", "body": b"ok"})
+            return
+
+        assert scope["type"] == "websocket"
+        subprotocols = scope.get("subprotocols", [])
+        connect_event = await receive()
+        assert connect_event["type"] == "websocket.connect"
+        await send({
+            "type": "websocket.accept",
+            "subprotocol": "graphql-transport-ws"
+            if "graphql-transport-ws" in subprotocols
+            else None,
+        })
+        init_msg = json.loads((await receive())["text"])
+        assert init_msg["type"] == "connection_init"
+        await send({
+            "type": "websocket.send",
+            "text": json.dumps({"type": "connection_ack"}),
+        })
+        subscribe_msg = json.loads((await receive())["text"])
+        assert subscribe_msg["type"] == "subscribe"
+        await send({
+            "type": "websocket.send",
+            "text": "not valid json{{{",
+        })
+        await receive()
+
+    client = GQLClient(base_url="http://testserver/graphql", target_app=app)
+    try:
+
+        async def consume():
+            async with client.subscribe(
+                _CounterResult, "subscription { counter }", variables={}, headers={}
+            ) as stream:
+                async for _ in stream:
+                    pass
+
+        with pytest.raises(GraphQLResponseError, match="Server sent invalid JSON"):
+            await consume()
+    finally:
+        await client.close()
+
+
+async def test_subscribe_invalid_json_during_handshake():
+    async def app(
+        scope: MutableMapping[str, Any],
+        receive: Any,
+        send: Any,
+    ) -> None:
+        if scope["type"] == "http":
+            await send({
+                "type": "http.response.start",
+                "status": 200,
+                "headers": [[b"content-type", b"text/plain"]],
+            })
+            await send({"type": "http.response.body", "body": b"ok"})
+            return
+
+        assert scope["type"] == "websocket"
+        subprotocols = scope.get("subprotocols", [])
+        connect_event = await receive()
+        assert connect_event["type"] == "websocket.connect"
+        await send({
+            "type": "websocket.accept",
+            "subprotocol": "graphql-transport-ws"
+            if "graphql-transport-ws" in subprotocols
+            else None,
+        })
+        init_msg = json.loads((await receive())["text"])
+        assert init_msg["type"] == "connection_init"
+        await send({
+            "type": "websocket.send",
+            "text": "<<<broken>>>",
+        })
+        await receive()
+
+    client = GQLClient(base_url="http://testserver/graphql", target_app=app)
+    try:
+
+        async def consume():
+            async with client.subscribe(
+                _CounterResult, "subscription { counter }", variables={}, headers={}
+            ) as stream:
+                async for _ in stream:
+                    pass
+
+        with pytest.raises(
+            GraphQLResponseError, match="Server sent invalid JSON during handshake"
+        ):
+            await consume()
+    finally:
+        await client.close()
+
+
+async def test_subscribe_validation_error():
+    app = _make_ws_app([
+        {"type": "next", "payload": {"data": {"counter": "not_an_int"}}},
+    ])
+
+    client = GQLClient(base_url="http://testserver/graphql", target_app=app)
+    try:
+
+        async def consume():
+            async with client.subscribe(
+                _CounterResult, "subscription { counter }", variables={}, headers={}
+            ) as stream:
+                async for _ in stream:
+                    pass
+
+        with pytest.raises(GraphQLResponseError, match="Invalid data in response"):
+            await consume()
+    finally:
+        await client.close()
