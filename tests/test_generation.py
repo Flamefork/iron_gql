@@ -2012,3 +2012,73 @@ def test_sort_by_source_location(test_project: ProjectBuilder):
     pong_pos = generated.index("class Pong(")
     ping_pos = generated.index("class Ping(")
     assert pong_pos < ping_pos
+
+
+def test_source_location_comments(test_project: ProjectBuilder):
+    test_project.prepare(
+        schema="""
+            type Query {
+                ping: String!
+            }
+        """,
+        queries="""
+        from sample_app.gql.api import api_gql
+
+        ping = api_gql(
+            '''
+            query Ping {
+                ping
+            }
+            '''
+        )
+        """,
+    )
+
+    _api, _ = test_project.generate_and_import()
+
+    generated = (test_project.root / "sample_app/gql/api.py").read_text()
+    assert "# See: sample_app/queries.py:3" in generated
+
+
+def test_source_location_comments_deduplicated(test_project: ProjectBuilder):
+    test_project.prepare(
+        schema="""
+            type Query {
+                ping: String!
+            }
+        """,
+        queries="""
+        from sample_app.gql.api import api_gql
+
+        ping = api_gql(
+            '''
+            query Ping {
+                ping
+            }
+            '''
+        )
+        """,
+    )
+
+    test_project.write_file(
+        test_project.root / "sample_app" / "other.py",
+        """
+        from sample_app.gql.api import api_gql
+
+        ping2 = api_gql(
+            '''
+            query Ping {
+                ping
+            }
+            '''
+        )
+        """,
+    )
+
+    _api, _ = test_project.generate_and_import()
+
+    generated = (test_project.root / "sample_app/gql/api.py").read_text()
+    assert "# See: " in generated
+    see_line = next(line for line in generated.splitlines() if "# See:" in line)
+    assert "sample_app/queries.py:3" in see_line
+    assert "sample_app/other.py:3" in see_line

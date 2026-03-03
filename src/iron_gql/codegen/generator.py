@@ -470,7 +470,7 @@ def render_package(
     to_camel_fn_full_name: str,
     to_snake_fn: StrTransform,
 ) -> str:
-    queries, _all_locations = get_unique_queries(queries)
+    queries, all_locations = get_unique_queries(queries)
 
     input_roots: set[graphql.GraphQLInputObjectType] = set()
     for query in queries:
@@ -484,7 +484,9 @@ def render_package(
         )
         rendered_result_models = renderer.render_result_models(queries)
         rendered_input_types = renderer.render_input_types(ordered_input_types)
-        rendered_query_classes = renderer.render_query_classes(queries, package_name)
+        rendered_query_classes = renderer.render_query_classes(
+            queries, package_name, all_locations
+        )
         rendered_enums = renderer.render_enums()
     else:
         rendered_result_models = []
@@ -891,7 +893,10 @@ class PackageRenderer:
         return rendered
 
     def render_query_classes(
-        self, queries: list[Query], package_name: str
+        self,
+        queries: list[Query],
+        package_name: str,
+        all_locations: dict[str, list[str]],
     ) -> list[str]:
         query_classes = []
         for query in queries:
@@ -913,12 +918,14 @@ class PackageRenderer:
 
             class_name = capitalize_first(query.name)
             result_type = f"{class_name}Result"
+            see_comment = f"# See: {', '.join(all_locations[query.name])}"
 
             if is_subscription:
                 query_classes.append(
                     f"""
 
 class {class_name}(runtime.GQLOperation):
+    {see_comment}
     async def execute({", ".join(args)}) -> AsyncGenerator[{result_type}]:
         async with {package_name.upper()}_CLIENT.subscribe(
             {result_type},
@@ -936,6 +943,7 @@ class {class_name}(runtime.GQLOperation):
                     f"""
 
 class {class_name}(runtime.GQLOperation):
+    {see_comment}
     async def execute({", ".join(args)}) -> {result_type}:
         return await {package_name.upper()}_CLIENT.query(
             {result_type},
