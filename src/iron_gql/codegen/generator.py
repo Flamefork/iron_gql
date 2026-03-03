@@ -1,5 +1,6 @@
 import ast
 import warnings
+from collections import defaultdict
 from collections.abc import Callable
 from collections.abc import Iterable
 from collections.abc import Iterator
@@ -318,7 +319,7 @@ def generate_gql_package(
         base_url_import_path=base_url_import_path,
         package_name=package_name,
         gql_fn_name=gql_fn_name,
-        queries=sorted(parse_res.queries, key=lambda q: q.name),
+        queries=parse_res.queries,
         scalars=scalars,
         to_camel_fn_full_name=to_camel_fn_full_name,
         to_snake_fn=to_snake_fn,
@@ -469,7 +470,7 @@ def render_package(
     to_camel_fn_full_name: str,
     to_snake_fn: StrTransform,
 ) -> str:
-    queries = get_unique_queries(queries)
+    queries, _all_locations = get_unique_queries(queries)
 
     input_roots: set[graphql.GraphQLInputObjectType] = set()
     for query in queries:
@@ -518,19 +519,25 @@ def collect_input_root(
         roots.add(named)
 
 
-def get_unique_queries(queries: list[Query]) -> list[Query]:
-    unique_queries: dict[str, Query] = {}
+def get_unique_queries(
+    queries: list[Query],
+) -> tuple[list[Query], dict[str, list[str]]]:
+    all_locations: dict[str, list[str]] = defaultdict(list)
+    first_occurrence: dict[str, Query] = {}
     for query in queries:
-        if query.name not in unique_queries:
-            unique_queries[query.name] = query
-        elif unique_queries[query.name].stmt.hash_str != query.stmt.hash_str:
+        all_locations[query.name].append(query.stmt.location)
+        if query.name not in first_occurrence:
+            first_occurrence[query.name] = query
+        elif first_occurrence[query.name].stmt.hash_str != query.stmt.hash_str:
             msg = (
                 f"Cannot compile different GraphQL queries with same name {query.name}"
-                f" at {query.stmt.location}"
-                f" and {unique_queries[query.name].stmt.location}"
+                f" at {', '.join(all_locations[query.name])}"
             )
             raise ValueError(msg)
-    return list(unique_queries.values())
+    unique = sorted(
+        first_occurrence.values(), key=lambda q: (q.stmt.file, q.stmt.lineno)
+    )
+    return unique, dict(all_locations)
 
 
 def _warn_deprecated_input_field(
