@@ -633,8 +633,8 @@ def test_subscription_generates_subscription_class(test_project: ProjectBuilder)
 
     generated = (test_project.root / "sample_app/gql/api.py").read_text()
     assert "class Events(runtime.GQLOperation):" in generated
-    assert "async def execute(" in generated
-    assert "AsyncGenerator[EventsResult]" in generated
+    assert "def execute(" in generated
+    assert "AbstractAsyncContextManager[AsyncGenerator[EventsResult]]" in generated
     assert "API_CLIENT.subscribe(" in generated
 
 

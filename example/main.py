@@ -120,9 +120,10 @@ async def main():
             }
         }
     """)
-    async for event in subscription.execute(user_id="1"):
-        post = event.post_added
-        print(f"New post: {post.title} by {post.author.name}")
+    async with subscription.execute(user_id="1") as stream:
+        async for event in stream:
+            post = event.post_added
+            print(f"New post: {post.title} by {post.author.name}")
 
 
 if __name__ == "__main__":

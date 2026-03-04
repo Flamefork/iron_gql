@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import datetime
 from collections.abc import AsyncGenerator
+from contextlib import AbstractAsyncContextManager
 from typing import Annotated
 from typing import Literal
 from typing import overload
@@ -204,15 +205,13 @@ class FindUser(runtime.GQLOperation):
 
 class PostAdded(runtime.GQLOperation):
     # See: example/main.py:113
-    async def execute(self, *, user_id: builtins.str) -> AsyncGenerator[PostAddedResult]:
-        async with API_CLIENT.subscribe(
+    def execute(self, *, user_id: builtins.str) -> AbstractAsyncContextManager[AsyncGenerator[PostAddedResult]]:
+        return API_CLIENT.subscribe(
             PostAddedResult,
             'subscription PostAdded($userId: ID!) {\n  postAdded(userId: $userId) {\n    id\n    title\n    body\n    author {\n      name\n    }\n  }\n}',
             variables={"userId": user_id},
             headers=self.headers,
-        ) as stream:
-            async for item in stream:
-                yield item
+        )
 
 
 @overload

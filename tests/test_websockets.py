@@ -296,10 +296,8 @@ async def test_subscribe_codegen_asgi(test_project: ProjectBuilder):
         base_url="http://testserver/graphql", target_app=app
     )
     try:
-        results = [
-            (item.events.id, item.events.message)
-            async for item in queries_module.events.execute(channel="test")
-        ]
+        async with queries_module.events.execute(channel="test") as stream:
+            results = [(item.events.id, item.events.message) async for item in stream]
         assert results == [("1", "hello"), ("2", "world")]
         assert captured["subscribe"]["payload"]["variables"] == {"channel": "test"}
     finally:

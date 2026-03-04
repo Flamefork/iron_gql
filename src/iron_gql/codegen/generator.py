@@ -392,6 +392,7 @@ def render_imports(
     return f"""\
 import datetime
 from collections.abc import AsyncGenerator
+from contextlib import AbstractAsyncContextManager
 from typing import Annotated
 from typing import Literal
 from typing import overload
@@ -926,17 +927,15 @@ class PackageRenderer:
 
 class {class_name}(runtime.GQLOperation):
     {see_comment}
-    async def execute({", ".join(args)}) -> AsyncGenerator[{result_type}]:
-        async with {package_name.upper()}_CLIENT.subscribe(
+    def execute({", ".join(args)}) -> AbstractAsyncContextManager[AsyncGenerator[{result_type}]]:
+        return {package_name.upper()}_CLIENT.subscribe(
             {result_type},
             {query.exec_source!r},
             variables={variables_str},
             headers=self.headers,
-        ) as stream:
-            async for item in stream:
-                yield item
+        )
 
-                    """.strip()
+                    """.strip()  # noqa: E501
                 )
             else:
                 query_classes.append(
