@@ -11,9 +11,9 @@ from typing import Self
 import httpx
 import pydantic
 from httpx_ws import aconnect_ws
+from httpx_ws.transport import ASGIWebSocketTransport
 
 from iron_gql.errors import GraphQLResponseError
-from iron_gql.websockets import SafeASGIWebSocketTransport
 from iron_gql.websockets import graphql_ws_subscribe
 from iron_gql.websockets import ws_url
 
@@ -171,22 +171,32 @@ class GQLClient:
             msg = "File uploads are not supported in subscriptions"
             raise TypeError(msg)
         transport = (
-            SafeASGIWebSocketTransport(self._target_app) if self._target_app else None
+            ASGIWebSocketTransport(self._target_app) if self._target_app else None
         )
         url = str(ws_url(self._endpoint_url))
-        async with (
-            httpx.AsyncClient(
-                transport=transport,
-                headers={
-                    **httpx.Headers(self._client.headers),
-                    **headers,
-                },
-                cookies=httpx.Cookies(self._client.cookies),
-            ) as client,
-            aconnect_ws(url, client, subprotocols=["graphql-transport-ws"]) as ws,
-            graphql_ws_subscribe(ws, result_type, query, serialized_vars) as stream,
-        ):
-            yield stream
+        try:
+            async with (
+                httpx.AsyncClient(
+                    transport=transport,
+                    headers={
+                        **httpx.Headers(self._client.headers),
+                        **headers,
+                    },
+                    cookies=httpx.Cookies(self._client.cookies),
+                ) as client,
+                aconnect_ws(url, client, subprotocols=["graphql-transport-ws"]) as ws,
+                graphql_ws_subscribe(ws, result_type, query, serialized_vars) as stream,
+            ):
+                yield stream
+        except BaseExceptionGroup as eg:
+            # httpx-ws 0.9+ wraps exceptions in nested ExceptionGroups via task groups;
+            # unwrap so callers see plain exceptions (except* always re-wraps)
+            exc: BaseException = eg
+            while isinstance(exc, BaseExceptionGroup) and len(exc.exceptions) == 1:
+                exc = exc.exceptions[0]
+            if exc is not eg:
+                raise exc from None
+            raise
 
     async def close(self) -> None:
         await self._client.aclose()
