@@ -3,8 +3,8 @@ import asyncio
 from example.gql.api import CreateUserInput
 from example.gql.api import FindUserByEmail
 from example.gql.api import FindUserById
-from example.gql.api import SearchResultSearchPost
-from example.gql.api import SearchResultSearchUser
+from example.gql.api import PostWithAuthorIdTitleTypename
+from example.gql.api import UserWithIdNameRoleTypename
 from example.gql.api import api_gql
 
 
@@ -63,9 +63,9 @@ async def main():
     """).execute(query="python")
     for item in results.search:
         match item:
-            case SearchResultSearchUser():
+            case UserWithIdNameRoleTypename():
                 print(f"User: {item.name}, role: {item.role}")
-            case SearchResultSearchPost():
+            case PostWithAuthorIdTitleTypename():
                 print(f"Post: {item.title} by {item.author.name}")
 
     profile = await api_gql("""

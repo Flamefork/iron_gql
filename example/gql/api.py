@@ -40,25 +40,25 @@ class GQLModel(pydantic.BaseModel):
 type Role = Literal['ADMIN', 'MEMBER']
 
 
-class GetUserResultUserPosts(GQLModel):
+class PostWithIdTitle(GQLModel):
     id: builtins.str
     title: str
 
 
-class GetUserResultUser(GQLModel):
+class UserWithEmailIdNamePhonePostsRole(GQLModel):
     id: builtins.str
     name: str
     email: str
     phone: str
     role: Role
-    posts: list[GetUserResultUserPosts]
+    posts: list[PostWithIdTitle]
 
 
 class GetUserResult(GQLModel):
-    user: GetUserResultUser | None
+    user: UserWithEmailIdNamePhonePostsRole | None
 
 
-class CreateUserResultCreateUser(GQLModel):
+class UserWithEmailIdNameRole(GQLModel):
     id: builtins.str
     name: str
     email: str
@@ -66,35 +66,35 @@ class CreateUserResultCreateUser(GQLModel):
 
 
 class CreateUserResult(GQLModel):
-    create_user: CreateUserResultCreateUser
+    create_user: UserWithEmailIdNameRole
 
 
-class SearchResultSearchPostAuthor(GQLModel):
+class UserWithName(GQLModel):
     name: str
 
 
-class SearchResultSearchPost(GQLModel):
+class PostWithAuthorIdTitleTypename(GQLModel):
     typename__: Literal["Post"] = pydantic.Field(alias="__typename")
     id: builtins.str
     title: str
-    author: SearchResultSearchPostAuthor
+    author: UserWithName
 
 
-class SearchResultSearchUser(GQLModel):
+class UserWithIdNameRoleTypename(GQLModel):
     typename__: Literal["User"] = pydantic.Field(alias="__typename")
     id: builtins.str
     name: str
     role: Role
 
 
-type SearchResultSearch = Annotated[SearchResultSearchPost | SearchResultSearchUser, pydantic.Field(discriminator="typename__")]
+type SearchResultSearch = Annotated[PostWithAuthorIdTitleTypename | UserWithIdNameRoleTypename, pydantic.Field(discriminator="typename__")]
 
 
 class SearchResult(GQLModel):
     search: list[SearchResultSearch]
 
 
-class GetProfileResultUser(GQLModel):
+class UserWithEmailIdNamePhoneRole(GQLModel):
     id: builtins.str
     name: str
     role: Role
@@ -103,32 +103,28 @@ class GetProfileResultUser(GQLModel):
 
 
 class GetProfileResult(GQLModel):
-    user: GetProfileResultUser | None
+    user: UserWithEmailIdNamePhoneRole | None
 
 
-class FindUserResultFindUser(GQLModel):
+class UserWithEmailIdName(GQLModel):
     id: builtins.str
     name: str
     email: str
 
 
 class FindUserResult(GQLModel):
-    find_user: FindUserResultFindUser | None
+    find_user: UserWithEmailIdName | None
 
 
-class PostAddedResultPostAddedAuthor(GQLModel):
-    name: str
-
-
-class PostAddedResultPostAdded(GQLModel):
+class PostWithAuthorBodyIdTitle(GQLModel):
     id: builtins.str
     title: str
     body: str
-    author: PostAddedResultPostAddedAuthor
+    author: UserWithName
 
 
 class PostAddedResult(GQLModel):
-    post_added: PostAddedResultPostAdded
+    post_added: PostWithAuthorBodyIdTitle
 
 
 class CreateUserInput(GQLModel):
