@@ -91,9 +91,9 @@ class GQLClient:
         headers: dict[str, str],
     ) -> T:
         payload: dict[str, Any] = {"query": query}
-        sierialized_vars, files = serialize_variables(variables)
-        if sierialized_vars:
-            payload["variables"] = sierialized_vars
+        serialized_vars, files = serialize_variables(variables)
+        if serialized_vars:
+            payload["variables"] = serialized_vars
         if files:
             response = await self._post_multipart_request(payload, files, headers)
         else:
