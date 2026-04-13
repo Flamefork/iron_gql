@@ -54,6 +54,25 @@ class GraphQLDeprecationWarning(UserWarning):
 
 
 @dataclass(kw_only=True, frozen=True)
+class ImportRef:
+    module: str
+    symbol: str
+
+    @classmethod
+    def parse(cls, raw: str) -> "ImportRef":
+        module, symbol = raw.split(":", maxsplit=1)
+        return cls(module=module, symbol=symbol)
+
+    @property
+    def dotted_path(self) -> str:
+        return f"{self.module}.{self.symbol}"
+
+    def import_statement(self) -> str:
+        root_symbol = self.symbol.split(".", maxsplit=1)[0]
+        return f"from {self.module} import {root_symbol}"
+
+
+@dataclass(kw_only=True, frozen=True)
 class GeneratedModel:
     name: str
     fields: list[str]
@@ -222,7 +241,7 @@ def build_excluded_variable_values(
 
 def render_type(
     gql_type: graphql.GraphQLType,
-    scalars: dict[str, str],
+    scalars: dict[str, ImportRef],
     *,
     nullable: bool = True,
     child_model_name: str | None = None,
@@ -473,7 +492,9 @@ def generate_gql_package(
     gql_fn_name = f"{package_name}_gql"
 
     target_package_path = src_path / f"{package_full_name.replace('.', '/')}.py"
-    base_url_import_package, base_url_import_path = base_url_import.split(":")
+    base_url_ref = ImportRef.parse(base_url_import)
+    scalar_refs = {name: ImportRef.parse(ref) for name, ref in scalars.items()}
+    to_camel_ref = ImportRef.parse(to_camel_fn_full_name)
 
     queries = list(
         find_all_queries(src_path, gql_fn_name, skip_path=target_package_path)
@@ -489,13 +510,12 @@ def generate_gql_package(
         raise GraphQLGenerationError(parse_res.errors)
 
     new_content = render_package(
-        base_url_import_package=base_url_import_package,
-        base_url_import_path=base_url_import_path,
+        base_url_ref=base_url_ref,
         package_name=package_name,
         gql_fn_name=gql_fn_name,
         queries=parse_res.queries,
-        scalars=scalars,
-        to_camel_fn_full_name=to_camel_fn_full_name,
+        scalars=scalar_refs,
+        to_camel_ref=to_camel_ref,
         to_snake_fn=to_snake_fn,
     )
     return write_if_changed(target_package_path, new_content + "\n")
@@ -553,15 +573,12 @@ from __future__ import annotations
 
 
 def render_imports(
-    to_camel_fn_full_name: str,
-    scalars: dict[str, str],
-    base_url_import_package: str,
-    base_url_import_path: str,
+    to_camel_ref: ImportRef,
+    scalars: dict[str, ImportRef],
+    base_url_ref: ImportRef,
 ) -> str:
-    import_modules = [m.split(":")[0] for m in scalars.values()]
+    import_modules = [ref.module for ref in scalars.values()]
     scalar_imports = "\n".join(f"import {m}" for m in import_modules)
-    to_camel_module = to_camel_fn_full_name.split(":", maxsplit=1)[0]
-    base_url_symbol = base_url_import_path.split(".", maxsplit=1)[0]
     return f"""\
 import datetime
 from collections.abc import AsyncGenerator
@@ -574,28 +591,28 @@ import pydantic
 
 from iron_gql import runtime
 
-import {to_camel_module}
+import {to_camel_ref.module}
 
 {scalar_imports}
 
-from {base_url_import_package} import {base_url_symbol}"""
+{base_url_ref.import_statement()}"""
 
 
 def render_client_init(
     package_name: str,
-    base_url_import_path: str,
-    to_camel_fn_full_name: str,
+    base_url_ref: ImportRef,
+    to_camel_ref: ImportRef,
 ) -> str:
     return f"""\
 {package_name.upper()}_CLIENT = runtime.GQLClient(
-    base_url={base_url_import_path},
+    base_url={base_url_ref.symbol},
 )
 
 
 class GQLModel(pydantic.BaseModel):
     model_config = pydantic.ConfigDict(
         populate_by_name=True,
-        alias_generator={to_camel_fn_full_name.replace(":", ".")},
+        alias_generator={to_camel_ref.dotted_path},
         extra="forbid",
         validate_default=True,
     )"""
@@ -635,13 +652,12 @@ def {gql_fn_name}(stmt: str) -> runtime.GQLOperation:
 
 
 def render_package(
-    base_url_import_package: str,
-    base_url_import_path: str,
+    base_url_ref: ImportRef,
     package_name: str,
     gql_fn_name: str,
     queries: list[Query],
-    scalars: dict[str, str],
-    to_camel_fn_full_name: str,
+    scalars: dict[str, ImportRef],
+    to_camel_ref: ImportRef,
     to_snake_fn: StrTransform,
 ) -> str:
     queries, all_locations = get_unique_queries(queries)
@@ -671,12 +687,11 @@ def render_package(
     sections = [
         HEADER,
         render_imports(
-            to_camel_fn_full_name,
+            to_camel_ref,
             scalars,
-            base_url_import_package,
-            base_url_import_path,
+            base_url_ref,
         ),
-        render_client_init(package_name, base_url_import_path, to_camel_fn_full_name),
+        render_client_init(package_name, base_url_ref, to_camel_ref),
         "\n".join(rendered_enums),
         "\n\n\n".join(rendered_result_models),
         "\n\n\n".join(rendered_input_types),
@@ -759,7 +774,7 @@ def _warn_deprecated_field(
 
 @dataclass(kw_only=True)
 class PackageRenderer:
-    scalars: dict[str, str]
+    scalars: dict[str, ImportRef]
     to_snake_fn: StrTransform
     schema: graphql.GraphQLSchema
     enums: set[graphql.GraphQLEnumType] = field(default_factory=set)
@@ -1227,14 +1242,14 @@ def collect_input_types(
 
 def field_py_type(
     gql_type: graphql.GraphQLNamedType,
-    scalars: dict[str, str],
+    scalars: dict[str, ImportRef],
     *,
     enums: set[graphql.GraphQLEnumType] | None = None,
 ) -> str:
     match gql_type:
         case graphql.GraphQLScalarType(name=name):
             if name in scalars:
-                return scalars[name].replace(":", ".")
+                return scalars[name].dotted_path
             if name in BUILTIN_SCALARS:
                 return BUILTIN_SCALARS[name]
             warnings.warn(
