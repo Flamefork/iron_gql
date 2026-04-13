@@ -529,11 +529,10 @@ def find_all_queries(
     for file, lineno, node in find_fn_calls(src_path, gql_fn_name, skip_path=skip_path):
         relative_path = file.relative_to(src_path)
 
-        stmt_arg = node.args[0]
         if (
             len(node.args) != 1
-            or not isinstance(stmt_arg, ast.Constant)
-            or not isinstance(stmt_arg.value, str)
+            or not isinstance(node.args[0], ast.Constant)
+            or not isinstance(node.args[0].value, str)
         ):
             msg = (
                 f"Invalid positional arguments for {gql_fn_name} "
@@ -542,7 +541,7 @@ def find_all_queries(
             )
             raise TypeError(msg)
 
-        yield Statement(raw_text=stmt_arg.value, file=relative_path, lineno=lineno)
+        yield Statement(raw_text=node.args[0].value, file=relative_path, lineno=lineno)
 
 
 HEADER = """\
