@@ -1,4 +1,5 @@
 import ast
+import heapq
 import re
 import warnings
 from collections import defaultdict
@@ -7,6 +8,7 @@ from collections.abc import Iterable
 from collections.abc import Iterator
 from dataclasses import dataclass
 from dataclasses import field
+from graphlib import TopologicalSorter
 from pathlib import Path
 from typing import Any
 from typing import cast
@@ -278,28 +280,22 @@ def _build_dependency_graph(
     return by_name, deps
 
 
-def _topological_sort(models: list[GeneratedModel]) -> list[GeneratedModel]:
+def topological_sort(models: list[GeneratedModel]) -> list[GeneratedModel]:
     if not models:
         return models
     by_name, deps = _build_dependency_graph(models)
+    sorter = TopologicalSorter({name: sorted(refs) for name, refs in deps.items()})
+    sorter.prepare()
 
-    in_degree: dict[str, int] = dict.fromkeys(deps, 0)
-    for name, refs in deps.items():
-        for ref in refs:
-            if ref in in_degree:
-                in_degree[name] += 1
-
-    queue = sorted(name for name, deg in in_degree.items() if deg == 0)
+    queue = list(sorter.get_ready())
+    heapq.heapify(queue)
     result: list[GeneratedModel] = []
     while queue:
-        name = queue.pop(0)
+        name = heapq.heappop(queue)
         result.append(by_name[name])
-        for other, refs in deps.items():
-            if name in refs:
-                in_degree[other] -= 1
-                if in_degree[other] == 0:
-                    queue.append(other)
-                    queue.sort()
+        sorter.done(name)
+        for ready_name in sorter.get_ready():
+            heapq.heappush(queue, ready_name)
 
     return result
 
@@ -379,7 +375,7 @@ def _build_rename_map(artifacts: list[GeneratedArtifact]) -> dict[str, str]:
         for a in artifacts
         if isinstance(a, GeneratedModel) and a.graphql_type_name is not None
     ]
-    models = _topological_sort(models)
+    models = topological_sort(models)
 
     type_variants: dict[str, set[str]] = defaultdict(set)
     for model in models:
