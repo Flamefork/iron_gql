@@ -136,12 +136,12 @@ async def test_union_with_interface_fragment(
         resolvers={"Query": {"actor": resolve_actor}},
     ) as (api, queries):
         user_result = await queries.get_actor.execute(id="user-1")
-        assert isinstance(user_result.actor, api.UserWithIdNameTypename)
+        assert isinstance(user_result.actor, api.User)
         assert user_result.actor.id == "user-1"
         assert user_result.actor.name == "Morty"
 
         admin_result = await queries.get_actor.execute(id="admin-1")
-        assert isinstance(admin_result.actor, api.AdminWithIdPermissionsTypename)
+        assert isinstance(admin_result.actor, api.Admin)
         assert admin_result.actor.id == "admin-1"
         assert admin_result.actor.permissions == ["portal"]
 
@@ -262,11 +262,11 @@ async def test_interface_with_fragments(
         resolvers={"Query": {"node": resolve_node}},
     ) as (api, queries):
         user_result = await queries.get_node.execute(id="user-1")
-        assert isinstance(user_result.node, api.UserWithIdNameTypename)
+        assert isinstance(user_result.node, api.User)
         assert user_result.node.name == "Morty"
 
         comment_result = await queries.get_node.execute(id="comment-1")
-        assert isinstance(comment_result.node, api.NodeWithIdTypename)
+        assert isinstance(comment_result.node, api.Node)
         assert comment_result.node.id == "comment-1"
 
 
@@ -401,11 +401,11 @@ async def test_interface_hierarchy(
         resolvers={"Query": {"node": resolve_node}},
     ) as (api, queries):
         user_result = await queries.get_node.execute(id="user-1")
-        assert isinstance(user_result.node, api.UserWithCreatedAtIdTypename)
+        assert isinstance(user_result.node, api.User)
         assert user_result.node.created_at == "2024-01-01"
 
         post_result = await queries.get_node.execute(id="post-1")
-        assert isinstance(post_result.node, api.NodeWithIdTypename)
+        assert isinstance(post_result.node, api.Node)
         assert post_result.node.id == "post-1"
 
 
@@ -471,12 +471,12 @@ async def test_interface_fragment_on_overlapping_interface(
         assert not hasattr(api, "GetNodeResultNodeOrg")
 
         user_result = await queries.get_node.execute(id="user-1")
-        assert isinstance(user_result.node, api.UserWithIdNameTypename)
+        assert isinstance(user_result.node, api.User)
         assert user_result.node.id == "user-1"
         assert user_result.node.name == "Morty"
 
         post_result = await queries.get_node.execute(id="post-1")
-        assert isinstance(post_result.node, api.NodeWithIdTypename)
+        assert isinstance(post_result.node, api.Node)
         assert post_result.node.id == "post-1"
 
 
@@ -830,11 +830,11 @@ async def test_nullable_union_result_validation(
         assert none_result.node is None
 
         user_result = await queries.get_node.execute(id="user-1")
-        assert isinstance(user_result.node, api.UserWithIdNameTypename)
+        assert isinstance(user_result.node, api.User)
         assert user_result.node.name == "Morty"
 
         admin_result = await queries.get_node.execute(id="admin-1")
-        assert isinstance(admin_result.node, api.AdminWithIdPermissionsTypename)
+        assert isinstance(admin_result.node, api.Admin)
         assert admin_result.node.permissions == ["portal"]
 
 
@@ -893,9 +893,9 @@ async def test_list_wrapped_union(test_project: ProjectBuilder, httpserver: HTTP
     ) as (api, queries):
         result = await queries.get_nodes.execute()
         assert len(result.nodes) == 2
-        assert isinstance(result.nodes[0], api.UserWithIdNameTypename)
+        assert isinstance(result.nodes[0], api.User)
         assert result.nodes[0].name == "Morty"
-        assert isinstance(result.nodes[1], api.PostWithIdTitleTypename)
+        assert isinstance(result.nodes[1], api.Post)
         assert result.nodes[1].title == "GraphQL 101"
 
     generated = (test_project.root / "sample_app/gql/api.py").read_text()
@@ -962,11 +962,11 @@ async def test_interface_with_named_fragment_type_condition(
         resolvers={"Query": {"node": resolve_node}},
     ) as (api, queries):
         user_result = await queries.get_node.execute(id="user-1")
-        assert isinstance(user_result.node, api.UserWithIdNameTypename)
+        assert isinstance(user_result.node, api.User)
         assert user_result.node.name == "Morty"
 
         post_result = await queries.get_node.execute(id="post-1")
-        assert isinstance(post_result.node, api.NodeWithIdTypename)
+        assert isinstance(post_result.node, api.Node)
         assert post_result.node.id == "post-1"
 
 
@@ -1034,11 +1034,11 @@ async def test_interface_typename_in_named_fragment(
         resolvers={"Query": {"node": resolve_node}},
     ) as (api, queries):
         user_result = await queries.get_node.execute(id="user-1")
-        assert isinstance(user_result.node, api.UserWithIdNameTypename)
+        assert isinstance(user_result.node, api.User)
         assert user_result.node.name == "Morty"
 
         post_result = await queries.get_node.execute(id="post-1")
-        assert isinstance(post_result.node, api.PostWithIdTitleTypename)
+        assert isinstance(post_result.node, api.Post)
         assert post_result.node.title == "GraphQL 101"
 
 
@@ -1091,6 +1091,6 @@ def test_interface_exhaustively_covered(test_project: ProjectBuilder):
     # and the union is just User | Post
     generated = (test_project.root / "sample_app/gql/api.py").read_text()
     assert "type GetNodeResultNode = Annotated[" in generated
-    assert "PostWithIdTitleTypename | UserWithIdNameTypename" in generated
+    assert "Post | User" in generated
     assert "node: GetNodeResultNode | None" in generated
-    assert "NodeWithIdTypename" not in generated
+    assert "class Node(" not in generated

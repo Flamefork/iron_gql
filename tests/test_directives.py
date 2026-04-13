@@ -422,8 +422,8 @@ def test_include_on_nested_object_field(test_project: ProjectBuilder):
     assert test_project.generate() is True
     generated = (test_project.root / "sample_app/gql/api.py").read_text()
     assert "id: builtins.str\n" in generated
-    assert "address: AddressWithCityZip | None = None" in generated
-    assert "class AddressWithCityZip(GQLModel):" in generated
+    assert "address: Address | None = None" in generated
+    assert "class Address(GQLModel):" in generated
     assert "city: str\n" in generated
     assert "zip: str\n" in generated
 
