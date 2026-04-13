@@ -18,5 +18,4 @@ def write_if_changed(path: Path, new_content: str) -> bool:
     if existing_content == new_content:
         return False
     path.write_text(new_content, encoding="utf-8")
-    path.touch()
     return True

@@ -7,7 +7,17 @@ from iron_gql import runtime
 from iron_gql.codegen import GraphQLGenerationError
 from iron_gql.codegen import UnknownGQLTypeWarning
 from iron_gql.codegen import generate_gql_package
+from iron_gql.codegen.generator import ImportRef
 from tests.conftest import ProjectBuilder
+
+
+def test_import_ref_parses_and_renders_consistently():
+    ref = ImportRef.parse("sample_app.settings:config.GRAPHQL_URL")
+
+    assert ref.module == "sample_app.settings"
+    assert ref.symbol == "config.GRAPHQL_URL"
+    assert ref.dotted_path == "sample_app.settings.config.GRAPHQL_URL"
+    assert ref.import_statement() == "from sample_app.settings import config"
 
 
 def test_generate_with_schema_outside_src(test_project: ProjectBuilder):

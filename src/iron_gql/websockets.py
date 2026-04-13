@@ -1,17 +1,13 @@
 import asyncio
-import contextlib
 import json
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
-from types import TracebackType
 from typing import Any
 
 import httpx
 import pydantic
-from anyio import ClosedResourceError
 from httpx_ws import AsyncWebSocketSession
 from httpx_ws import WebSocketDisconnect
-from httpx_ws.transport import ASGIWebSocketTransport
 
 from iron_gql.errors import GraphQLResponseError
 
@@ -135,36 +131,3 @@ async def _ws_receive_messages[T: pydantic.BaseModel](  # noqa: C901, PLR0912
                     f" message: {message}"
                 )
                 raise GraphQLResponseError([{"message": msg}])
-
-
-# See https://github.com/frankie567/httpx-ws/issues/136
-class SafeASGIWebSocketTransport(ASGIWebSocketTransport):
-    async def _handle_ws_request(
-        self, request: httpx.Request, scope: dict[str, Any]
-    ) -> httpx.Response:
-        response = await super()._handle_ws_request(request, scope)
-        self._ws_network_stream = response.extensions["network_stream"]
-        return response
-
-    async def __aexit__(
-        self,
-        exc_type: type[BaseException] | None = None,
-        exc_val: BaseException | None = None,
-        exc_tb: TracebackType | None = None,
-    ) -> None:
-        try:
-            await super().__aexit__(exc_type, exc_val, exc_tb)
-        except BaseExceptionGroup as eg:
-            if exc_val is not None:
-                _, rest = eg.split(lambda e: e is exc_val)
-                if rest is not None:
-                    raise rest from exc_val
-                raise exc_val  # noqa: B904
-            raise
-        finally:
-            stream = getattr(self, "_ws_network_stream", None)
-            if stream is not None:
-                with contextlib.suppress(ClosedResourceError):
-                    await stream._receive_queue.aclose()  # noqa: SLF001
-                with contextlib.suppress(ClosedResourceError):
-                    await stream._send_queue.aclose()  # noqa: SLF001

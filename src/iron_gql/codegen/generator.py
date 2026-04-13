@@ -1,4 +1,5 @@
 import ast
+import heapq
 import re
 import warnings
 from collections import defaultdict
@@ -7,6 +8,7 @@ from collections.abc import Iterable
 from collections.abc import Iterator
 from dataclasses import dataclass
 from dataclasses import field
+from graphlib import TopologicalSorter
 from pathlib import Path
 from typing import Any
 from typing import cast
@@ -51,6 +53,25 @@ class UnknownGQLTypeWarning(UserWarning):
 
 class GraphQLDeprecationWarning(UserWarning):
     pass
+
+
+@dataclass(kw_only=True, frozen=True)
+class ImportRef:
+    module: str
+    symbol: str
+
+    @classmethod
+    def parse(cls, raw: str) -> "ImportRef":
+        module, symbol = raw.split(":", maxsplit=1)
+        return cls(module=module, symbol=symbol)
+
+    @property
+    def dotted_path(self) -> str:
+        return f"{self.module}.{self.symbol}"
+
+    def import_statement(self) -> str:
+        root_symbol = self.symbol.split(".", maxsplit=1)[0]
+        return f"from {self.module} import {root_symbol}"
 
 
 @dataclass(kw_only=True, frozen=True)
@@ -220,40 +241,6 @@ def build_excluded_variable_values(
     )
 
 
-def render_type(
-    gql_type: graphql.GraphQLType,
-    scalars: dict[str, str],
-    *,
-    nullable: bool = True,
-    child_model_name: str | None = None,
-    enums: set[graphql.GraphQLEnumType] | None = None,
-) -> str:
-    match gql_type:
-        case graphql.GraphQLNonNull(of_type=inner):
-            return render_type(
-                inner,
-                scalars,
-                nullable=False,
-                child_model_name=child_model_name,
-                enums=enums,
-            )
-        case graphql.GraphQLList(of_type=inner):
-            inner_str = render_type(
-                inner, scalars, child_model_name=child_model_name, enums=enums
-            )
-            typ = f"list[{inner_str}]"
-        case graphql.GraphQLNamedType() if child_model_name is not None:
-            typ = child_model_name
-        case graphql.GraphQLNamedType():
-            typ = field_py_type(gql_type, scalars, enums=enums)
-        case _:
-            msg = f"Unknown GraphQL type: {gql_type}"
-            raise TypeError(msg)
-    if nullable:
-        typ += " | None"
-    return typ
-
-
 def render_pydantic_class(name: str, base: str, fields: list[str]) -> str:
     return f"class {name}({base}):\n    {indent_block('\n'.join(fields), '    ')}"
 
@@ -293,28 +280,22 @@ def _build_dependency_graph(
     return by_name, deps
 
 
-def _topological_sort(models: list[GeneratedModel]) -> list[GeneratedModel]:
+def topological_sort(models: list[GeneratedModel]) -> list[GeneratedModel]:
     if not models:
         return models
     by_name, deps = _build_dependency_graph(models)
+    sorter = TopologicalSorter({name: sorted(refs) for name, refs in deps.items()})
+    sorter.prepare()
 
-    in_degree: dict[str, int] = dict.fromkeys(deps, 0)
-    for name, refs in deps.items():
-        for ref in refs:
-            if ref in in_degree:
-                in_degree[name] += 1
-
-    queue = sorted(name for name, deg in in_degree.items() if deg == 0)
+    queue = list(sorter.get_ready())
+    heapq.heapify(queue)
     result: list[GeneratedModel] = []
     while queue:
-        name = queue.pop(0)
+        name = heapq.heappop(queue)
         result.append(by_name[name])
-        for other, refs in deps.items():
-            if name in refs:
-                in_degree[other] -= 1
-                if in_degree[other] == 0:
-                    queue.append(other)
-                    queue.sort()
+        sorter.done(name)
+        for ready_name in sorter.get_ready():
+            heapq.heappush(queue, ready_name)
 
     return result
 
@@ -394,7 +375,7 @@ def _build_rename_map(artifacts: list[GeneratedArtifact]) -> dict[str, str]:
         for a in artifacts
         if isinstance(a, GeneratedModel) and a.graphql_type_name is not None
     ]
-    models = _topological_sort(models)
+    models = topological_sort(models)
 
     type_variants: dict[str, set[str]] = defaultdict(set)
     for model in models:
@@ -473,7 +454,9 @@ def generate_gql_package(
     gql_fn_name = f"{package_name}_gql"
 
     target_package_path = src_path / f"{package_full_name.replace('.', '/')}.py"
-    base_url_import_package, base_url_import_path = base_url_import.split(":")
+    base_url_ref = ImportRef.parse(base_url_import)
+    scalar_refs = {name: ImportRef.parse(ref) for name, ref in scalars.items()}
+    to_camel_ref = ImportRef.parse(to_camel_fn_full_name)
 
     queries = list(
         find_all_queries(src_path, gql_fn_name, skip_path=target_package_path)
@@ -489,13 +472,12 @@ def generate_gql_package(
         raise GraphQLGenerationError(parse_res.errors)
 
     new_content = render_package(
-        base_url_import_package=base_url_import_package,
-        base_url_import_path=base_url_import_path,
+        base_url_ref=base_url_ref,
         package_name=package_name,
         gql_fn_name=gql_fn_name,
         queries=parse_res.queries,
-        scalars=scalars,
-        to_camel_fn_full_name=to_camel_fn_full_name,
+        scalars=scalar_refs,
+        to_camel_ref=to_camel_ref,
         to_snake_fn=to_snake_fn,
     )
     return write_if_changed(target_package_path, new_content + "\n")
@@ -529,11 +511,10 @@ def find_all_queries(
     for file, lineno, node in find_fn_calls(src_path, gql_fn_name, skip_path=skip_path):
         relative_path = file.relative_to(src_path)
 
-        stmt_arg = node.args[0]
         if (
             len(node.args) != 1
-            or not isinstance(stmt_arg, ast.Constant)
-            or not isinstance(stmt_arg.value, str)
+            or not isinstance(node.args[0], ast.Constant)
+            or not isinstance(node.args[0].value, str)
         ):
             msg = (
                 f"Invalid positional arguments for {gql_fn_name} "
@@ -542,7 +523,7 @@ def find_all_queries(
             )
             raise TypeError(msg)
 
-        yield Statement(raw_text=stmt_arg.value, file=relative_path, lineno=lineno)
+        yield Statement(raw_text=node.args[0].value, file=relative_path, lineno=lineno)
 
 
 HEADER = """\
@@ -554,15 +535,12 @@ from __future__ import annotations
 
 
 def render_imports(
-    to_camel_fn_full_name: str,
-    scalars: dict[str, str],
-    base_url_import_package: str,
-    base_url_import_path: str,
+    to_camel_ref: ImportRef,
+    scalars: dict[str, ImportRef],
+    base_url_ref: ImportRef,
 ) -> str:
-    import_modules = [m.split(":")[0] for m in scalars.values()]
+    import_modules = [ref.module for ref in scalars.values()]
     scalar_imports = "\n".join(f"import {m}" for m in import_modules)
-    to_camel_module = to_camel_fn_full_name.split(":", maxsplit=1)[0]
-    base_url_symbol = base_url_import_path.split(".", maxsplit=1)[0]
     return f"""\
 import datetime
 from collections.abc import AsyncGenerator
@@ -575,28 +553,28 @@ import pydantic
 
 from iron_gql import runtime
 
-import {to_camel_module}
+import {to_camel_ref.module}
 
 {scalar_imports}
 
-from {base_url_import_package} import {base_url_symbol}"""
+{base_url_ref.import_statement()}"""
 
 
 def render_client_init(
     package_name: str,
-    base_url_import_path: str,
-    to_camel_fn_full_name: str,
+    base_url_ref: ImportRef,
+    to_camel_ref: ImportRef,
 ) -> str:
     return f"""\
 {package_name.upper()}_CLIENT = runtime.GQLClient(
-    base_url={base_url_import_path},
+    base_url={base_url_ref.symbol},
 )
 
 
 class GQLModel(pydantic.BaseModel):
     model_config = pydantic.ConfigDict(
         populate_by_name=True,
-        alias_generator={to_camel_fn_full_name.replace(":", ".")},
+        alias_generator={to_camel_ref.dotted_path},
         extra="forbid",
         validate_default=True,
     )"""
@@ -636,13 +614,12 @@ def {gql_fn_name}(stmt: str) -> runtime.GQLOperation:
 
 
 def render_package(
-    base_url_import_package: str,
-    base_url_import_path: str,
+    base_url_ref: ImportRef,
     package_name: str,
     gql_fn_name: str,
     queries: list[Query],
-    scalars: dict[str, str],
-    to_camel_fn_full_name: str,
+    scalars: dict[str, ImportRef],
+    to_camel_ref: ImportRef,
     to_snake_fn: StrTransform,
 ) -> str:
     queries, all_locations = get_unique_queries(queries)
@@ -672,12 +649,11 @@ def render_package(
     sections = [
         HEADER,
         render_imports(
-            to_camel_fn_full_name,
+            to_camel_ref,
             scalars,
-            base_url_import_package,
-            base_url_import_path,
+            base_url_ref,
         ),
-        render_client_init(package_name, base_url_import_path, to_camel_fn_full_name),
+        render_client_init(package_name, base_url_ref, to_camel_ref),
         "\n".join(rendered_enums),
         "\n\n\n".join(rendered_result_models),
         "\n\n\n".join(rendered_input_types),
@@ -760,10 +736,68 @@ def _warn_deprecated_field(
 
 @dataclass(kw_only=True)
 class PackageRenderer:
-    scalars: dict[str, str]
+    scalars: dict[str, ImportRef]
     to_snake_fn: StrTransform
     schema: graphql.GraphQLSchema
     enums: set[graphql.GraphQLEnumType] = field(default_factory=set)
+
+    def render_type(
+        self,
+        gql_type: graphql.GraphQLType,
+        *,
+        nullable: bool = True,
+        child_model_name: str | None = None,
+    ) -> str:
+        match gql_type:
+            case graphql.GraphQLNonNull(of_type=inner):
+                return self.render_type(
+                    inner,
+                    nullable=False,
+                    child_model_name=child_model_name,
+                )
+            case graphql.GraphQLList(of_type=inner):
+                inner_str = self.render_type(
+                    inner,
+                    child_model_name=child_model_name,
+                )
+                typ = f"list[{inner_str}]"
+            case graphql.GraphQLNamedType() if child_model_name is not None:
+                typ = child_model_name
+            case graphql.GraphQLNamedType():
+                typ = self.field_py_type(gql_type)
+            case _:
+                msg = f"Unknown GraphQL type: {gql_type}"
+                raise TypeError(msg)
+        if nullable:
+            typ += " | None"
+        return typ
+
+    def field_py_type(self, gql_type: graphql.GraphQLNamedType) -> str:
+        match gql_type:
+            case graphql.GraphQLScalarType(name=name):
+                if name in self.scalars:
+                    return self.scalars[name].dotted_path
+                if name in BUILTIN_SCALARS:
+                    return BUILTIN_SCALARS[name]
+                warnings.warn(
+                    f"Unknown scalar type: {name}, mapped to 'object'",
+                    category=UnknownGQLTypeWarning,
+                    stacklevel=1,
+                )
+                return "object"
+            case graphql.GraphQLInputObjectType(name=name):
+                return name
+            case graphql.GraphQLEnumType(name=name):
+                self.enums.add(gql_type)
+                return name
+            case _:
+                warnings.warn(
+                    f"Unknown GraphQL type: {gql_type.name}"
+                    f" ({type(gql_type).__name__}), mapped to 'object'",
+                    category=UnknownGQLTypeWarning,
+                    stacklevel=1,
+                )
+                return "object"
 
     def render_operation_models(self, query: Query) -> list[GeneratedArtifact]:
         ctx = RenderContext(
@@ -888,7 +922,7 @@ class PackageRenderer:
     ) -> tuple[list[GeneratedArtifact], str]:
         selection_set = merge_selection_sets(field_nodes)
         if selection_set is None:
-            return [], render_type(gql_type, self.scalars, enums=self.enums)
+            return [], self.render_type(gql_type)
 
         named = graphql.get_named_type(gql_type)
         child_base = model_name_base + capitalize_first(response_key)
@@ -901,12 +935,7 @@ class PackageRenderer:
                     ctx=ctx,
                     graphql_type_name=named.name,
                 ),
-                render_type(
-                    gql_type,
-                    self.scalars,
-                    child_model_name=child_base,
-                    enums=self.enums,
-                ),
+                self.render_type(gql_type, child_model_name=child_base),
             )
 
         if isinstance(named, graphql.GraphQLUnionType):
@@ -1001,12 +1030,7 @@ class PackageRenderer:
             )
             return (
                 child_models,
-                render_type(
-                    field_gql_type,
-                    self.scalars,
-                    child_model_name=base_name,
-                    enums=self.enums,
-                ),
+                self.render_type(field_gql_type, child_model_name=base_name),
             )
 
         child_models: list[GeneratedArtifact] = []
@@ -1052,12 +1076,7 @@ class PackageRenderer:
         )
         return (
             [*child_models, GeneratedTypeAlias(name=base_name, type_expr=alias_value)],
-            render_type(
-                field_gql_type,
-                self.scalars,
-                child_model_name=base_name,
-                enums=self.enums,
-            ),
+            self.render_type(field_gql_type, child_model_name=base_name),
         )
 
     def render_result_models(self, queries: list[Query]) -> list[str]:
@@ -1100,7 +1119,7 @@ class PackageRenderer:
                 args.append("*")
             for v in query.variables:
                 py_name = self.to_snake_fn(v.name)
-                typ = render_type(v.gql_type, self.scalars, enums=self.enums)
+                typ = self.render_type(v.gql_type)
                 if v.default_value != graphql.Undefined:
                     typ += f" = {v.default_value!r}"
                 args.append(f"{py_name}: {typ}")
@@ -1163,7 +1182,7 @@ class {class_name}(runtime.GQLOperation):
                 _warn_deprecated_input_field(
                     typ.name, field_name, gql_field.deprecation_reason
                 )
-            typ_str = render_type(gql_field.type, self.scalars, enums=self.enums)
+            typ_str = self.render_type(gql_field.type)
             if gql_field.default_value != graphql.Undefined:
                 typ_str += f" = {gql_field.default_value!r}"
             elif not isinstance(gql_field.type, graphql.GraphQLNonNull):
@@ -1183,9 +1202,7 @@ class {class_name}(runtime.GQLOperation):
                 )
             variant_name = typ.name + capitalize_first(field_name)
             variant_names.append(variant_name)
-            typ_str = render_type(
-                gql_field.type, self.scalars, nullable=False, enums=self.enums
-            )
+            typ_str = self.render_type(gql_field.type, nullable=False)
             fields = [f"{self.to_snake_fn(field_name)}: {typ_str}"]
             rendered.append(render_pydantic_class(variant_name, "GQLModel", fields))
         rendered.append(f"type {typ.name} = {' | '.join(variant_names)}")
@@ -1224,37 +1241,3 @@ def collect_input_types(
             if isinstance(target, graphql.GraphQLInputObjectType):
                 queue.append(target)
     return sorted(result, key=lambda t: t.name)
-
-
-def field_py_type(
-    gql_type: graphql.GraphQLNamedType,
-    scalars: dict[str, str],
-    *,
-    enums: set[graphql.GraphQLEnumType] | None = None,
-) -> str:
-    match gql_type:
-        case graphql.GraphQLScalarType(name=name):
-            if name in scalars:
-                return scalars[name].replace(":", ".")
-            if name in BUILTIN_SCALARS:
-                return BUILTIN_SCALARS[name]
-            warnings.warn(
-                f"Unknown scalar type: {name}, mapped to 'object'",
-                category=UnknownGQLTypeWarning,
-                stacklevel=1,
-            )
-            return "object"
-        case graphql.GraphQLInputObjectType(name=name):
-            return name
-        case graphql.GraphQLEnumType(name=name):
-            if enums is not None:
-                enums.add(gql_type)
-            return name
-        case _:
-            warnings.warn(
-                f"Unknown GraphQL type: {gql_type.name}"
-                f" ({type(gql_type).__name__}), mapped to 'object'",
-                category=UnknownGQLTypeWarning,
-                stacklevel=1,
-            )
-            return "object"
