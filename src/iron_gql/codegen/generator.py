@@ -1,5 +1,4 @@
 import ast
-import hashlib
 import re
 import warnings
 from collections import defaultdict
@@ -326,10 +325,26 @@ def _field_name_to_pascal(name: str) -> str:
     )
 
 
-def _fields_hash(canonical: tuple[str, ...]) -> str:
-    return hashlib.md5(
-        "\n".join(canonical).encode(), usedforsecurity=False
-    ).hexdigest()[:6]
+_TYPE_NOISE = {"None", "Literal", "Annotated", "Field", "GQLModel"}
+
+
+def _extract_field_type(field_def: str) -> str:
+    _, _, rest = field_def.partition(":")
+    if not rest:
+        return ""
+    return rest.split("=", maxsplit=1)[0].strip()
+
+
+def _type_names_from_fields(fields: tuple[str, ...]) -> str:
+    names: list[str] = []
+    for f in sorted(fields):
+        typ = _extract_field_type(f)
+        names.extend(
+            word
+            for word in re.findall(r"[A-Z][a-zA-Z0-9_]*", typ)
+            if word not in _TYPE_NOISE
+        )
+    return "".join(names)
 
 
 type _ShapeFamily = dict[tuple[str, ...], tuple[str, str]]
@@ -356,18 +371,18 @@ def _short_model_name(
     if existing is not None:
         return existing[0]
 
-    # Collision: same candidate, different shape.
-    # If the family has one entry sitting on the plain candidate, retroactively hash it.
+    # Collision: same field names, different types.
+    # Rebuild names using type info from fields.
     if len(family) == 1:
         old_canonical, (old_resolved, old_original) = next(iter(family.items()))
         if old_resolved == candidate:
-            old_hashed = f"{candidate}_{_fields_hash(old_canonical)}"
-            family[old_canonical] = (old_hashed, old_original)
-            rename[old_original] = old_hashed
+            old_detailed = f"{candidate}_{_type_names_from_fields(old_canonical)}"
+            family[old_canonical] = (old_detailed, old_original)
+            rename[old_original] = old_detailed
 
-    new_hashed = f"{candidate}_{_fields_hash(canonical)}"
-    family[canonical] = (new_hashed, original_name)
-    return new_hashed
+    new_detailed = f"{candidate}_{_type_names_from_fields(canonical)}"
+    family[canonical] = (new_detailed, original_name)
+    return new_detailed
 
 
 def _build_rename_map(artifacts: list[GeneratedArtifact]) -> dict[str, str]:
@@ -381,6 +396,7 @@ def _build_rename_map(artifacts: list[GeneratedArtifact]) -> dict[str, str]:
     ]
     models = _topological_sort(models)
 
+    type_variants: dict[str, set[str]] = defaultdict(set)
     for model in models:
         graphql_type_name = model.graphql_type_name
         if graphql_type_name is None:
@@ -391,6 +407,25 @@ def _build_rename_map(artifacts: list[GeneratedArtifact]) -> dict[str, str]:
         )
         if model.name != short:
             rename[model.name] = short
+        type_variants[graphql_type_name].add(short)
+
+    reserved = {a.name for a in artifacts if a.name not in rename} | set(
+        rename.values()
+    )
+    for gql_type, variants in type_variants.items():
+        if len(variants) != 1:
+            continue
+        current = next(iter(variants))
+        if current == gql_type:
+            continue
+        if gql_type in reserved:
+            continue
+        for key in list(rename):
+            if rename[key] == current:
+                rename[key] = gql_type
+        rename[current] = gql_type
+        reserved.discard(current)
+        reserved.add(gql_type)
 
     return rename
 

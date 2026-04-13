@@ -53,8 +53,8 @@ def test_dedup_within_query_same_union_type(test_project: ProjectBuilder):
     assert test_project.generate() is True
     generated = (test_project.root / "sample_app/gql/api.py").read_text()
 
-    assert generated.count("class FruitWithNameTypename(GQLModel):") == 1
-    assert generated.count("class VegetableWithNameTypename(GQLModel):") == 1
+    assert generated.count("class Fruit(GQLModel):") == 1
+    assert generated.count("class Vegetable(GQLModel):") == 1
 
 
 def test_dedup_between_queries(test_project: ProjectBuilder):
@@ -95,9 +95,9 @@ def test_dedup_between_queries(test_project: ProjectBuilder):
     assert test_project.generate() is True
     generated = (test_project.root / "sample_app/gql/api.py").read_text()
 
-    assert generated.count("class PostWithIdTitle(GQLModel):") == 1
-    assert "feed: list[PostWithIdTitle]" in generated
-    assert "post: PostWithIdTitle | None" in generated
+    assert generated.count("class Post(GQLModel):") == 1
+    assert "feed: list[Post]" in generated
+    assert "post: Post | None" in generated
 
 
 def test_different_selection_sets_different_classes(test_project: ProjectBuilder):
@@ -190,14 +190,8 @@ def test_different_nested_selection_sets_hash_collision(test_project: ProjectBui
 
     assert "class ChildWithIdName(GQLModel):" in generated
     assert "class ChildWithEmailId(GQLModel):" in generated
-
-    parent_classes = [
-        line for line in generated.splitlines() if line.startswith("class Parent")
-    ]
-    assert len(parent_classes) == 2
-    assert parent_classes[0] != parent_classes[1]
-    for cls in parent_classes:
-        assert "_" in cls.split("(")[0]
+    assert "class ParentWithChild_ChildWithIdName(GQLModel):" in generated
+    assert "class ParentWithChild_ChildWithEmailId(GQLModel):" in generated
 
 
 async def test_dedup_pydantic_deserialization(
@@ -271,11 +265,11 @@ async def test_dedup_pydantic_deserialization(
         resolvers={"Query": {"a": resolve_a, "b": resolve_b}},
     ) as (api, queries):
         result_a = await queries.a.execute()
-        assert isinstance(result_a.a.item, api.AlphaWithIdTypenameValue)
+        assert isinstance(result_a.a.item, api.Alpha)
         assert result_a.a.item.value == "hello"
 
         result_b = await queries.b.execute()
-        assert isinstance(result_b.b.item, api.BetaWithIdScoreTypename)
+        assert isinstance(result_b.b.item, api.Beta)
         assert result_b.b.item.score == 42
 
 
@@ -320,8 +314,8 @@ def test_type_alias_references_short_names(test_project: ProjectBuilder):
     generated = (test_project.root / "sample_app/gql/api.py").read_text()
 
     assert "type SearchResultSearch = Annotated[" in generated
-    assert "PostWithIdTitleTypename" in generated
-    assert "UserWithIdNameTypename" in generated
+    assert "Post" in generated
+    assert "User" in generated
     assert "SearchResultSearchPost" not in generated
     assert "SearchResultSearchUser" not in generated
 
@@ -354,7 +348,7 @@ def test_root_models_keep_path_names(test_project: ProjectBuilder):
     generated = (test_project.root / "sample_app/gql/api.py").read_text()
 
     assert "class GetUserResult(GQLModel):" in generated
-    assert "class UserWithId(GQLModel):" in generated
+    assert "class User(GQLModel):" in generated
 
 
 def test_idempotent_generation(test_project: ProjectBuilder):
@@ -556,8 +550,8 @@ def test_field_order_does_not_affect_dedup(test_project: ProjectBuilder):
     assert test_project.generate() is True
     generated = (test_project.root / "sample_app/gql/api.py").read_text()
 
-    assert generated.count("class UserWithIdName(GQLModel):") == 1
-    assert "UserWithIdName_" not in generated
+    assert generated.count("class User(GQLModel):") == 1
+    assert "User_" not in generated
 
 
 def test_snake_case_fields_use_camel_case_in_model_name(test_project: ProjectBuilder):
@@ -586,5 +580,5 @@ def test_snake_case_fields_use_camel_case_in_model_name(test_project: ProjectBui
     assert test_project.generate() is True
     generated = (test_project.root / "sample_app/gql/api.py").read_text()
 
-    assert "TimestampedWithCreatedAtId" in generated
+    assert "Timestamped" in generated
     assert "Created_at" not in generated

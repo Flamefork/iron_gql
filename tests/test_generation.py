@@ -627,7 +627,7 @@ def test_subscription_generates_subscription_class(test_project: ProjectBuilder)
     result_fields = api.EventsResult.model_fields
     assert "events" in result_fields
 
-    events_type = api.EventWithIdMessage
+    events_type = api.Event
     assert "id" in events_type.model_fields
     assert "message" in events_type.model_fields
 
