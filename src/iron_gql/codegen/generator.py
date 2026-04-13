@@ -1,4 +1,6 @@
 import ast
+import hashlib
+import re
 import warnings
 from collections import defaultdict
 from collections.abc import Callable
@@ -56,6 +58,7 @@ class GraphQLDeprecationWarning(UserWarning):
 class GeneratedModel:
     name: str
     fields: list[str]
+    graphql_type_name: str | None = None
 
 
 @dataclass(kw_only=True, frozen=True)
@@ -254,6 +257,142 @@ def render_type(
 
 def render_pydantic_class(name: str, base: str, fields: list[str]) -> str:
     return f"class {name}({base}):\n    {indent_block('\n'.join(fields), '    ')}"
+
+
+def _extract_field_name(field_def: str) -> str:
+    return field_def.split(":", maxsplit=1)[0].strip()
+
+
+def _names_pattern(names: Iterable[str]) -> re.Pattern[str]:
+    return re.compile(
+        r"\b("
+        + "|".join(re.escape(n) for n in sorted(names, key=len, reverse=True))
+        + r")\b"
+    )
+
+
+def _apply_renames(text: str, rename: dict[str, str]) -> str:
+    if not rename:
+        return text
+    return _names_pattern(rename).sub(lambda m: rename[m.group()], text)
+
+
+def _build_dependency_graph(
+    models: list[GeneratedModel],
+) -> tuple[dict[str, GeneratedModel], dict[str, set[str]]]:
+    model_names = {m.name for m in models}
+    name_pattern = _names_pattern(model_names)
+    deps: dict[str, set[str]] = {}
+    by_name: dict[str, GeneratedModel] = {}
+    for m in models:
+        by_name[m.name] = m
+        refs: set[str] = set()
+        for f in m.fields:
+            refs.update(name_pattern.findall(f))
+        refs.discard(m.name)
+        deps[m.name] = refs
+    return by_name, deps
+
+
+def _topological_sort(models: list[GeneratedModel]) -> list[GeneratedModel]:
+    if not models:
+        return models
+    by_name, deps = _build_dependency_graph(models)
+
+    in_degree: dict[str, int] = dict.fromkeys(deps, 0)
+    for name, refs in deps.items():
+        for ref in refs:
+            if ref in in_degree:
+                in_degree[name] += 1
+
+    queue = sorted(name for name, deg in in_degree.items() if deg == 0)
+    result: list[GeneratedModel] = []
+    while queue:
+        name = queue.pop(0)
+        result.append(by_name[name])
+        for other, refs in deps.items():
+            if name in refs:
+                in_degree[other] -= 1
+                if in_degree[other] == 0:
+                    queue.append(other)
+                    queue.sort()
+
+    return result
+
+
+def _field_name_to_pascal(name: str) -> str:
+    return "".join(
+        capitalize_first(part) for part in name.strip("_").split("_") if part
+    )
+
+
+def _fields_hash(canonical: tuple[str, ...]) -> str:
+    return hashlib.md5(
+        "\n".join(canonical).encode(), usedforsecurity=False
+    ).hexdigest()[:6]
+
+
+type _ShapeFamily = dict[tuple[str, ...], tuple[str, str]]
+
+
+def _short_model_name(
+    graphql_type: str,
+    original_name: str,
+    fields: tuple[str, ...],
+    families: dict[str, _ShapeFamily],
+    rename: dict[str, str],
+) -> str:
+    field_names = sorted(_extract_field_name(f) for f in fields)
+    suffix = "".join(_field_name_to_pascal(n) for n in field_names)
+    candidate = f"{graphql_type}With{suffix}"
+    canonical = tuple(sorted(fields))
+
+    family = families.get(candidate)
+    if family is None:
+        families[candidate] = {canonical: (candidate, original_name)}
+        return candidate
+
+    existing = family.get(canonical)
+    if existing is not None:
+        return existing[0]
+
+    # Collision: same candidate, different shape.
+    # If the family has one entry sitting on the plain candidate, retroactively hash it.
+    if len(family) == 1:
+        old_canonical, (old_resolved, old_original) = next(iter(family.items()))
+        if old_resolved == candidate:
+            old_hashed = f"{candidate}_{_fields_hash(old_canonical)}"
+            family[old_canonical] = (old_hashed, old_original)
+            rename[old_original] = old_hashed
+
+    new_hashed = f"{candidate}_{_fields_hash(canonical)}"
+    family[canonical] = (new_hashed, original_name)
+    return new_hashed
+
+
+def _build_rename_map(artifacts: list[GeneratedArtifact]) -> dict[str, str]:
+    rename: dict[str, str] = {}
+    families: dict[str, _ShapeFamily] = {}
+
+    models = [
+        a
+        for a in artifacts
+        if isinstance(a, GeneratedModel) and a.graphql_type_name is not None
+    ]
+    models = _topological_sort(models)
+
+    for model in models:
+        graphql_type_name = model.graphql_type_name
+        if graphql_type_name is None:
+            continue
+        final_fields = tuple(_apply_renames(f, rename) for f in model.fields)
+        short = _short_model_name(
+            graphql_type_name, model.name, final_fields, families, rename
+        )
+        if model.name != short:
+            rename[model.name] = short
+
+    return rename
 
 
 def generate_gql_package(
@@ -616,6 +755,7 @@ class PackageRenderer:
         ctx: RenderContext,
         typename_type: str | None = None,
         require_typename_for: str | None = None,
+        graphql_type_name: str | None = None,
     ) -> list[GeneratedArtifact]:
         codegen_fields = collect_fields(
             self.schema,
@@ -698,6 +838,7 @@ class PackageRenderer:
                     f"{field}: {field_type}"
                     for field, field_type in fields_mapping.items()
                 ],
+                graphql_type_name=graphql_type_name,
             ),
         ]
 
@@ -723,6 +864,7 @@ class PackageRenderer:
                     runtime_type=named,
                     selection_set=selection_set,
                     ctx=ctx,
+                    graphql_type_name=named.name,
                 ),
                 render_type(
                     gql_type,
@@ -820,6 +962,7 @@ class PackageRenderer:
                 selection_set=selection_set,
                 ctx=ctx,
                 typename_type="str",
+                graphql_type_name=require_typename_for,
             )
             return (
                 child_models,
@@ -842,6 +985,7 @@ class PackageRenderer:
                     selection_set=selection_set,
                     ctx=ctx,
                     require_typename_for=require_typename_for,
+                    graphql_type_name=obj_type.name,
                 )
             )
             union_types.append(model_name)
@@ -862,6 +1006,7 @@ class PackageRenderer:
                     ctx=ctx,
                     typename_type=fallback_typename_literal,
                     require_typename_for=require_typename_for,
+                    graphql_type_name=require_typename_for,
                 )
             )
             union_types.append(fallback_name)
@@ -881,16 +1026,26 @@ class PackageRenderer:
         )
 
     def render_result_models(self, queries: list[Query]) -> list[str]:
-        rendered: list[str] = []
+        all_artifacts: list[GeneratedArtifact] = []
         for query in queries:
-            for item in self.render_operation_models(query):
-                match item:
-                    case GeneratedModel():
-                        rendered.append(
-                            render_pydantic_class(item.name, "GQLModel", item.fields)
-                        )
-                    case GeneratedTypeAlias():
-                        rendered.append(f"type {item.name} = {item.type_expr}")
+            all_artifacts.extend(self.render_operation_models(query))
+
+        rename = _build_rename_map(all_artifacts)
+
+        seen: set[str] = set()
+        rendered: list[str] = []
+        for item in all_artifacts:
+            match item:
+                case GeneratedModel():
+                    name = rename.get(item.name, item.name)
+                    if name in seen:
+                        continue
+                    seen.add(name)
+                    fields = [_apply_renames(f, rename) for f in item.fields]
+                    rendered.append(render_pydantic_class(name, "GQLModel", fields))
+                case GeneratedTypeAlias():
+                    expr = _apply_renames(item.type_expr, rename)
+                    rendered.append(f"type {item.name} = {expr}")
         return rendered
 
     def render_query_classes(
