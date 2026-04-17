@@ -31,7 +31,11 @@ API_CLIENT = runtime.GQLClient(
 class GQLModel(pydantic.BaseModel):
     model_config = pydantic.ConfigDict(
         populate_by_name=True,
-        alias_generator=pydantic.alias_generators.to_camel,
+        serialize_by_alias=True,
+        alias_generator=pydantic.AliasGenerator(
+            validation_alias=pydantic.alias_generators.to_camel,
+            serialization_alias=pydantic.alias_generators.to_camel,
+        ),
         extra="forbid",
         validate_default=True,
     )
@@ -74,14 +78,14 @@ class UserWithName(GQLModel):
 
 
 class PostWithAuthorIdTitleTypename(GQLModel):
-    typename__: Literal["Post"] = pydantic.Field(alias="__typename")
+    typename__: Annotated[Literal["Post"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
     id: builtins.str
     title: str
     author: UserWithName
 
 
 class UserWithIdNameRoleTypename(GQLModel):
-    typename__: Literal["User"] = pydantic.Field(alias="__typename")
+    typename__: Annotated[Literal["User"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
     id: builtins.str
     name: str
     role: Role

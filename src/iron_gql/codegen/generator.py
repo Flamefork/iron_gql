@@ -574,7 +574,11 @@ def render_client_init(
 class GQLModel(pydantic.BaseModel):
     model_config = pydantic.ConfigDict(
         populate_by_name=True,
-        alias_generator={to_camel_ref.dotted_path},
+        serialize_by_alias=True,
+        alias_generator=pydantic.AliasGenerator(
+            validation_alias={to_camel_ref.dotted_path},
+            serialization_alias={to_camel_ref.dotted_path},
+        ),
         extra="forbid",
         validate_default=True,
     )"""
@@ -889,14 +893,15 @@ class PackageRenderer:
             if is_conditional and not field_type.endswith("| None"):
                 field_type += " | None"
 
-            if py_alias and is_conditional:
+            if py_alias:
                 field_type = (
-                    f'{field_type} = pydantic.Field(alias="{py_alias}", default=None)'
+                    f"Annotated[{field_type}, "
+                    f'pydantic.Field(validation_alias="{py_alias}", '
+                    f'serialization_alias="{py_alias}")]'
                 )
-            elif py_alias:
-                field_type = f'{field_type} = pydantic.Field(alias="{py_alias}")'
-            elif is_conditional:
+            if is_conditional:
                 field_type += " = None"
+
             fields_mapping[py_name] = field_type
 
         return [
