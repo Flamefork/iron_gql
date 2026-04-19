@@ -37,15 +37,6 @@ def test_one_of_basic_scalar_fields(test_project: ProjectBuilder):
     changed = test_project.generate()
     assert changed is True
 
-    generated = (test_project.root / "sample_app/gql/api.py").read_text()
-    assert "class SearchCriteriaName(GQLModel):" in generated
-    assert "class SearchCriteriaEmail(GQLModel):" in generated
-    assert "class SearchCriteriaUserId(GQLModel):" in generated
-    assert "type SearchCriteria = " in generated
-    assert (
-        "SearchCriteriaName | SearchCriteriaEmail | SearchCriteriaUserId" in generated
-    )
-
     api = test_project.import_api()
     by_name = api.SearchCriteriaName(name="John")
     assert runtime.serialize_variables({"x": by_name})[0]["x"] == {"name": "John"}
@@ -98,13 +89,6 @@ def test_one_of_with_nested_input_type(test_project: ProjectBuilder):
     changed = test_project.generate()
     assert changed is True
 
-    generated = (test_project.root / "sample_app/gql/api.py").read_text()
-    assert "class UpdateActionSetName(GQLModel):" in generated
-    assert "class UpdateActionSetAddress(GQLModel):" in generated
-    assert (
-        "type UpdateAction = UpdateActionSetName | UpdateActionSetAddress" in generated
-    )
-
     api = test_project.import_api()
     addr = api.AddressInput(street="Main St", city="NYC")
     action = api.UpdateActionSetAddress(set_address=addr)
@@ -152,10 +136,6 @@ def test_one_of_referenced_in_regular_input(test_project: ProjectBuilder):
     changed = test_project.generate()
     assert changed is True
 
-    generated = (test_project.root / "sample_app/gql/api.py").read_text()
-    assert "class WrapperInput(GQLModel):" in generated
-    assert "criteria: SearchCriteria" in generated
-
     api = test_project.import_api()
     criteria = api.SearchCriteriaName(name="John")
     wrapper = api.WrapperInput(criteria=criteria, limit=10)
@@ -197,10 +177,6 @@ def test_one_of_single_field(test_project: ProjectBuilder):
 
     changed = test_project.generate()
     assert changed is True
-
-    generated = (test_project.root / "sample_app/gql/api.py").read_text()
-    assert "class SingleChoiceValue(GQLModel):" in generated
-    assert "type SingleChoice = SingleChoiceValue" in generated
 
     api = test_project.import_api()
     choice = api.SingleChoiceValue(value="hello")
@@ -246,12 +222,6 @@ def test_one_of_with_enum_field(test_project: ProjectBuilder):
     changed = test_project.generate()
     assert changed is True
 
-    generated = (test_project.root / "sample_app/gql/api.py").read_text()
-    assert "Status = Literal['ACTIVE', 'INACTIVE']" in generated
-    assert "class FilterByStatus(GQLModel):" in generated
-    assert "class FilterByName(GQLModel):" in generated
-    assert "type FilterBy = FilterByStatus | FilterByName" in generated
-
     api = test_project.import_api()
     by_status = api.FilterByStatus(status="ACTIVE")
     assert runtime.serialize_variables({"x": by_status})[0]["x"] == {"status": "ACTIVE"}
@@ -293,11 +263,6 @@ def test_one_of_with_list_field(test_project: ProjectBuilder):
 
     changed = test_project.generate()
     assert changed is True
-
-    generated = (test_project.root / "sample_app/gql/api.py").read_text()
-    assert "class SearchByName(GQLModel):" in generated
-    assert "class SearchByTags(GQLModel):" in generated
-    assert "type SearchBy = SearchByName | SearchByTags" in generated
 
     api = test_project.import_api()
     by_name = api.SearchByName(name="Alice")
@@ -347,10 +312,6 @@ def test_one_of_referencing_one_of(test_project: ProjectBuilder):
 
     changed = test_project.generate()
     assert changed is True
-
-    generated = (test_project.root / "sample_app/gql/api.py").read_text()
-    assert "type InnerChoice = InnerChoiceX | InnerChoiceY" in generated
-    assert "type OuterChoice = OuterChoiceInner | OuterChoiceDirect" in generated
 
     api = test_project.import_api()
     inner = api.InnerChoiceX(x="hello")

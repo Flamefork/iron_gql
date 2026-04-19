@@ -141,6 +141,66 @@ def collect_operations(
     return operation_docs
 
 
+def build_queries(
+    schema: graphql.GraphQLSchema,
+    docs: list[tuple[Statement, graphql.DocumentNode]],
+    fragments: dict[str, graphql.FragmentDefinitionNode],
+) -> list[Query]:
+    queries: list[Query] = []
+    for stmt, doc in collect_operations(docs):
+        validation_doc = make_validation_doc(doc, fragments)
+        queries.append(
+            Query(
+                stmt=stmt,
+                doc=validation_doc,
+                schema=schema,
+                fragments=collect_fragments_from_doc(validation_doc),
+                exec_source=graphql.print_ast(validation_doc),
+            )
+        )
+    return queries
+
+
+def validate_queries(queries: list[Query]) -> list[str]:
+    errors: list[str] = []
+    for query in queries:
+        validation_errors = graphql.validate(query.schema, query.doc)
+        if validation_errors:
+            errors.append(
+                f"Invalid GraphQL query in {query.stmt.location}:\n"
+                + "\n".join(str(error) for error in validation_errors)
+            )
+    return errors
+
+
+def write_debug_artifacts(
+    debug_path: Path,
+    *,
+    schema_path: Path,
+    schema_document: graphql.DocumentNode,
+    queries: list[Query],
+) -> None:
+    debug_path.mkdir(parents=True, exist_ok=True)
+    shutil.copy(schema_path, debug_path / "schema.graphql")
+    dump_strings(
+        debug_path / "queries.gql", [query.stmt.clean_text for query in queries]
+    )
+    dump_json(debug_path / "queries.json", [query.doc.to_dict() for query in queries])
+    dump_json(debug_path / "schema.json", schema_document.to_dict())
+    dump_json(
+        debug_path / "out.json",
+        [
+            {
+                "stmt": query.stmt.clean_text,
+                "location": query.stmt.location,
+                "name": query.name,
+                "variables": query.variables,
+            }
+            for query in queries
+        ],
+    )
+
+
 def collect_fragment_spreads(node: graphql.Node) -> set[str]:
     spreads: set[str] = set()
 
@@ -204,48 +264,15 @@ def parse_gql_queries(
 
     docs = parse_documents(statements)
     fragments = collect_fragments(docs)
-    operation_docs = collect_operations(docs)
-
-    queries = []
-    for stmt, doc in operation_docs:
-        validation_doc = make_validation_doc(doc, fragments)
-        exec_source = graphql.print_ast(validation_doc)
-        queries.append(
-            Query(
-                stmt=stmt,
-                doc=validation_doc,
-                schema=schema,
-                fragments=collect_fragments_from_doc(validation_doc),
-                exec_source=exec_source,
-            )
-        )
-
-    errors = []
-    for q in queries:
-        errs = graphql.validate(q.schema, q.doc)
-        if errs:
-            errors.append(
-                f"Invalid GraphQL query in {q.stmt.location}:\n"
-                + "\n".join(str(e) for e in errs)
-            )
+    queries = build_queries(schema, docs, fragments)
+    errors = validate_queries(queries)
 
     if debug_path:
-        debug_path.mkdir(parents=True, exist_ok=True)
-        shutil.copy(schema_path, debug_path / "schema.graphql")
-        dump_strings(debug_path / "queries.gql", [q.stmt.clean_text for q in queries])
-        dump_json(debug_path / "queries.json", [q.doc.to_dict() for q in queries])
-        dump_json(debug_path / "schema.json", schema_document.to_dict())
-        dump_json(
-            debug_path / "out.json",
-            [
-                {
-                    "stmt": q.stmt.clean_text,
-                    "location": q.stmt.location,
-                    "name": q.name,
-                    "variables": q.variables,
-                }
-                for q in queries
-            ],
+        write_debug_artifacts(
+            debug_path,
+            schema_path=schema_path,
+            schema_document=schema_document,
+            queries=queries,
         )
 
     return ParseResult(queries=queries, errors=errors)

@@ -53,13 +53,8 @@ class GQLOperation:
     def __init__(self):
         self.headers: dict[str, str] = {}
 
-    def _copy(self) -> Self:
-        q = self.__class__()
-        q.headers = dict(self.headers)
-        return q
-
     def with_headers(self, headers: dict[str, str]) -> Self:
-        q = self._copy()
+        q = self.__class__()
         q.headers = dict(headers)
         return q
 

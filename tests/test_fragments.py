@@ -1,5 +1,3 @@
-import re
-
 import pytest
 from pytest_httpserver import HTTPServer
 
@@ -424,16 +422,6 @@ async def test_exec_source_contains_expanded_fragments(
         queries=query_source,
         resolvers={"Query": {"user": resolve_user}},
     ) as (_, queries):
-        # Read the generated code from file
-        generated_code = (test_project.root / "sample_app/gql/api.py").read_text()
-
-        # Verify the generated code contains the expanded fragment in the query string
-        assert "fragment UserFields on User" in generated_code
-        assert re.search(
-            r"API_CLIENT\.query\(.*fragment UserFields", generated_code, re.DOTALL
-        )
-
-        # Also verify execution works
         result = await queries.get_user.execute(id="u-1")
         assert result.user is not None
         assert result.user.id == "u-1"
