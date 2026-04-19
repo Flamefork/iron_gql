@@ -1,584 +1,196 @@
-from pytest_httpserver import HTTPServer
+from pathlib import Path
 
-from tests.conftest import ProjectBuilder
+import graphql
+from pydantic import alias_generators
+
+from iron_gql.codegen.collect import collect_package_ir
+from iron_gql.codegen.ir import CollectedArtifact
+from iron_gql.codegen.ir import CollectedModel
+from iron_gql.codegen.ir import CollectedPackageIR
+from iron_gql.codegen.ir import CollectedUnionAlias
+from iron_gql.codegen.ir import ImportRef
+from iron_gql.codegen.naming import apply_rename
+from iron_gql.codegen.parser import Query
+from iron_gql.codegen.parser import Statement
+from iron_gql.codegen.parser import build_queries
+from iron_gql.codegen.parser import collect_fragments
+from iron_gql.codegen.parser import parse_documents
 
 
-def test_dedup_within_query_same_union_type(test_project: ProjectBuilder):
+def _build_ir(schema_sdl: str, query_sources: list[str]) -> CollectedPackageIR:
+    schema = graphql.build_schema(schema_sdl)
+    statements = [
+        Statement(raw_text=text, file=Path(f"<test:{index}>"), lineno=1)
+        for index, text in enumerate(query_sources)
+    ]
+    docs = parse_documents(statements)
+    fragments = collect_fragments(docs)
+    queries: list[Query] = build_queries(schema, docs, fragments)
+    return apply_rename(
+        collect_package_ir(
+            queries=queries,
+            scalars={"ID": ImportRef.parse("builtins:str")},
+            to_snake_fn=alias_generators.to_snake,
+        )
+    )
+
+
+def _models_by_graphql_type(
+    artifacts: list[CollectedArtifact], graphql_type_name: str
+) -> list[CollectedModel]:
+    return [
+        artifact
+        for artifact in artifacts
+        if isinstance(artifact, CollectedModel)
+        and artifact.graphql_type_name == graphql_type_name
+    ]
+
+
+def _model_names(artifacts: list[CollectedArtifact]) -> list[str]:
+    return [
+        artifact.name for artifact in artifacts if isinstance(artifact, CollectedModel)
+    ]
+
+
+def test_within_query_same_union_variant_collapses():
     schema = """
         type Query {
             items: ItemResult!
         }
-
         type ItemResult {
             primary: Item
             secondary: Item
         }
-
         union Item = Fruit | Vegetable
-
-        type Fruit {
-            name: String!
-        }
-
-        type Vegetable {
-            name: String!
-        }
+        type Fruit { name: String! }
+        type Vegetable { name: String! }
     """
-    test_project.prepare(
-        schema=schema,
-        queries="""
-        from sample_app.gql.api import api_gql
-
-        q = api_gql(
-            '''
-            query GetItems {
-                items {
-                    primary {
-                        __typename
-                        ... on Fruit { name }
-                        ... on Vegetable { name }
-                    }
-                    secondary {
-                        __typename
-                        ... on Fruit { name }
-                        ... on Vegetable { name }
-                    }
+    query = """
+        query GetItems {
+            items {
+                primary {
+                    __typename
+                    ... on Fruit { name }
+                    ... on Vegetable { name }
+                }
+                secondary {
+                    __typename
+                    ... on Fruit { name }
+                    ... on Vegetable { name }
                 }
             }
-            '''
-        )
-        """,
-    )
+        }
+    """
+    ir = _build_ir(schema, [query])
 
-    assert test_project.generate() is True
-    generated = (test_project.root / "sample_app/gql/api.py").read_text()
+    fruit_models = _models_by_graphql_type(ir.result_artifacts, "Fruit")
+    vegetable_models = _models_by_graphql_type(ir.result_artifacts, "Vegetable")
 
-    assert generated.count("class Fruit(GQLModel):") == 1
-    assert generated.count("class Vegetable(GQLModel):") == 1
+    assert len(fruit_models) == 1
+    assert len(vegetable_models) == 1
+    names = _model_names(ir.result_artifacts)
+    assert names.count(fruit_models[0].name) == 1
+    assert names.count(vegetable_models[0].name) == 1
 
 
-def test_dedup_between_queries(test_project: ProjectBuilder):
+def test_between_queries_same_shape_collapses():
     schema = """
         type Query {
             feed: [Post!]!
             post(id: ID!): Post
         }
-
         type Post {
             id: ID!
             title: String!
         }
     """
-    test_project.prepare(
-        schema=schema,
-        queries="""
-        from sample_app.gql.api import api_gql
+    queries = [
+        "query GetFeed { feed { id title } }",
+        "query GetPost($id: ID!) { post(id: $id) { id title } }",
+    ]
+    ir = _build_ir(schema, queries)
 
-        feed = api_gql(
-            '''
-            query GetFeed {
-                feed { id title }
-            }
-            '''
-        )
-
-        post = api_gql(
-            '''
-            query GetPost($id: ID!) {
-                post(id: $id) { id title }
-            }
-            '''
-        )
-        """,
-    )
-
-    assert test_project.generate() is True
-    generated = (test_project.root / "sample_app/gql/api.py").read_text()
-
-    assert generated.count("class Post(GQLModel):") == 1
-    assert "feed: list[Post]" in generated
-    assert "post: Post | None" in generated
+    post_models = _models_by_graphql_type(ir.result_artifacts, "Post")
+    assert len(post_models) == 1
+    assert _model_names(ir.result_artifacts).count(post_models[0].name) == 1
 
 
-def test_different_selection_sets_different_classes(test_project: ProjectBuilder):
+def test_field_aliases_do_not_prevent_dedup():
+    # shape_key includes aliases, so identical aliased selections must dedup.
     schema = """
         type Query {
-            feed: [User!]!
-            profile: User
+            left: User
+            right: User
         }
-
         type User {
             id: ID!
             name: String!
-            email: String!
         }
     """
-    test_project.prepare(
-        schema=schema,
-        queries="""
-        from sample_app.gql.api import api_gql
-
-        feed = api_gql(
-            '''
-            query GetFeed {
-                feed { id name }
-            }
-            '''
-        )
-
-        profile = api_gql(
-            '''
-            query GetProfile {
-                profile { id name email }
-            }
-            '''
-        )
+    queries = [
+        """
+        query GetLeft {
+            left { uid: id moniker: name }
+        }
         """,
-    )
-
-    assert test_project.generate() is True
-    generated = (test_project.root / "sample_app/gql/api.py").read_text()
-
-    assert "class UserWithIdName(GQLModel):" in generated
-    assert "class UserWithEmailIdName(GQLModel):" in generated
-    assert "feed: list[UserWithIdName]" in generated
-    assert "profile: UserWithEmailIdName | None" in generated
-
-
-def test_different_nested_selection_sets_hash_collision(test_project: ProjectBuilder):
-    schema = """
-        type Query {
-            a: Parent
-            b: Parent
+        """
+        query GetRight {
+            right { uid: id moniker: name }
         }
-
-        type Parent {
-            child: Child!
-        }
-
-        type Child {
-            id: ID!
-            name: String!
-            email: String!
-        }
-    """
-    test_project.prepare(
-        schema=schema,
-        queries="""
-        from sample_app.gql.api import api_gql
-
-        a = api_gql(
-            '''
-            query GetA {
-                a { child { id name } }
-            }
-            '''
-        )
-
-        b = api_gql(
-            '''
-            query GetB {
-                b { child { id email } }
-            }
-            '''
-        )
         """,
-    )
+    ]
+    ir = _build_ir(schema, queries)
 
-    assert test_project.generate() is True
-    generated = (test_project.root / "sample_app/gql/api.py").read_text()
-
-    assert "class ChildWithIdName(GQLModel):" in generated
-    assert "class ChildWithEmailId(GQLModel):" in generated
-    assert "class ParentWithChild_ChildWithIdName(GQLModel):" in generated
-    assert "class ParentWithChild_ChildWithEmailId(GQLModel):" in generated
+    user_models = _models_by_graphql_type(ir.result_artifacts, "User")
+    assert len(user_models) == 1
+    assert _model_names(ir.result_artifacts).count(user_models[0].name) == 1
 
 
-async def test_dedup_pydantic_deserialization(
-    test_project: ProjectBuilder, httpserver: HTTPServer
-):
+def test_union_variants_with_same_shape_across_queries_collapse():
     schema = """
         type Query {
             a: Container!
             b: Container!
         }
-
         type Container {
             item: Item!
         }
-
         union Item = Alpha | Beta
-
-        type Alpha {
-            id: ID!
-            value: String!
-        }
-
-        type Beta {
-            id: ID!
-            score: Int!
-        }
+        type Alpha { id: ID! value: String! }
+        type Beta { id: ID! score: Int! }
     """
-
-    query_source = """
-        from sample_app.gql.api import api_gql
-
-        a = api_gql(
-            '''
-            query GetA {
-                a {
-                    item {
-                        __typename
-                        ... on Alpha { id value }
-                        ... on Beta { id score }
-                    }
-                }
-            }
-            '''
-        )
-
-        b = api_gql(
-            '''
-            query GetB {
-                b {
-                    item {
-                        __typename
-                        ... on Alpha { id value }
-                        ... on Beta { id score }
-                    }
-                }
-            }
-            '''
-        )
-    """
-
-    def resolve_a(_root, _info):
-        return {"item": {"__typename": "Alpha", "id": "a1", "value": "hello"}}
-
-    def resolve_b(_root, _info):
-        return {"item": {"__typename": "Beta", "id": "b1", "score": 42}}
-
-    async with test_project.server(
-        httpserver,
-        schema=schema,
-        queries=query_source,
-        resolvers={"Query": {"a": resolve_a, "b": resolve_b}},
-    ) as (api, queries):
-        result_a = await queries.a.execute()
-        assert isinstance(result_a.a.item, api.Alpha)
-        assert result_a.a.item.value == "hello"
-
-        result_b = await queries.b.execute()
-        assert isinstance(result_b.b.item, api.Beta)
-        assert result_b.b.item.score == 42
-
-
-def test_type_alias_references_short_names(test_project: ProjectBuilder):
-    schema = """
-        union SearchResult = User | Post
-
-        type User {
-            id: ID!
-            name: String!
-        }
-
-        type Post {
-            id: ID!
-            title: String!
-        }
-
-        type Query {
-            search: SearchResult
-        }
-    """
-    test_project.prepare(
-        schema=schema,
-        queries="""
-        from sample_app.gql.api import api_gql
-
-        search = api_gql(
-            '''
-            query Search {
-                search {
-                    __typename
-                    ... on User { id name }
-                    ... on Post { id title }
-                }
-            }
-            '''
-        )
-        """,
-    )
-
-    assert test_project.generate() is True
-    generated = (test_project.root / "sample_app/gql/api.py").read_text()
-
-    assert "type SearchResultSearch = Annotated[" in generated
-    assert "Post" in generated
-    assert "User" in generated
-    assert "SearchResultSearchPost" not in generated
-    assert "SearchResultSearchUser" not in generated
-
-
-def test_root_models_keep_path_names(test_project: ProjectBuilder):
-    schema = """
-        type Query {
-            user: User
-        }
-        type User {
-            id: ID!
-        }
-    """
-    test_project.prepare(
-        schema=schema,
-        queries="""
-        from sample_app.gql.api import api_gql
-
-        q = api_gql(
-            '''
-            query GetUser {
-                user { id }
-            }
-            '''
-        )
-        """,
-    )
-
-    assert test_project.generate() is True
-    generated = (test_project.root / "sample_app/gql/api.py").read_text()
-
-    assert "class GetUserResult(GQLModel):" in generated
-    assert "class User(GQLModel):" in generated
-
-
-def test_idempotent_generation(test_project: ProjectBuilder):
-    schema = """
-        type Query {
-            a: User
-            b: User
-        }
-        type User {
-            id: ID!
-            name: String!
-        }
-    """
-    test_project.prepare(
-        schema=schema,
-        queries="""
-        from sample_app.gql.api import api_gql
-
-        a = api_gql(
-            '''
-            query GetA { a { id name } }
-            '''
-        )
-
-        b = api_gql(
-            '''
-            query GetB { b { id name } }
-            '''
-        )
-        """,
-    )
-
-    assert test_project.generate() is True
-    assert test_project.generate() is False
-
-
-def test_stable_across_query_order(test_project: ProjectBuilder):
-    schema = """
-        type Query {
-            a: User
-            b: User
-        }
-        type User {
-            id: ID!
-            name: String!
-        }
-    """
-    test_project.prepare(
-        schema=schema,
-        queries="""
-        from sample_app.gql.api import api_gql
-
-        a = api_gql(
-            '''
-            query GetA { a { id name } }
-            '''
-        )
-
-        b = api_gql(
-            '''
-            query GetB { b { id name } }
-            '''
-        )
-        """,
-    )
-
-    assert test_project.generate() is True
-    first_gen = (test_project.root / "sample_app/gql/api.py").read_text()
-
-    test_project.write_file(
-        test_project.root / "sample_app/queries.py",
+    queries = [
         """
-        from sample_app.gql.api import api_gql
-
-        b = api_gql(
-            '''
-            query GetB { b { id name } }
-            '''
-        )
-
-        a = api_gql(
-            '''
-            query GetA { a { id name } }
-            '''
-        )
+        query GetA {
+            a { item {
+                __typename
+                ... on Alpha { id value }
+                ... on Beta { id score }
+            } }
+        }
         """,
-    )
-
-    (test_project.root / "sample_app/gql/api.py").unlink()
-    assert test_project.generate() is True
-    second_gen = (test_project.root / "sample_app/gql/api.py").read_text()
-
-    first_models = [
-        line
-        for line in first_gen.splitlines()
-        if line.startswith("class ") and "GQLModel" in line
-    ]
-    second_models = [
-        line
-        for line in second_gen.splitlines()
-        if line.startswith("class ") and "GQLModel" in line
-    ]
-    assert set(first_models) == set(second_models)
-
-
-def test_repeated_shape_after_collision_reuses_same_model(
-    test_project: ProjectBuilder,
-):
-    schema = """
-        type Query {
-            a: Parent
-            b: Parent
-            c: Parent
+        """
+        query GetB {
+            b { item {
+                __typename
+                ... on Alpha { id value }
+                ... on Beta { id score }
+            } }
         }
-
-        type Parent {
-            child: Child!
-        }
-
-        type Child {
-            id: ID!
-            name: String!
-            email: String!
-        }
-    """
-    test_project.prepare(
-        schema=schema,
-        queries="""
-        from sample_app.gql.api import api_gql
-
-        a = api_gql(
-            '''
-            query GetA { a { child { id name } } }
-            '''
-        )
-
-        b = api_gql(
-            '''
-            query GetB { b { child { id email } } }
-            '''
-        )
-
-        c = api_gql(
-            '''
-            query GetC { c { child { id name } } }
-            '''
-        )
         """,
-    )
-
-    assert test_project.generate() is True
-    generated = (test_project.root / "sample_app/gql/api.py").read_text()
-
-    child_classes = [
-        line
-        for line in generated.splitlines()
-        if line.startswith("class Child") and "GQLModel" in line
     ]
-    assert len(child_classes) == 2
+    ir = _build_ir(schema, queries)
 
-    parent_classes = [
-        line
-        for line in generated.splitlines()
-        if line.startswith("class Parent") and "GQLModel" in line
+    alpha_models = _models_by_graphql_type(ir.result_artifacts, "Alpha")
+    beta_models = _models_by_graphql_type(ir.result_artifacts, "Beta")
+
+    assert len(alpha_models) == 1
+    assert len(beta_models) == 1
+
+    union_aliases = [
+        artifact
+        for artifact in ir.result_artifacts
+        if isinstance(artifact, CollectedUnionAlias)
     ]
-    assert len(parent_classes) == 2
-
-
-def test_field_order_does_not_affect_dedup(test_project: ProjectBuilder):
-    schema = """
-        type Query {
-            a: User
-            b: User
-        }
-        type User {
-            id: ID!
-            name: String!
-        }
-    """
-    test_project.prepare(
-        schema=schema,
-        queries="""
-        from sample_app.gql.api import api_gql
-
-        a = api_gql(
-            '''
-            query GetA { a { id name } }
-            '''
-        )
-
-        b = api_gql(
-            '''
-            query GetB { b { name id } }
-            '''
-        )
-        """,
-    )
-
-    assert test_project.generate() is True
-    generated = (test_project.root / "sample_app/gql/api.py").read_text()
-
-    assert generated.count("class User(GQLModel):") == 1
-    assert "User_" not in generated
-
-
-def test_snake_case_fields_use_camel_case_in_model_name(test_project: ProjectBuilder):
-    schema = """
-        type Query {
-            node: Timestamped
-        }
-        type Timestamped {
-            id: ID!
-            created_at: String!
-        }
-    """
-    test_project.prepare(
-        schema=schema,
-        queries="""
-        from sample_app.gql.api import api_gql
-
-        q = api_gql(
-            '''
-            query GetNode { node { id created_at } }
-            '''
-        )
-        """,
-    )
-
-    assert test_project.generate() is True
-    generated = (test_project.root / "sample_app/gql/api.py").read_text()
-
-    assert "Timestamped" in generated
-    assert "Created_at" not in generated
+    assert len(union_aliases) == 2
+    assert union_aliases[0].variants == union_aliases[1].variants

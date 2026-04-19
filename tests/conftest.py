@@ -23,7 +23,7 @@ Resolver = Callable[..., object]
 Resolvers = Mapping[str, Mapping[str, Resolver]]
 
 
-def _build_schema(
+def build_schema(
     schema: str, resolvers: Resolvers | None = None
 ) -> graphql.GraphQLSchema:
     schema_obj = graphql.build_schema(schema)
@@ -37,7 +37,7 @@ def _build_schema(
     return schema_obj
 
 
-def _setup_httpserver(httpserver: HTTPServer, schema_obj: graphql.GraphQLSchema) -> str:
+def setup_httpserver(httpserver: HTTPServer, schema_obj: graphql.GraphQLSchema) -> str:
     def graphql_handler(request):
         payload = request.get_json(silent=True) or {}
         result = graphql.graphql_sync(
@@ -127,8 +127,8 @@ class ProjectBuilder:
         queries: str,
         resolvers: Resolvers,
     ) -> AsyncIterator[tuple[ModuleType, ModuleType]]:
-        schema_obj = _build_schema(schema, resolvers)
-        base_url = _setup_httpserver(httpserver, schema_obj)
+        schema_obj = build_schema(schema, resolvers)
+        base_url = setup_httpserver(httpserver, schema_obj)
         self.prepare(schema=schema, queries=queries, base_url=base_url)
         api_module, queries_module = self.generate_and_import()
         try:

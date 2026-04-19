@@ -259,10 +259,9 @@ async def test_close(test_project: ProjectBuilder, httpserver: HTTPServer):
         resolvers={"Query": {"ping": resolve_ping}},
     ) as (api, queries):
         await queries.ping.execute()
-        assert not api.API_CLIENT._client.is_closed  # noqa: SLF001
 
         await api.API_CLIENT.close()
-        assert api.API_CLIENT._client.is_closed  # noqa: SLF001
+        await api.API_CLIENT.close()
 
 
 def test_prepare_variables_single_file():

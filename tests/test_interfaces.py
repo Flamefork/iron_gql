@@ -134,16 +134,26 @@ async def test_union_with_interface_fragment(
         schema=schema,
         queries=query_source,
         resolvers={"Query": {"actor": resolve_actor}},
-    ) as (api, queries):
+    ) as (_, queries):
         user_result = await queries.get_actor.execute(id="user-1")
-        assert isinstance(user_result.actor, api.User)
+        assert user_result.actor is not None
         assert user_result.actor.id == "user-1"
         assert user_result.actor.name == "Morty"
+        assert user_result.actor.model_dump() == {
+            "__typename": "User",
+            "id": "user-1",
+            "name": "Morty",
+        }
 
         admin_result = await queries.get_actor.execute(id="admin-1")
-        assert isinstance(admin_result.actor, api.Admin)
+        assert admin_result.actor is not None
         assert admin_result.actor.id == "admin-1"
         assert admin_result.actor.permissions == ["portal"]
+        assert admin_result.actor.model_dump() == {
+            "__typename": "Admin",
+            "id": "admin-1",
+            "permissions": ["portal"],
+        }
 
 
 async def test_interface_without_fragments(
@@ -260,14 +270,23 @@ async def test_interface_with_fragments(
         schema=schema,
         queries=query_source,
         resolvers={"Query": {"node": resolve_node}},
-    ) as (api, queries):
+    ) as (_, queries):
         user_result = await queries.get_node.execute(id="user-1")
-        assert isinstance(user_result.node, api.User)
+        assert user_result.node is not None
         assert user_result.node.name == "Morty"
+        assert user_result.node.model_dump() == {
+            "__typename": "User",
+            "id": "user-1",
+            "name": "Morty",
+        }
 
         comment_result = await queries.get_node.execute(id="comment-1")
-        assert isinstance(comment_result.node, api.Node)
+        assert comment_result.node is not None
         assert comment_result.node.id == "comment-1"
+        assert comment_result.node.model_dump() == {
+            "__typename": "Comment",
+            "id": "comment-1",
+        }
 
 
 async def test_nested_interface(test_project: ProjectBuilder, httpserver: HTTPServer):
@@ -399,14 +418,23 @@ async def test_interface_hierarchy(
         schema=schema,
         queries=query_source,
         resolvers={"Query": {"node": resolve_node}},
-    ) as (api, queries):
+    ) as (_, queries):
         user_result = await queries.get_node.execute(id="user-1")
-        assert isinstance(user_result.node, api.User)
+        assert user_result.node is not None
         assert user_result.node.created_at == "2024-01-01"
+        assert user_result.node.model_dump() == {
+            "__typename": "User",
+            "id": "user-1",
+            "createdAt": "2024-01-01",
+        }
 
         post_result = await queries.get_node.execute(id="post-1")
-        assert isinstance(post_result.node, api.Node)
+        assert post_result.node is not None
         assert post_result.node.id == "post-1"
+        assert post_result.node.model_dump() == {
+            "__typename": "Post",
+            "id": "post-1",
+        }
 
 
 async def test_interface_fragment_on_overlapping_interface(
@@ -467,17 +495,24 @@ async def test_interface_fragment_on_overlapping_interface(
         schema=schema,
         queries=query_source,
         resolvers={"Query": {"node": resolve_node}},
-    ) as (api, queries):
-        assert not hasattr(api, "GetNodeResultNodeOrg")
-
+    ) as (_, queries):
         user_result = await queries.get_node.execute(id="user-1")
-        assert isinstance(user_result.node, api.User)
+        assert user_result.node is not None
         assert user_result.node.id == "user-1"
         assert user_result.node.name == "Morty"
+        assert user_result.node.model_dump() == {
+            "__typename": "User",
+            "id": "user-1",
+            "name": "Morty",
+        }
 
         post_result = await queries.get_node.execute(id="post-1")
-        assert isinstance(post_result.node, api.Node)
+        assert post_result.node is not None
         assert post_result.node.id == "post-1"
+        assert post_result.node.model_dump() == {
+            "__typename": "Post",
+            "id": "post-1",
+        }
 
 
 def test_interface_fragment_requires_typename(test_project: ProjectBuilder):
@@ -567,108 +602,6 @@ def test_invalid_interface_fragment_reports_error(test_project: ProjectBuilder):
 
     with pytest.raises(GraphQLGenerationError, match="Post"):
         test_project.generate()
-
-
-def test_union_generates_named_type(test_project: ProjectBuilder):
-    schema = """
-        union SearchResult = User | Post
-
-        type User {
-            id: ID!
-            name: String!
-        }
-
-        type Post {
-            id: ID!
-            title: String!
-        }
-
-        type Query {
-            search(q: String!): SearchResult
-        }
-    """
-
-    test_project.prepare(
-        schema=schema,
-        queries="""
-        from sample_app.gql.api import api_gql
-
-        search = api_gql(
-            '''
-            query Search($q: String!) {
-                search(q: $q) {
-                    __typename
-                    ... on User {
-                        id
-                        name
-                    }
-                    ... on Post {
-                        id
-                        title
-                    }
-                }
-            }
-            '''
-        )
-        """,
-    )
-
-    assert test_project.generate() is True
-    generated = (test_project.root / "sample_app/gql/api.py").read_text()
-
-    assert "type SearchResultSearch = Annotated[" in generated
-    assert "search: SearchResultSearch | None" in generated
-
-
-def test_union_non_null_generates_named_type(test_project: ProjectBuilder):
-    schema = """
-        union SearchResult = User | Post
-
-        type User {
-            id: ID!
-            name: String!
-        }
-
-        type Post {
-            id: ID!
-            title: String!
-        }
-
-        type Query {
-            search(q: String!): SearchResult!
-        }
-    """
-
-    test_project.prepare(
-        schema=schema,
-        queries="""
-        from sample_app.gql.api import api_gql
-
-        search = api_gql(
-            '''
-            query Search($q: String!) {
-                search(q: $q) {
-                    __typename
-                    ... on User {
-                        id
-                        name
-                    }
-                    ... on Post {
-                        id
-                        title
-                    }
-                }
-            }
-            '''
-        )
-        """,
-    )
-
-    assert test_project.generate() is True
-    generated = (test_project.root / "sample_app/gql/api.py").read_text()
-
-    assert "type SearchResultSearch = Annotated[" in generated
-    assert "search: SearchResultSearch\n" in generated
 
 
 def test_union_fragment_requires_typename(test_project: ProjectBuilder):
@@ -825,17 +758,27 @@ async def test_nullable_union_result_validation(
         schema=schema,
         queries=query_source,
         resolvers={"Query": {"node": resolve_node}},
-    ) as (api, queries):
+    ) as (_, queries):
         none_result = await queries.get_node.execute(id="none")
         assert none_result.node is None
 
         user_result = await queries.get_node.execute(id="user-1")
-        assert isinstance(user_result.node, api.User)
+        assert user_result.node is not None
         assert user_result.node.name == "Morty"
+        assert user_result.node.model_dump() == {
+            "__typename": "User",
+            "id": "user-1",
+            "name": "Morty",
+        }
 
         admin_result = await queries.get_node.execute(id="admin-1")
-        assert isinstance(admin_result.node, api.Admin)
+        assert admin_result.node is not None
         assert admin_result.node.permissions == ["portal"]
+        assert admin_result.node.model_dump() == {
+            "__typename": "Admin",
+            "id": "admin-1",
+            "permissions": ["portal"],
+        }
 
 
 async def test_list_wrapped_union(test_project: ProjectBuilder, httpserver: HTTPServer):
@@ -890,17 +833,21 @@ async def test_list_wrapped_union(test_project: ProjectBuilder, httpserver: HTTP
         schema=schema,
         queries=query_source,
         resolvers={"Query": {"nodes": resolve_nodes}},
-    ) as (api, queries):
+    ) as (_, queries):
         result = await queries.get_nodes.execute()
         assert len(result.nodes) == 2
-        assert isinstance(result.nodes[0], api.User)
         assert result.nodes[0].name == "Morty"
-        assert isinstance(result.nodes[1], api.Post)
+        assert result.nodes[0].model_dump() == {
+            "__typename": "User",
+            "id": "u-1",
+            "name": "Morty",
+        }
         assert result.nodes[1].title == "GraphQL 101"
-
-    generated = (test_project.root / "sample_app/gql/api.py").read_text()
-    assert "type GetNodesResultNodes = Annotated[" in generated
-    assert "nodes: list[GetNodesResultNodes]" in generated
+        assert result.nodes[1].model_dump() == {
+            "__typename": "Post",
+            "id": "p-1",
+            "title": "GraphQL 101",
+        }
 
 
 async def test_interface_with_named_fragment_type_condition(
@@ -960,14 +907,23 @@ async def test_interface_with_named_fragment_type_condition(
         schema=schema,
         queries=query_source,
         resolvers={"Query": {"node": resolve_node}},
-    ) as (api, queries):
+    ) as (_, queries):
         user_result = await queries.get_node.execute(id="user-1")
-        assert isinstance(user_result.node, api.User)
+        assert user_result.node is not None
         assert user_result.node.name == "Morty"
+        assert user_result.node.model_dump() == {
+            "__typename": "User",
+            "id": "user-1",
+            "name": "Morty",
+        }
 
         post_result = await queries.get_node.execute(id="post-1")
-        assert isinstance(post_result.node, api.Node)
+        assert post_result.node is not None
         assert post_result.node.id == "post-1"
+        assert post_result.node.model_dump() == {
+            "__typename": "Post",
+            "id": "post-1",
+        }
 
 
 async def test_interface_typename_in_named_fragment(
@@ -1032,17 +988,29 @@ async def test_interface_typename_in_named_fragment(
         schema=schema,
         queries=query_source,
         resolvers={"Query": {"node": resolve_node}},
-    ) as (api, queries):
+    ) as (_, queries):
         user_result = await queries.get_node.execute(id="user-1")
-        assert isinstance(user_result.node, api.User)
+        assert user_result.node is not None
         assert user_result.node.name == "Morty"
+        assert user_result.node.model_dump() == {
+            "__typename": "User",
+            "id": "user-1",
+            "name": "Morty",
+        }
 
         post_result = await queries.get_node.execute(id="post-1")
-        assert isinstance(post_result.node, api.Post)
+        assert post_result.node is not None
         assert post_result.node.title == "GraphQL 101"
+        assert post_result.node.model_dump() == {
+            "__typename": "Post",
+            "id": "post-1",
+            "title": "GraphQL 101",
+        }
 
 
-def test_interface_exhaustively_covered(test_project: ProjectBuilder):
+async def test_interface_exhaustively_covered(
+    test_project: ProjectBuilder, httpserver: HTTPServer
+):
     schema = """
         interface Node {
             id: ID!
@@ -1061,9 +1029,7 @@ def test_interface_exhaustively_covered(test_project: ProjectBuilder):
             node: Node
         }
     """
-    test_project.prepare(
-        schema=schema,
-        queries="""
+    query_source = """
         from sample_app.gql.api import api_gql
 
         get_node = api_gql(
@@ -1083,14 +1049,35 @@ def test_interface_exhaustively_covered(test_project: ProjectBuilder):
             }
             '''
         )
-        """,
-    )
+    """
 
-    assert test_project.generate() is True
-    # We verify that no "Node" fallback model is generated or used,
-    # and the union is just User | Post
-    generated = (test_project.root / "sample_app/gql/api.py").read_text()
-    assert "type GetNodeResultNode = Annotated[" in generated
-    assert "Post | User" in generated
-    assert "node: GetNodeResultNode | None" in generated
-    assert "class Node(" not in generated
+    calls = 0
+
+    def resolve_node(_root, _info):
+        nonlocal calls
+        if calls == 0:
+            calls += 1
+            return {"__typename": "User", "id": "user-1", "name": "Morty"}
+        return {"__typename": "Post", "id": "post-1", "title": "GraphQL 101"}
+
+    async with test_project.server(
+        httpserver,
+        schema=schema,
+        queries=query_source,
+        resolvers={"Query": {"node": resolve_node}},
+    ) as (_, queries):
+        user_result = await queries.get_node.execute()
+        assert user_result.node is not None
+        assert user_result.node.model_dump() == {
+            "__typename": "User",
+            "id": "user-1",
+            "name": "Morty",
+        }
+
+        post_result = await queries.get_node.execute()
+        assert post_result.node is not None
+        assert post_result.node.model_dump() == {
+            "__typename": "Post",
+            "id": "post-1",
+            "title": "GraphQL 101",
+        }

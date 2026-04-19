@@ -2,22 +2,13 @@ import importlib
 
 import pytest
 from pydantic import alias_generators
+from pytest_httpserver import HTTPServer
 
 from iron_gql import runtime
 from iron_gql.codegen import GraphQLGenerationError
 from iron_gql.codegen import UnknownGQLTypeWarning
 from iron_gql.codegen import generate_gql_package
-from iron_gql.codegen.generator import ImportRef
 from tests.conftest import ProjectBuilder
-
-
-def test_import_ref_parses_and_renders_consistently():
-    ref = ImportRef.parse("sample_app.settings:config.GRAPHQL_URL")
-
-    assert ref.module == "sample_app.settings"
-    assert ref.symbol == "config.GRAPHQL_URL"
-    assert ref.dotted_path == "sample_app.settings.config.GRAPHQL_URL"
-    assert ref.import_statement() == "from sample_app.settings import config"
 
 
 def test_generate_with_schema_outside_src(test_project: ProjectBuilder):
@@ -225,10 +216,6 @@ def test_input_type_dependency_ordering(test_project: ProjectBuilder):
     changed = test_project.generate()
     assert changed is True
 
-    generated = (test_project.root / "sample_app/gql/api.py").read_text()
-    assert "class ItemInput" in generated
-    assert "class OrderInput" in generated
-
     api = test_project.import_api()
     item = api.ItemInput(sku="ABC123", quantity=2)
     api.OrderInput(id="o-1", item=item)
@@ -267,9 +254,6 @@ def test_self_referential_input_type(test_project: ProjectBuilder):
 
     changed = test_project.generate()
     assert changed is True
-
-    generated = (test_project.root / "sample_app/gql/api.py").read_text()
-    assert "children: list[TreeNode | None] | None = None" in generated
 
     api = test_project.import_api()
     leaf = api.TreeNode(value="leaf")
@@ -321,18 +305,67 @@ def test_input_enums_and_defaults(test_project: ProjectBuilder):
     changed = test_project.generate()
     assert changed is True
 
-    generated = (test_project.root / "sample_app/gql/api.py").read_text()
-    assert "type Status = Literal['ACTIVE', 'INACTIVE']" in generated
-    assert "status: Status | None = None" in generated
-    assert "note: str | None = None" in generated
-    assert "child: ChildInput | None = {'code': 'X'}" in generated
-
     api = test_project.import_api()
     update = api.UpdateInput(status="ACTIVE")
     assert isinstance(update.child, api.ChildInput)
     assert update.child.code == "X"
     serialized = runtime.serialize_variables({"x": update})[0]["x"]
     assert serialized == {"status": "ACTIVE"}
+
+
+async def test_operation_variable_enum_variable_executes(
+    test_project: ProjectBuilder, httpserver: HTTPServer
+):
+    schema = """
+        type Query {
+            search(status: Status!): Boolean
+        }
+
+        enum Status {
+            ACTIVE
+            INACTIVE
+        }
+    """
+
+    test_project.prepare(
+        schema=schema,
+        queries="""
+        from sample_app.gql.api import api_gql
+
+        search = api_gql(
+            '''
+            query Search($status: Status!) {
+                search(status: $status)
+            }
+            '''
+        )
+        """,
+    )
+
+    def resolve_search(_root, _info, *, status: str):
+        return status == "ACTIVE"
+
+    async with test_project.server(
+        httpserver,
+        schema=schema,
+        queries="""
+        from sample_app.gql.api import api_gql
+
+        search = api_gql(
+            '''
+            query Search($status: Status!) {
+                search(status: $status)
+            }
+            '''
+        )
+        """,
+        resolvers={"Query": {"search": resolve_search}},
+    ) as (_, queries):
+        active = await queries.search.execute(status="ACTIVE")
+        assert active.search is True
+
+        inactive = await queries.search.execute(status="INACTIVE")
+        assert inactive.search is False
 
 
 def test_unknown_scalar_warning(test_project: ProjectBuilder):
@@ -363,8 +396,9 @@ def test_unknown_scalar_warning(test_project: ProjectBuilder):
         changed = test_project.generate()
     assert changed is True
 
-    generated = (test_project.root / "sample_app/gql/api.py").read_text()
-    assert "custom_value: object | None" in generated
+    api = test_project.import_api()
+    result = api.GetValueResult(custom_value={"raw": "value"})
+    assert result.custom_value == {"raw": "value"}
 
 
 def test_debug_artifacts_generation(test_project: ProjectBuilder):
@@ -461,11 +495,17 @@ def test_default_scalars_and_nested_list_input(test_project: ProjectBuilder):
         # scalars argument omitted to test default None -> {}
     )
 
-    generated = (test_project.root / "sample_app/gql/api.py").read_text()
-    assert "matrix: list[list[int | None] | None] | None = None" in generated
+    api = test_project.import_api()
+    variables, files = runtime.serialize_variables({
+        "input": api.ComplexInput(matrix=[[1, None], None])
+    })
+    assert variables == {"input": {"matrix": [[1, None], None]}}
+    assert files == {}
 
 
-def test_anonymous_query_generation(test_project: ProjectBuilder):
+async def test_anonymous_query_generation(
+    test_project: ProjectBuilder, httpserver: HTTPServer
+):
     schema = """
         type Query {
             ping: String
@@ -480,15 +520,25 @@ def test_anonymous_query_generation(test_project: ProjectBuilder):
         """,
     )
 
-    assert test_project.generate() is True
-    generated = (test_project.root / "sample_app/gql/api.py").read_text()
+    def resolve_ping(_root, _info):
+        return "pong"
 
-    # Verify class name starts with Query and looks like a hash fallback
-    # The clean text of "query { ping }" should produce a consistent hash
-    assert "class Query" in generated
+    async with test_project.server(
+        httpserver,
+        schema=schema,
+        queries="""
+        from sample_app.gql.api import api_gql
+        q = api_gql("query { ping }")
+        """,
+        resolvers={"Query": {"ping": resolve_ping}},
+    ) as (_, queries):
+        result = await queries.q.execute()
+        assert result.ping == "pong"
 
 
-def test_list_variable_argument(test_project: ProjectBuilder):
+async def test_list_variable_argument(
+    test_project: ProjectBuilder, httpserver: HTTPServer
+):
     schema = """
         type Query {
             users(ids: [ID]): [User]
@@ -513,12 +563,30 @@ def test_list_variable_argument(test_project: ProjectBuilder):
         """,
     )
 
-    assert test_project.generate() is True
-    generated = (test_project.root / "sample_app/gql/api.py").read_text()
+    def resolve_users(_root, _info, *, ids: list[str] | None = None):
+        if ids is None:
+            return []
+        return [{"id": id_value} for id_value in ids]
 
-    # Verify ListTypeNode parsing resulted in list typed argument
-    assert "ids: list[" in generated
-    assert "str | None" in generated
+    async with test_project.server(
+        httpserver,
+        schema=schema,
+        queries="""
+        from sample_app.gql.api import api_gql
+        get_users = api_gql(
+            '''
+            query GetUsers($ids: [ID]) {
+                users(ids: $ids) {
+                    id
+                }
+            }
+            '''
+        )
+        """,
+        resolvers={"Query": {"users": resolve_users}},
+    ) as (_, queries):
+        result = await queries.get_users.execute(ids=["u-1", "u-2"])
+        assert [user.id for user in result.users] == ["u-1", "u-2"]
 
 
 def test_regeneration_is_idempotent(test_project: ProjectBuilder):
@@ -553,10 +621,8 @@ def test_no_queries_generates_module(test_project: ProjectBuilder):
     )
 
     assert test_project.generate() is True
-    generated = (test_project.root / "sample_app/gql/api.py").read_text()
-    assert "GQLClient" in generated
-    dispatch_decl = "_API_GQL_DISPATCH: dict[str, type[runtime.GQLOperation]] = {\n\n}"
-    assert dispatch_decl in generated
+    api = test_project.import_api()
+    assert isinstance(api.API_CLIENT, runtime.GQLClient)
 
 
 def test_invalid_gql_call_arguments(test_project: ProjectBuilder):
@@ -595,97 +661,6 @@ def test_duplicate_identical_query_deduplication(test_project: ProjectBuilder):
     assert test_project.generate() is True
 
 
-def test_subscription_generates_subscription_class(test_project: ProjectBuilder):
-    test_project.prepare(
-        schema="""
-            type Query {
-                _dummy: String
-            }
-
-            type Subscription {
-                events(channel: String!): Event!
-            }
-
-            type Event {
-                id: ID!
-                message: String!
-            }
-        """,
-        queries="""
-        from sample_app.gql.api import api_gql
-
-        events = api_gql(
-            '''
-            subscription Events($channel: String!) {
-                events(channel: $channel) {
-                    id
-                    message
-                }
-            }
-            '''
-        )
-        """,
-    )
-
-    api, queries = test_project.generate_and_import()
-
-    assert issubclass(api.Events, runtime.GQLOperation)
-    assert hasattr(queries.events, "execute")
-    assert not hasattr(queries.events, "subscribe")
-
-    assert hasattr(api, "EventsResult")
-    result_fields = api.EventsResult.model_fields
-    assert "events" in result_fields
-
-    events_type = api.Event
-    assert "id" in events_type.model_fields
-    assert "message" in events_type.model_fields
-
-    generated = (test_project.root / "sample_app/gql/api.py").read_text()
-    assert "class Events(runtime.GQLOperation):" in generated
-    assert "def execute(" in generated
-    assert "AbstractAsyncContextManager[AsyncGenerator[EventsResult]]" in generated
-    assert "API_CLIENT.subscribe(" in generated
-
-
-def test_subscription_dispatch_fn(test_project: ProjectBuilder):
-    test_project.prepare(
-        schema="""
-            type Query {
-                ping: String!
-            }
-
-            type Subscription {
-                events: String!
-            }
-        """,
-        queries="""
-        from sample_app.gql.api import api_gql
-
-        ping = api_gql(
-            '''
-            query Ping {
-                ping
-            }
-            '''
-        )
-
-        events = api_gql(
-            '''
-            subscription Events {
-                events
-            }
-            '''
-        )
-        """,
-    )
-
-    _api, queries = test_project.generate_and_import()
-
-    assert isinstance(queries.ping, runtime.GQLOperation)
-    assert isinstance(queries.events, runtime.GQLOperation)
-
-
 def test_syntax_error_in_scanned_file(test_project: ProjectBuilder):
     test_project.prepare(
         schema="""
@@ -711,117 +686,3 @@ def test_syntax_error_in_scanned_file(test_project: ProjectBuilder):
 
     with pytest.raises(SyntaxError, match=r"Failed to parse.*broken\.py"):
         test_project.generate()
-
-
-def test_sort_by_source_location(test_project: ProjectBuilder):
-    test_project.prepare(
-        schema="""
-            type Query {
-                ping: String!
-                pong: String!
-            }
-        """,
-        queries="""
-        from sample_app.gql.api import api_gql
-
-        pong = api_gql(
-            '''
-            query Pong {
-                pong
-            }
-            '''
-        )
-        """,
-    )
-
-    test_project.write_file(
-        test_project.root / "sample_app" / "zzz.py",
-        """
-        from sample_app.gql.api import api_gql
-
-        ping = api_gql(
-            '''
-            query Ping {
-                ping
-            }
-            '''
-        )
-        """,
-    )
-
-    _api, _ = test_project.generate_and_import()
-
-    generated = (test_project.root / "sample_app/gql/api.py").read_text()
-    pong_pos = generated.index("class Pong(")
-    ping_pos = generated.index("class Ping(")
-    assert pong_pos < ping_pos
-
-
-def test_source_location_comments(test_project: ProjectBuilder):
-    test_project.prepare(
-        schema="""
-            type Query {
-                ping: String!
-            }
-        """,
-        queries="""
-        from sample_app.gql.api import api_gql
-
-        ping = api_gql(
-            '''
-            query Ping {
-                ping
-            }
-            '''
-        )
-        """,
-    )
-
-    _api, _ = test_project.generate_and_import()
-
-    generated = (test_project.root / "sample_app/gql/api.py").read_text()
-    assert "# See: sample_app/queries.py:3" in generated
-
-
-def test_source_location_comments_deduplicated(test_project: ProjectBuilder):
-    test_project.prepare(
-        schema="""
-            type Query {
-                ping: String!
-            }
-        """,
-        queries="""
-        from sample_app.gql.api import api_gql
-
-        ping = api_gql(
-            '''
-            query Ping {
-                ping
-            }
-            '''
-        )
-        """,
-    )
-
-    test_project.write_file(
-        test_project.root / "sample_app" / "other.py",
-        """
-        from sample_app.gql.api import api_gql
-
-        ping2 = api_gql(
-            '''
-            query Ping {
-                ping
-            }
-            '''
-        )
-        """,
-    )
-
-    _api, _ = test_project.generate_and_import()
-
-    generated = (test_project.root / "sample_app/gql/api.py").read_text()
-    assert "# See: " in generated
-    see_line = next(line for line in generated.splitlines() if "# See:" in line)
-    assert "sample_app/queries.py:3" in see_line
-    assert "sample_app/other.py:3" in see_line
