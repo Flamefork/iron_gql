@@ -1,0 +1,26 @@
+interface Child {
+    id: ID!
+}
+
+interface Node {
+    id: ID!
+    child: Child
+}
+
+type User implements Node {
+    id: ID!
+    child: Child
+}
+
+type Post implements Node {
+    id: ID!
+    child: Child
+}
+
+type Comment implements Child {
+    id: ID!
+}
+
+type Query {
+    node(id: ID!): Node
+}

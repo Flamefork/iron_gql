@@ -1,0 +1,19 @@
+interface Node {
+    id: ID!
+}
+
+type User implements Node {
+    id: ID!
+    name: String!
+}
+
+type Admin implements Node {
+    id: ID!
+    permissions: [String!]!
+}
+
+union Actor = User | Admin
+
+type Query {
+    actor(id: ID!): Actor
+}

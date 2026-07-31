@@ -1,0 +1,16 @@
+type Query {
+    ping: Boolean
+}
+
+type Mutation {
+    updateUser(input: UpdateUserInput!): Boolean
+}
+
+input UpdateUserInput {
+    id: ID!
+    address: AddressInput
+}
+
+input AddressInput {
+    street: String!
+}

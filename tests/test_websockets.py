@@ -1,7 +1,10 @@
 import asyncio
 import json
+from collections.abc import Awaitable
+from collections.abc import Callable
 from collections.abc import MutableMapping
-from typing import Any
+from dataclasses import dataclass
+from dataclasses import field
 from urllib.parse import parse_qs
 
 import pydantic
@@ -9,22 +12,87 @@ import pytest
 
 from iron_gql import GraphQLResponseError
 from iron_gql import websockets
+from iron_gql.runtime import ASGIApp
 from iron_gql.runtime import GQLClient
 from iron_gql.runtime import GQLOperation
-from tests.conftest import ProjectBuilder
+from tests.conftest import generated_package
+from tests.conftest import use_client
+
+generated_package(
+    "websockets_codegen",
+    schema="""
+    type Query {
+        _dummy: String
+    }
+
+    type Subscription {
+        events(channel: String!): Event!
+    }
+
+    type Event {
+        id: ID!
+        message: String!
+    }
+    """,
+    queries='''
+    from tests.generated.websockets_codegen.gql.api import api_gql
+
+    events = api_gql(
+        """
+        subscription Events($channel: String!) {
+            events(channel: $channel) {
+                id
+                message
+            }
+        }
+        """
+    )
+    ''',
+)
+
+from tests.generated.websockets_codegen import queries as codegen_queries
+
+type _Event = MutableMapping[str, object]
+type _Receive = Callable[[], Awaitable[_Event]]
+type _Send = Callable[[_Event], Awaitable[None]]
+
+_JSON_OBJECT = pydantic.TypeAdapter(dict[str, object])
+_HEADER_PAIRS = pydantic.TypeAdapter(list[tuple[bytes, bytes]])
+
+
+async def _receive_json(receive: _Receive) -> dict[str, object]:
+    text = (await receive())["text"]
+    assert isinstance(text, str)
+    return _JSON_OBJECT.validate_json(text)
+
+
+def _decode_headers(scope: MutableMapping[str, object]) -> list[tuple[str, str]]:
+    return [
+        (key.decode(), value.decode())
+        for key, value in _HEADER_PAIRS.validate_python(scope["headers"])
+    ]
+
+
+@dataclass
+class _Captured:
+    scope_raw_headers: list[tuple[str, str]] = field(default_factory=list)
+    scope_headers: dict[str, str] = field(default_factory=dict)
+    scope_query_string: str = ""
+    subscribe: dict[str, object] | None = None
+    client_responses: list[dict[str, object]] = field(default_factory=list)
 
 
 def _make_ws_app(  # noqa: C901
-    messages: list[dict[str, Any]],
+    messages: list[dict[str, object]],
     *,
-    pre_ack_messages: list[dict[str, Any]] | None = None,
+    pre_ack_messages: list[dict[str, object]] | None = None,
     ack_response: dict[str, str] | None = None,
-    captured: dict[str, Any] | None = None,
-) -> Any:
+    captured: _Captured | None = None,
+) -> ASGIApp:
     async def app(  # noqa: C901
-        scope: MutableMapping[str, Any],
-        receive: Any,
-        send: Any,
+        scope: MutableMapping[str, object],
+        receive: _Receive,
+        send: _Send,
     ) -> None:
         if scope["type"] == "http":
             await send({
@@ -37,13 +105,14 @@ def _make_ws_app(  # noqa: C901
 
         assert scope["type"] == "websocket"
         if captured is not None:
-            scope_headers = [
-                (k.decode(), v.decode()) for k, v in scope.get("headers", [])
-            ]
-            captured["scope_raw_headers"] = scope_headers
-            captured["scope_headers"] = dict(scope_headers)
-            captured["scope_query_string"] = scope.get("query_string", b"").decode()
-        subprotocols = scope.get("subprotocols", [])
+            scope_headers = _decode_headers(scope)
+            captured.scope_raw_headers = scope_headers
+            captured.scope_headers = dict(scope_headers)
+            query_string = scope["query_string"]
+            assert isinstance(query_string, bytes)
+            captured.scope_query_string = query_string.decode()
+        subprotocols = scope["subprotocols"]
+        assert isinstance(subprotocols, list)
         connect_event = await receive()
         assert connect_event["type"] == "websocket.connect"
         await send({
@@ -53,7 +122,7 @@ def _make_ws_app(  # noqa: C901
             else None,
         })
 
-        init_msg = json.loads((await receive())["text"])
+        init_msg = await _receive_json(receive)
         assert init_msg["type"] == "connection_init"
         for msg in pre_ack_messages or []:
             await send({
@@ -61,24 +130,24 @@ def _make_ws_app(  # noqa: C901
                 "text": json.dumps(msg),
             })
             if msg.get("type") == "ping":
-                pong_msg = json.loads((await receive())["text"])
+                pong_msg = await _receive_json(receive)
                 if captured is not None:
-                    captured.setdefault("client_responses", []).append(pong_msg)
+                    captured.client_responses.append(pong_msg)
         ack = ack_response or {"type": "connection_ack"}
         await send({
             "type": "websocket.send",
             "text": json.dumps(ack),
         })
 
-        if ack.get("type") != "connection_ack":
+        if ack["type"] != "connection_ack":
             await receive()
             return
 
-        subscribe_msg = json.loads((await receive())["text"])
+        subscribe_msg = await _receive_json(receive)
         assert subscribe_msg["type"] == "subscribe"
         sub_id = subscribe_msg["id"]
         if captured is not None:
-            captured["subscribe"] = subscribe_msg
+            captured.subscribe = subscribe_msg
 
         for msg in messages:
             if msg.get("type") == "ping":
@@ -86,9 +155,9 @@ def _make_ws_app(  # noqa: C901
                     "type": "websocket.send",
                     "text": json.dumps(msg),
                 })
-                pong_msg = json.loads((await receive())["text"])
+                pong_msg = await _receive_json(receive)
                 if captured is not None:
-                    captured.setdefault("client_responses", []).append(pong_msg)
+                    captured.client_responses.append(pong_msg)
             elif msg.get("type") == "pong":
                 await send({
                     "type": "websocket.send",
@@ -106,14 +175,14 @@ def _make_ws_app(  # noqa: C901
 
 
 def _make_ws_disconnect_app(
-    messages_before_close: list[dict[str, Any]],
+    messages_before_close: list[dict[str, object]],
     close_code: int,
     close_reason: str = "",
-) -> Any:
+) -> ASGIApp:
     async def app(
-        scope: MutableMapping[str, Any],
-        receive: Any,
-        send: Any,
+        scope: MutableMapping[str, object],
+        receive: _Receive,
+        send: _Send,
     ) -> None:
         if scope["type"] == "http":
             await send({
@@ -125,7 +194,8 @@ def _make_ws_disconnect_app(
             return
 
         assert scope["type"] == "websocket"
-        subprotocols = scope.get("subprotocols", [])
+        subprotocols = scope["subprotocols"]
+        assert isinstance(subprotocols, list)
         connect_event = await receive()
         assert connect_event["type"] == "websocket.connect"
         await send({
@@ -134,13 +204,13 @@ def _make_ws_disconnect_app(
             if "graphql-transport-ws" in subprotocols
             else None,
         })
-        init_msg = json.loads((await receive())["text"])
+        init_msg = await _receive_json(receive)
         assert init_msg["type"] == "connection_init"
         await send({
             "type": "websocket.send",
             "text": json.dumps({"type": "connection_ack"}),
         })
-        subscribe_msg = json.loads((await receive())["text"])
+        subscribe_msg = await _receive_json(receive)
         assert subscribe_msg["type"] == "subscribe"
         sub_id = subscribe_msg["id"]
 
@@ -244,8 +314,8 @@ def test_gql_operation_with_headers():
     assert op.headers == {}
 
 
-async def test_subscribe_codegen_asgi(test_project: ProjectBuilder):
-    messages = [
+async def test_subscribe_codegen_asgi(monkeypatch: pytest.MonkeyPatch):
+    messages: list[dict[str, object]] = [
         {
             "type": "next",
             "payload": {"data": {"events": {"id": "1", "message": "hello"}}},
@@ -257,51 +327,22 @@ async def test_subscribe_codegen_asgi(test_project: ProjectBuilder):
         {"type": "complete"},
     ]
 
-    test_project.prepare(
-        schema="""
-            type Query {
-                _dummy: String
-            }
-
-            type Subscription {
-                events(channel: String!): Event!
-            }
-
-            type Event {
-                id: ID!
-                message: String!
-            }
-        """,
-        queries="""
-        from sample_app.gql.api import api_gql
-
-        events = api_gql(
-            '''
-            subscription Events($channel: String!) {
-                events(channel: $channel) {
-                    id
-                    message
-                }
-            }
-            '''
-        )
-        """,
-    )
-
-    captured: dict[str, Any] = {}
+    captured = _Captured()
     app = _make_ws_app(messages, captured=captured)
 
-    api_module, queries_module = test_project.generate_and_import()
-    api_module.API_CLIENT = GQLClient(  # pyright: ignore[reportAttributeAccessIssue]
-        base_url="http://testserver/graphql", target_app=app
-    )
-    try:
-        async with queries_module.events.execute(channel="test") as stream:
+    async with use_client(
+        monkeypatch,
+        "websockets_codegen",
+        "http://testserver/graphql",
+        target_app=app,
+    ):
+        async with codegen_queries.events.execute(channel="test") as stream:
             results = [(item.events.id, item.events.message) async for item in stream]
         assert results == [("1", "hello"), ("2", "world")]
-        assert captured["subscribe"]["payload"]["variables"] == {"channel": "test"}
-    finally:
-        await api_module.API_CLIENT.close()
+        assert captured.subscribe is not None
+        payload = captured.subscribe["payload"]
+        assert isinstance(payload, dict)
+        assert payload["variables"] == {"channel": "test"}
 
 
 async def test_subscribe_connection_rejected():
@@ -371,7 +412,7 @@ async def test_subscribe_unexpected_message_type():
 
 
 async def test_subscribe_with_headers_propagation():
-    captured: dict[str, Any] = {}
+    captured = _Captured()
     app = _make_ws_app(
         [{"type": "complete"}],
         captured=captured,
@@ -391,14 +432,14 @@ async def test_subscribe_with_headers_propagation():
         ) as stream:
             async for _ in stream:
                 pass
-        assert captured["scope_headers"]["authorization"] == "Bearer token"
-        assert captured["scope_headers"]["x-base"] == "base-value"
+        assert captured.scope_headers["authorization"] == "Bearer token"
+        assert captured.scope_headers["x-base"] == "base-value"
     finally:
         await client.close()
 
 
 async def test_subscribe_ping_pong():
-    captured: dict[str, Any] = {}
+    captured = _Captured()
     app = _make_ws_app(
         [
             {"type": "next", "payload": {"data": {"counter": 1}}},
@@ -417,13 +458,13 @@ async def test_subscribe_ping_pong():
         ) as stream:
             results = [item.counter async for item in stream]
         assert results == [1, 2, 3]
-        assert captured["client_responses"] == [{"type": "pong"}]
+        assert captured.client_responses == [{"type": "pong"}]
     finally:
         await client.close()
 
 
 async def test_subscribe_ping_before_connection_ack():
-    captured: dict[str, Any] = {}
+    captured = _Captured()
     app = _make_ws_app(
         [
             {"type": "next", "payload": {"data": {"counter": 1}}},
@@ -440,13 +481,13 @@ async def test_subscribe_ping_before_connection_ack():
         ) as stream:
             results = [item.counter async for item in stream]
         assert results == [1]
-        assert captured["client_responses"] == [{"type": "pong"}]
+        assert captured.client_responses == [{"type": "pong"}]
     finally:
         await client.close()
 
 
 async def test_subscribe_with_headers_override_case_insensitive():
-    captured: dict[str, Any] = {}
+    captured = _Captured()
     app = _make_ws_app([{"type": "complete"}], captured=captured)
 
     client = GQLClient(
@@ -464,9 +505,7 @@ async def test_subscribe_with_headers_override_case_insensitive():
             async for _ in stream:
                 pass
         authorization_headers = [
-            value
-            for key, value in captured["scope_raw_headers"]
-            if key == "authorization"
+            value for key, value in captured.scope_raw_headers if key == "authorization"
         ]
         assert authorization_headers == ["Bearer override-token"]
     finally:
@@ -474,12 +513,12 @@ async def test_subscribe_with_headers_override_case_insensitive():
 
 
 async def test_subscribe_carries_http_cookies():
-    captured: dict[str, Any] = {}
+    captured = _Captured()
 
     async def app(
-        scope: MutableMapping[str, Any],
-        receive: Any,
-        send: Any,
+        scope: MutableMapping[str, object],
+        receive: _Receive,
+        send: _Send,
     ) -> None:
         if scope["type"] == "http":
             request = await receive()
@@ -499,9 +538,9 @@ async def test_subscribe_carries_http_cookies():
             return
 
         assert scope["type"] == "websocket"
-        scope_headers = [(k.decode(), v.decode()) for k, v in scope.get("headers", [])]
-        captured["scope_headers"] = dict(scope_headers)
-        subprotocols = scope.get("subprotocols", [])
+        captured.scope_headers = dict(_decode_headers(scope))
+        subprotocols = scope["subprotocols"]
+        assert isinstance(subprotocols, list)
         connect_event = await receive()
         assert connect_event["type"] == "websocket.connect"
         await send({
@@ -510,13 +549,13 @@ async def test_subscribe_carries_http_cookies():
             if "graphql-transport-ws" in subprotocols
             else None,
         })
-        init_msg = json.loads((await receive())["text"])
+        init_msg = await _receive_json(receive)
         assert init_msg["type"] == "connection_init"
         await send({
             "type": "websocket.send",
             "text": json.dumps({"type": "connection_ack"}),
         })
-        subscribe_msg = json.loads((await receive())["text"])
+        subscribe_msg = await _receive_json(receive)
         assert subscribe_msg["type"] == "subscribe"
         await send({
             "type": "websocket.send",
@@ -537,16 +576,16 @@ async def test_subscribe_carries_http_cookies():
             async for _ in stream:
                 pass
 
-        assert "session=abc" in captured["scope_headers"]["cookie"]
+        assert "session=abc" in captured.scope_headers["cookie"]
     finally:
         await client.close()
 
 
 async def test_subscribe_disconnect_before_connection_ack():
     async def app(
-        scope: MutableMapping[str, Any],
-        receive: Any,
-        send: Any,
+        scope: MutableMapping[str, object],
+        receive: _Receive,
+        send: _Send,
     ) -> None:
         if scope["type"] == "http":
             await send({
@@ -558,7 +597,8 @@ async def test_subscribe_disconnect_before_connection_ack():
             return
 
         assert scope["type"] == "websocket"
-        subprotocols = scope.get("subprotocols", [])
+        subprotocols = scope["subprotocols"]
+        assert isinstance(subprotocols, list)
         connect_event = await receive()
         assert connect_event["type"] == "websocket.connect"
         await send({
@@ -567,7 +607,7 @@ async def test_subscribe_disconnect_before_connection_ack():
             if "graphql-transport-ws" in subprotocols
             else None,
         })
-        init_msg = json.loads((await receive())["text"])
+        init_msg = await _receive_json(receive)
         assert init_msg["type"] == "connection_init"
         await send({"type": "websocket.close", "code": 4401, "reason": "Unauthorized"})
 
@@ -593,9 +633,9 @@ async def test_subscribe_connection_ack_timeout(monkeypatch: pytest.MonkeyPatch)
     monkeypatch.setattr(websockets, "_WS_CONNECTION_ACK_TIMEOUT_SECONDS", 0.01)
 
     async def app(
-        scope: MutableMapping[str, Any],
-        receive: Any,
-        send: Any,
+        scope: MutableMapping[str, object],
+        receive: _Receive,
+        send: _Send,
     ) -> None:
         if scope["type"] == "http":
             await send({
@@ -607,7 +647,8 @@ async def test_subscribe_connection_ack_timeout(monkeypatch: pytest.MonkeyPatch)
             return
 
         assert scope["type"] == "websocket"
-        subprotocols = scope.get("subprotocols", [])
+        subprotocols = scope["subprotocols"]
+        assert isinstance(subprotocols, list)
         connect_event = await receive()
         assert connect_event["type"] == "websocket.connect"
         await send({
@@ -616,7 +657,7 @@ async def test_subscribe_connection_ack_timeout(monkeypatch: pytest.MonkeyPatch)
             if "graphql-transport-ws" in subprotocols
             else None,
         })
-        init_msg = json.loads((await receive())["text"])
+        init_msg = await _receive_json(receive)
         assert init_msg["type"] == "connection_init"
         await asyncio.sleep(0.1)
 
@@ -639,7 +680,7 @@ async def test_subscribe_connection_ack_timeout(monkeypatch: pytest.MonkeyPatch)
 
 
 async def test_subscribe_url_scheme_https_to_wss():
-    captured: dict[str, Any] = {}
+    captured = _Captured()
     app = _make_ws_app([{"type": "complete"}], captured=captured)
 
     client = GQLClient(
@@ -652,9 +693,7 @@ async def test_subscribe_url_scheme_https_to_wss():
         ) as stream:
             async for _ in stream:
                 pass
-        assert parse_qs(captured["scope_query_string"])["redirect"] == [
-            "http://callback"
-        ]
+        assert parse_qs(captured.scope_query_string)["redirect"] == ["http://callback"]
     finally:
         await client.close()
 
@@ -683,7 +722,7 @@ async def test_subscribe_malformed_message_no_type():
 
 
 async def test_subscribe_no_variables_key_when_none():
-    captured: dict[str, Any] = {}
+    captured = _Captured()
     app = _make_ws_app([{"type": "complete"}], captured=captured)
 
     client = GQLClient(base_url="http://testserver/graphql", target_app=app)
@@ -693,7 +732,10 @@ async def test_subscribe_no_variables_key_when_none():
         ) as stream:
             async for _ in stream:
                 pass
-        assert "variables" not in captured["subscribe"]["payload"]
+        assert captured.subscribe is not None
+        payload = captured.subscribe["payload"]
+        assert isinstance(payload, dict)
+        assert "variables" not in payload
     finally:
         await client.close()
 
@@ -739,7 +781,7 @@ async def test_subscribe_pong_during_messages():
 
 
 async def test_subscribe_pong_before_connection_ack():
-    captured: dict[str, Any] = {}
+    captured = _Captured()
     app = _make_ws_app(
         [
             {"type": "next", "payload": {"data": {"counter": 1}}},
@@ -782,9 +824,10 @@ async def test_subscribe_next_without_payload_key():
 
 
 async def test_subscribe_pre_ack_messages_exhaustion():
+    pong: dict[str, object] = {"type": "pong"}
     app = _make_ws_app(
         [],
-        pre_ack_messages=[{"type": "pong"}] * 17,
+        pre_ack_messages=[pong] * 17,
     )
 
     client = GQLClient(base_url="http://testserver/graphql", target_app=app)
@@ -903,9 +946,9 @@ async def test_subscribe_abnormal_disconnect_during_messages():
 
 async def test_subscribe_disconnect_before_ack_with_reason():
     async def app(
-        scope: MutableMapping[str, Any],
-        receive: Any,
-        send: Any,
+        scope: MutableMapping[str, object],
+        receive: _Receive,
+        send: _Send,
     ) -> None:
         if scope["type"] == "http":
             await send({
@@ -917,7 +960,8 @@ async def test_subscribe_disconnect_before_ack_with_reason():
             return
 
         assert scope["type"] == "websocket"
-        subprotocols = scope.get("subprotocols", [])
+        subprotocols = scope["subprotocols"]
+        assert isinstance(subprotocols, list)
         connect_event = await receive()
         assert connect_event["type"] == "websocket.connect"
         await send({
@@ -926,7 +970,7 @@ async def test_subscribe_disconnect_before_ack_with_reason():
             if "graphql-transport-ws" in subprotocols
             else None,
         })
-        init_msg = json.loads((await receive())["text"])
+        init_msg = await _receive_json(receive)
         assert init_msg["type"] == "connection_init"
         await send({
             "type": "websocket.close",
@@ -955,9 +999,9 @@ async def test_subscribe_disconnect_before_ack_with_reason():
 
 async def test_subscribe_invalid_json_during_messages():
     async def app(
-        scope: MutableMapping[str, Any],
-        receive: Any,
-        send: Any,
+        scope: MutableMapping[str, object],
+        receive: _Receive,
+        send: _Send,
     ) -> None:
         if scope["type"] == "http":
             await send({
@@ -969,7 +1013,8 @@ async def test_subscribe_invalid_json_during_messages():
             return
 
         assert scope["type"] == "websocket"
-        subprotocols = scope.get("subprotocols", [])
+        subprotocols = scope["subprotocols"]
+        assert isinstance(subprotocols, list)
         connect_event = await receive()
         assert connect_event["type"] == "websocket.connect"
         await send({
@@ -978,13 +1023,13 @@ async def test_subscribe_invalid_json_during_messages():
             if "graphql-transport-ws" in subprotocols
             else None,
         })
-        init_msg = json.loads((await receive())["text"])
+        init_msg = await _receive_json(receive)
         assert init_msg["type"] == "connection_init"
         await send({
             "type": "websocket.send",
             "text": json.dumps({"type": "connection_ack"}),
         })
-        subscribe_msg = json.loads((await receive())["text"])
+        subscribe_msg = await _receive_json(receive)
         assert subscribe_msg["type"] == "subscribe"
         await send({
             "type": "websocket.send",
@@ -1010,9 +1055,9 @@ async def test_subscribe_invalid_json_during_messages():
 
 async def test_subscribe_invalid_json_during_handshake():
     async def app(
-        scope: MutableMapping[str, Any],
-        receive: Any,
-        send: Any,
+        scope: MutableMapping[str, object],
+        receive: _Receive,
+        send: _Send,
     ) -> None:
         if scope["type"] == "http":
             await send({
@@ -1024,7 +1069,8 @@ async def test_subscribe_invalid_json_during_handshake():
             return
 
         assert scope["type"] == "websocket"
-        subprotocols = scope.get("subprotocols", [])
+        subprotocols = scope["subprotocols"]
+        assert isinstance(subprotocols, list)
         connect_event = await receive()
         assert connect_event["type"] == "websocket.connect"
         await send({
@@ -1033,7 +1079,7 @@ async def test_subscribe_invalid_json_during_handshake():
             if "graphql-transport-ws" in subprotocols
             else None,
         })
-        init_msg = json.loads((await receive())["text"])
+        init_msg = await _receive_json(receive)
         assert init_msg["type"] == "connection_init"
         await send({
             "type": "websocket.send",

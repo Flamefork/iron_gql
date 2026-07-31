@@ -1,105 +1,347 @@
 import pytest
+from graphql import GraphQLResolveInfo
 from pytest_httpserver import HTTPServer
 
 from iron_gql.codegen import GraphQLGenerationError
 from tests.conftest import ProjectBuilder
+from tests.conftest import generated_package
+from tests.conftest import gql_server
+
+generated_package(
+    "fragments_inline",
+    schema="""
+    type Query {
+        viewer: User!
+    }
+
+    type User {
+        id: ID!
+        name: String!
+        email: String!
+    }
+    """,
+    queries='''
+    from tests.generated.fragments_inline.gql.api import api_gql
+
+    get_viewer = api_gql(
+        """
+        query GetViewer {
+            viewer {
+                id
+                ... {
+                    name
+                    email
+                }
+            }
+        }
+        """
+    )
+    ''',
+)
+
+generated_package(
+    "fragments_named",
+    schema="""
+    type User {
+        id: ID!
+        name: String!
+        email: String
+    }
+
+    type Query {
+        user(id: ID!): User
+    }
+    """,
+    queries='''
+    from tests.generated.fragments_named.gql.api import api_gql
+
+    user_fragment = api_gql(
+        """
+        fragment UserFields on User {
+            id
+            name
+        }
+        """
+    )
+
+    get_user = api_gql(
+        """
+        query GetUser($id: ID!) {
+            user(id: $id) {
+                ...UserFields
+                email
+            }
+        }
+        """
+    )
+    ''',
+)
+
+generated_package(
+    "fragments_dup_names",
+    schema="""
+    type User {
+        id: ID!
+        name: String!
+    }
+
+    type Query {
+        user(id: ID!): User
+    }
+    """,
+    queries='''
+    from tests.generated.fragments_dup_names.gql.api import api_gql
+
+    get_user = api_gql(
+        """
+        fragment UserFields on User {
+            id
+            name
+        }
+
+        query GetUser($id: ID!) {
+            user(id: $id) {
+                ...UserFields
+            }
+        }
+        """
+    )
+
+    other_fragment = api_gql(
+        """
+        fragment UserFields on User {
+            id
+        }
+        """
+    )
+    ''',
+)
+
+generated_package(
+    "fragments_scoped",
+    schema="""
+    type User {
+        id: ID!
+        name: String!
+    }
+
+    type Post {
+        id: ID!
+        title: String!
+    }
+
+    type Query {
+        user(id: ID!): User
+        post(id: ID!): Post
+    }
+    """,
+    queries='''
+    from tests.generated.fragments_scoped.gql.api import api_gql
+
+    user_fragment = api_gql(
+        """
+        fragment UserFields on User {
+            id
+            name
+        }
+        """
+    )
+
+    post_fragment = api_gql(
+        """
+        fragment PostFields on Post {
+            id
+            title
+        }
+        """
+    )
+
+    get_user = api_gql(
+        """
+        query GetUser($id: ID!) {
+            user(id: $id) {
+                ...UserFields
+            }
+        }
+        """
+    )
+
+    get_post = api_gql(
+        """
+        query GetPost($id: ID!) {
+            post(id: $id) {
+                ...PostFields
+            }
+        }
+        """
+    )
+    ''',
+)
+
+generated_package(
+    "fragments_no_dup",
+    schema="""
+    type User {
+        id: ID!
+        name: String!
+    }
+
+    type Query {
+        user(id: ID!): User
+    }
+    """,
+    queries='''
+    from tests.generated.fragments_no_dup.gql.api import api_gql
+
+    get_user = api_gql(
+        """
+        fragment UserFields on User {
+            id
+            name
+        }
+
+        query GetUser($id: ID!) {
+            user(id: $id) {
+                ...UserFields
+            }
+        }
+        """
+    )
+    ''',
+)
+
+generated_package(
+    "fragments_transitive",
+    schema="""
+    type User {
+        id: ID!
+        name: String!
+        email: String
+        role: String!
+    }
+
+    type Query {
+        user(id: ID!): User
+    }
+    """,
+    queries='''
+    from tests.generated.fragments_transitive.gql.api import api_gql
+
+    fragment_c = api_gql(
+        """
+        fragment RoleFields on User {
+            role
+        }
+        """
+    )
+
+    fragment_b = api_gql(
+        """
+        fragment ContactFields on User {
+            email
+            ...RoleFields
+        }
+        """
+    )
+
+    fragment_a = api_gql(
+        """
+        fragment UserFields on User {
+            id
+            name
+            ...ContactFields
+        }
+        """
+    )
+
+    get_user = api_gql(
+        """
+        query GetUser($id: ID!) {
+            user(id: $id) {
+                ...UserFields
+            }
+        }
+        """
+    )
+    ''',
+)
+
+generated_package(
+    "fragments_exec_source",
+    schema="""
+    type User {
+        id: ID!
+        name: String!
+    }
+
+    type Query {
+        user(id: ID!): User
+    }
+    """,
+    queries='''
+    from tests.generated.fragments_exec_source.gql.api import api_gql
+
+    user_fragment = api_gql(
+        """
+        fragment UserFields on User {
+            id
+            name
+        }
+        """
+    )
+
+    get_user = api_gql(
+        """
+        query GetUser($id: ID!) {
+            user(id: $id) {
+                ...UserFields
+            }
+        }
+        """
+    )
+    ''',
+)
+
+from tests.generated.fragments_dup_names import queries as dup_names_queries
+from tests.generated.fragments_exec_source import queries as exec_source_queries
+from tests.generated.fragments_inline import queries as inline_queries
+from tests.generated.fragments_named import queries as named_queries
+from tests.generated.fragments_no_dup import queries as no_dup_queries
+from tests.generated.fragments_scoped import queries as scoped_queries
+from tests.generated.fragments_transitive import queries as transitive_queries
 
 
 async def test_inline_fragment_without_type_condition(
-    test_project: ProjectBuilder, httpserver: HTTPServer
+    httpserver: HTTPServer, monkeypatch: pytest.MonkeyPatch
 ):
-    schema = """
-        type Query {
-            viewer: User!
-        }
-
-        type User {
-            id: ID!
-            name: String!
-            email: String!
-        }
-    """
-
-    query_source = """
-        from sample_app.gql.api import api_gql
-
-        get_viewer = api_gql(
-            '''
-            query GetViewer {
-                viewer {
-                    id
-                    ... {
-                        name
-                        email
-                    }
-                }
-            }
-            '''
-        )
-    """
-
-    def resolve_viewer(_root, _info):
+    def resolve_viewer(_root: None, _info: GraphQLResolveInfo) -> dict[str, str]:
         return {"id": "user-1", "name": "Morty", "email": "morty@example.com"}
 
-    async with test_project.server(
+    async with gql_server(
         httpserver,
-        schema=schema,
-        queries=query_source,
-        resolvers={"Query": {"viewer": resolve_viewer}},
-    ) as (_, queries):
-        result = await queries.get_viewer.execute()
+        monkeypatch,
+        "fragments_inline",
+        {"Query": {"viewer": resolve_viewer}},
+    ):
+        result = await inline_queries.get_viewer.execute()
         assert result.viewer.id == "user-1"
         assert result.viewer.name == "Morty"
         assert result.viewer.email == "morty@example.com"
 
 
-async def test_named_fragments(test_project: ProjectBuilder, httpserver: HTTPServer):
-    schema = """
-        type User {
-            id: ID!
-            name: String!
-            email: String
-        }
-
-        type Query {
-            user(id: ID!): User
-        }
-    """
-
-    query_source = """
-        from sample_app.gql.api import api_gql
-
-        user_fragment = api_gql(
-            '''
-            fragment UserFields on User {
-                id
-                name
-            }
-            '''
-        )
-
-        get_user = api_gql(
-            '''
-            query GetUser($id: ID!) {
-                user(id: $id) {
-                    ...UserFields
-                    email
-                }
-            }
-            '''
-        )
-    """
-
-    def resolve_user(_root, _info, *, id: str):
+async def test_named_fragments(httpserver: HTTPServer, monkeypatch: pytest.MonkeyPatch):
+    def resolve_user(
+        _root: None, _info: GraphQLResolveInfo, *, id: str
+    ) -> dict[str, str]:
         return {"id": id, "name": "Morty", "email": "morty@example.com"}
 
-    async with test_project.server(
+    async with gql_server(
         httpserver,
-        schema=schema,
-        queries=query_source,
-        resolvers={"Query": {"user": resolve_user}},
-    ) as (_, queries):
-        result = await queries.get_user.execute(id="u-1")
+        monkeypatch,
+        "fragments_named",
+        {"Query": {"user": resolve_user}},
+    ):
+        result = await named_queries.get_user.execute(id="u-1")
         assert result.user is not None
         assert result.user.id == "u-1"
         assert result.user.name == "Morty"
@@ -107,253 +349,83 @@ async def test_named_fragments(test_project: ProjectBuilder, httpserver: HTTPSer
 
 
 async def test_duplicate_fragment_names_use_local_definition(
-    test_project: ProjectBuilder, httpserver: HTTPServer
+    httpserver: HTTPServer, monkeypatch: pytest.MonkeyPatch
 ):
-    schema = """
-        type User {
-            id: ID!
-            name: String!
-        }
-
-        type Query {
-            user(id: ID!): User
-        }
-    """
-
-    query_source = """
-        from sample_app.gql.api import api_gql
-
-        get_user = api_gql(
-            '''
-            fragment UserFields on User {
-                id
-                name
-            }
-
-            query GetUser($id: ID!) {
-                user(id: $id) {
-                    ...UserFields
-                }
-            }
-            '''
-        )
-
-        other_fragment = api_gql(
-            '''
-            fragment UserFields on User {
-                id
-            }
-            '''
-        )
-    """
-
-    def resolve_user(_root, _info, *, id: str):
+    def resolve_user(
+        _root: None, _info: GraphQLResolveInfo, *, id: str
+    ) -> dict[str, str]:
         return {"id": id, "name": "Morty"}
 
-    async with test_project.server(
+    async with gql_server(
         httpserver,
-        schema=schema,
-        queries=query_source,
-        resolvers={"Query": {"user": resolve_user}},
-    ) as (_, queries):
-        result = await queries.get_user.execute(id="u-1")
+        monkeypatch,
+        "fragments_dup_names",
+        {"Query": {"user": resolve_user}},
+    ):
+        result = await dup_names_queries.get_user.execute(id="u-1")
         assert result.user is not None
         assert result.user.id == "u-1"
         assert result.user.name == "Morty"
 
 
 async def test_fragment_validation_scoped_to_query(
-    test_project: ProjectBuilder, httpserver: HTTPServer
+    httpserver: HTTPServer, monkeypatch: pytest.MonkeyPatch
 ):
-    schema = """
-        type User {
-            id: ID!
-            name: String!
-        }
-
-        type Post {
-            id: ID!
-            title: String!
-        }
-
-        type Query {
-            user(id: ID!): User
-            post(id: ID!): Post
-        }
-    """
-
-    query_source = """
-        from sample_app.gql.api import api_gql
-
-        user_fragment = api_gql(
-            '''
-            fragment UserFields on User {
-                id
-                name
-            }
-            '''
-        )
-
-        post_fragment = api_gql(
-            '''
-            fragment PostFields on Post {
-                id
-                title
-            }
-            '''
-        )
-
-        get_user = api_gql(
-            '''
-            query GetUser($id: ID!) {
-                user(id: $id) {
-                    ...UserFields
-                }
-            }
-            '''
-        )
-
-        get_post = api_gql(
-            '''
-            query GetPost($id: ID!) {
-                post(id: $id) {
-                    ...PostFields
-                }
-            }
-            '''
-        )
-    """
-
-    def resolve_user(_root, _info, *, id: str):
+    def resolve_user(
+        _root: None, _info: GraphQLResolveInfo, *, id: str
+    ) -> dict[str, str]:
         return {"id": id, "name": "Morty"}
 
-    def resolve_post(_root, _info, *, id: str):
+    def resolve_post(
+        _root: None, _info: GraphQLResolveInfo, *, id: str
+    ) -> dict[str, str]:
         return {"id": id, "title": "GraphQL 101"}
 
-    async with test_project.server(
+    async with gql_server(
         httpserver,
-        schema=schema,
-        queries=query_source,
-        resolvers={"Query": {"user": resolve_user, "post": resolve_post}},
-    ) as (_, queries):
-        user_result = await queries.get_user.execute(id="u-1")
+        monkeypatch,
+        "fragments_scoped",
+        {"Query": {"user": resolve_user, "post": resolve_post}},
+    ):
+        user_result = await scoped_queries.get_user.execute(id="u-1")
         assert user_result.user is not None
         assert user_result.user.id == "u-1"
         assert user_result.user.name == "Morty"
 
-        post_result = await queries.get_post.execute(id="p-1")
+        post_result = await scoped_queries.get_post.execute(id="p-1")
         assert post_result.post is not None
         assert post_result.post.id == "p-1"
         assert post_result.post.title == "GraphQL 101"
 
 
 async def test_inline_fragment_definitions_not_duplicated(
-    test_project: ProjectBuilder, httpserver: HTTPServer
+    httpserver: HTTPServer, monkeypatch: pytest.MonkeyPatch
 ):
-    schema = """
-        type User {
-            id: ID!
-            name: String!
-        }
-
-        type Query {
-            user(id: ID!): User
-        }
-    """
-
-    query_source = """
-        from sample_app.gql.api import api_gql
-
-        get_user = api_gql(
-            '''
-            fragment UserFields on User {
-                id
-                name
-            }
-
-            query GetUser($id: ID!) {
-                user(id: $id) {
-                    ...UserFields
-                }
-            }
-            '''
-        )
-    """
-
-    def resolve_user(_root, _info, *, id: str):
+    def resolve_user(
+        _root: None, _info: GraphQLResolveInfo, *, id: str
+    ) -> dict[str, str]:
         return {"id": id, "name": "Morty"}
 
-    async with test_project.server(
+    async with gql_server(
         httpserver,
-        schema=schema,
-        queries=query_source,
-        resolvers={"Query": {"user": resolve_user}},
-    ) as (_, queries):
-        result = await queries.get_user.execute(id="u-1")
+        monkeypatch,
+        "fragments_no_dup",
+        {"Query": {"user": resolve_user}},
+    ):
+        result = await no_dup_queries.get_user.execute(id="u-1")
         assert result.user is not None
         assert result.user.id == "u-1"
         assert result.user.name == "Morty"
 
 
 async def test_transitive_fragments(
-    test_project: ProjectBuilder, httpserver: HTTPServer
+    httpserver: HTTPServer, monkeypatch: pytest.MonkeyPatch
 ):
     """Test that nested fragment deps (A → B → C) are resolved correctly."""
-    schema = """
-        type User {
-            id: ID!
-            name: String!
-            email: String
-            role: String!
-        }
 
-        type Query {
-            user(id: ID!): User
-        }
-    """
-
-    query_source = """
-        from sample_app.gql.api import api_gql
-
-        fragment_c = api_gql(
-            '''
-            fragment RoleFields on User {
-                role
-            }
-            '''
-        )
-
-        fragment_b = api_gql(
-            '''
-            fragment ContactFields on User {
-                email
-                ...RoleFields
-            }
-            '''
-        )
-
-        fragment_a = api_gql(
-            '''
-            fragment UserFields on User {
-                id
-                name
-                ...ContactFields
-            }
-            '''
-        )
-
-        get_user = api_gql(
-            '''
-            query GetUser($id: ID!) {
-                user(id: $id) {
-                    ...UserFields
-                }
-            }
-            '''
-        )
-    """
-
-    def resolve_user(_root, _info, *, id: str):
+    def resolve_user(
+        _root: None, _info: GraphQLResolveInfo, *, id: str
+    ) -> dict[str, str]:
         return {
             "id": id,
             "name": "Morty",
@@ -361,13 +433,13 @@ async def test_transitive_fragments(
             "role": "admin",
         }
 
-    async with test_project.server(
+    async with gql_server(
         httpserver,
-        schema=schema,
-        queries=query_source,
-        resolvers={"Query": {"user": resolve_user}},
-    ) as (_, queries):
-        result = await queries.get_user.execute(id="u-1")
+        monkeypatch,
+        "fragments_transitive",
+        {"Query": {"user": resolve_user}},
+    ):
+        result = await transitive_queries.get_user.execute(id="u-1")
         assert result.user is not None
         assert result.user.id == "u-1"
         assert result.user.name == "Morty"
@@ -376,53 +448,22 @@ async def test_transitive_fragments(
 
 
 async def test_exec_source_contains_expanded_fragments(
-    test_project: ProjectBuilder, httpserver: HTTPServer
+    httpserver: HTTPServer, monkeypatch: pytest.MonkeyPatch
 ):
     """Verify that the request string contains expanded fragment definitions."""
-    schema = """
-        type User {
-            id: ID!
-            name: String!
-        }
 
-        type Query {
-            user(id: ID!): User
-        }
-    """
-
-    query_source = """
-        from sample_app.gql.api import api_gql
-
-        user_fragment = api_gql(
-            '''
-            fragment UserFields on User {
-                id
-                name
-            }
-            '''
-        )
-
-        get_user = api_gql(
-            '''
-            query GetUser($id: ID!) {
-                user(id: $id) {
-                    ...UserFields
-                }
-            }
-            '''
-        )
-    """
-
-    def resolve_user(_root, _info, *, id: str):
+    def resolve_user(
+        _root: None, _info: GraphQLResolveInfo, *, id: str
+    ) -> dict[str, str]:
         return {"id": id, "name": "Morty"}
 
-    async with test_project.server(
+    async with gql_server(
         httpserver,
-        schema=schema,
-        queries=query_source,
-        resolvers={"Query": {"user": resolve_user}},
-    ) as (_, queries):
-        result = await queries.get_user.execute(id="u-1")
+        monkeypatch,
+        "fragments_exec_source",
+        {"Query": {"user": resolve_user}},
+    ):
+        result = await exec_source_queries.get_user.execute(id="u-1")
         assert result.user is not None
         assert result.user.id == "u-1"
 

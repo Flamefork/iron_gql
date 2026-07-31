@@ -17,11 +17,11 @@ def warn_deprecated_field(
     representative: graphql.FieldNode,
     field_def: graphql.GraphQLField,
 ) -> None:
+    field_path = f"{runtime_type.name}.{representative.name.value}"
     if field_def.deprecation_reason is not None:
+        reason = field_def.deprecation_reason
         warn(
-            f"Query '{query_name}': field"
-            f" '{runtime_type.name}.{representative.name.value}'"
-            f" is deprecated: {field_def.deprecation_reason}",
+            f"Query '{query_name}': field '{field_path}' is deprecated: {reason}",
             GraphQLDeprecationWarning,
             stacklevel=2,
         )
@@ -29,12 +29,10 @@ def warn_deprecated_field(
         for arg_node in representative.arguments:
             schema_arg = field_def.args[arg_node.name.value]
             if schema_arg.deprecation_reason is not None:
+                arg_ref = f"'{arg_node.name.value}' on '{field_path}'"
+                reason = schema_arg.deprecation_reason
                 warn(
-                    f"Query '{query_name}': argument"
-                    f" '{arg_node.name.value}'"
-                    f" on '{runtime_type.name}.{representative.name.value}'"
-                    f" is deprecated:"
-                    f" {schema_arg.deprecation_reason}",
+                    f"Query '{query_name}': argument {arg_ref} is deprecated: {reason}",
                     GraphQLDeprecationWarning,
                     stacklevel=2,
                 )

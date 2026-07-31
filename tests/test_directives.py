@@ -1,68 +1,27 @@
-import importlib
-from collections.abc import Mapping
-
+import pytest
+from graphql import GraphQLResolveInfo
 from pytest_httpserver import HTTPServer
 
-from tests.conftest import ProjectBuilder
-from tests.conftest import Resolver
-from tests.conftest import build_schema
-from tests.conftest import setup_httpserver
+from tests.conftest import generated_package
+from tests.conftest import gql_server
 
+generated_package(
+    "directives_include_skip",
+    schema="""
+    type Query {
+        user(id: ID!): User
+    }
+    type User {
+        name: String!
+        email: String!
+        phone: String!
+    }
+    """,
+    queries='''
+    from tests.generated.directives_include_skip.gql.api import api_gql
 
-async def _execute_get_user(
-    test_project: ProjectBuilder,
-    httpserver: HTTPServer,
-    *,
-    schema: str,
-    query: str,
-    resolver: Resolver,
-    variables: Mapping[str, object] | None = None,
-):
-    query_source = f"""
-        from sample_app.gql.api import api_gql
-
-        get_user = api_gql(
-            '''
-            {query}
-            '''
-        )
-    """
-
-    schema_obj = build_schema(schema, {"Query": {"user": resolver}})
-    base_url = setup_httpserver(httpserver, schema_obj)
-    test_project.prepare(schema=schema, queries=query_source, base_url=base_url)
-    test_project.generate()
-    test_project.clear_modules()
-    api_module = test_project.import_api()
-    queries_module = importlib.import_module(f"{test_project.package}.queries")
-    try:
-        return await queries_module.get_user.execute(**dict(variables or {}))
-    finally:
-        await api_module.API_CLIENT.close()
-
-
-async def test_include_skip_directives(
-    test_project: ProjectBuilder, httpserver: HTTPServer
-):
-    schema = """
-        type Query {
-            user(id: ID!): User
-        }
-        type User {
-            name: String!
-            email: String!
-            phone: String!
-        }
-    """
-
-    def resolve_user(_root, _info, *, id: str):
-        return {
-            "name": f"Morty {id}",
-            "email": f"{id}@example.com",
-            "phone": "+34-123",
-        }
-
-    query = """
+    get_user = api_gql(
+        """
         query GetUser($id: ID!, $withEmail: Boolean!, $skipPhone: Boolean!) {
             user(id: $id) {
                 name
@@ -70,201 +29,109 @@ async def test_include_skip_directives(
                 phone @skip(if: $skipPhone)
             }
         }
-    """
-
-    visible = await _execute_get_user(
-        test_project,
-        httpserver,
-        schema=schema,
-        query=query,
-        resolver=resolve_user,
-        variables={"id": "u-1", "with_email": True, "skip_phone": False},
+        """
     )
-    assert visible.user is not None
-    assert visible.user.name == "Morty u-1"
-    assert visible.user.email == "u-1@example.com"
-    assert visible.user.phone == "+34-123"
+    ''',
+)
 
-    hidden = await _execute_get_user(
-        test_project,
-        httpserver,
-        schema=schema,
-        query=query,
-        resolver=resolve_user,
-        variables={"id": "u-1", "with_email": False, "skip_phone": True},
-    )
-    assert hidden.user is not None
-    assert hidden.user.name == "Morty u-1"
-    assert hidden.user.email is None
-    assert hidden.user.phone is None
+generated_package(
+    "directives_include_non_null",
+    schema="""
+    type Query {
+        user: User
+    }
+    type User {
+        id: ID!
+        name: String!
+    }
+    """,
+    queries='''
+    from tests.generated.directives_include_non_null.gql.api import api_gql
 
-
-async def test_include_on_non_null_field(
-    test_project: ProjectBuilder, httpserver: HTTPServer
-):
-    schema = """
-        type Query {
-            user: User
-        }
-        type User {
-            id: ID!
-            name: String!
-        }
-    """
-
-    def resolve_user(_root, _info):
-        return {"id": "user-1", "name": "Morty"}
-
-    query = """
+    get_user = api_gql(
+        """
         query GetUser($withName: Boolean!) {
             user {
                 id
                 name @include(if: $withName)
             }
         }
-    """
-
-    included = await _execute_get_user(
-        test_project,
-        httpserver,
-        schema=schema,
-        query=query,
-        resolver=resolve_user,
-        variables={"with_name": True},
+        """
     )
-    assert included.user is not None
-    assert included.user.id == "user-1"
-    assert included.user.name == "Morty"
+    ''',
+)
 
-    omitted = await _execute_get_user(
-        test_project,
-        httpserver,
-        schema=schema,
-        query=query,
-        resolver=resolve_user,
-        variables={"with_name": False},
-    )
-    assert omitted.user is not None
-    assert omitted.user.id == "user-1"
-    assert omitted.user.name is None
+generated_package(
+    "directives_skip_non_null",
+    schema="""
+    type Query {
+        user: User
+    }
+    type User {
+        id: ID!
+        name: String!
+    }
+    """,
+    queries='''
+    from tests.generated.directives_skip_non_null.gql.api import api_gql
 
-
-async def test_skip_on_non_null_field(
-    test_project: ProjectBuilder, httpserver: HTTPServer
-):
-    schema = """
-        type Query {
-            user: User
-        }
-        type User {
-            id: ID!
-            name: String!
-        }
-    """
-
-    def resolve_user(_root, _info):
-        return {"id": "user-1", "name": "Morty"}
-
-    query = """
+    get_user = api_gql(
+        """
         query GetUser($skipName: Boolean!) {
             user {
                 id
                 name @skip(if: $skipName)
             }
         }
-    """
-
-    kept = await _execute_get_user(
-        test_project,
-        httpserver,
-        schema=schema,
-        query=query,
-        resolver=resolve_user,
-        variables={"skip_name": False},
+        """
     )
-    assert kept.user is not None
-    assert kept.user.id == "user-1"
-    assert kept.user.name == "Morty"
+    ''',
+)
 
-    skipped = await _execute_get_user(
-        test_project,
-        httpserver,
-        schema=schema,
-        query=query,
-        resolver=resolve_user,
-        variables={"skip_name": True},
-    )
-    assert skipped.user is not None
-    assert skipped.user.id == "user-1"
-    assert skipped.user.name is None
+generated_package(
+    "directives_include_nullable",
+    schema="""
+    type Query {
+        user: User
+    }
+    type User {
+        id: ID!
+        name: String
+    }
+    """,
+    queries='''
+    from tests.generated.directives_include_nullable.gql.api import api_gql
 
-
-async def test_include_on_nullable_field(
-    test_project: ProjectBuilder, httpserver: HTTPServer
-):
-    schema = """
-        type Query {
-            user: User
-        }
-        type User {
-            id: ID!
-            name: String
-        }
-    """
-
-    def resolve_user(_root, _info):
-        return {"id": "user-1", "name": "Morty"}
-
-    query = """
+    get_user = api_gql(
+        """
         query GetUser($withName: Boolean!) {
             user {
                 id
                 name @include(if: $withName)
             }
         }
-    """
-
-    included = await _execute_get_user(
-        test_project,
-        httpserver,
-        schema=schema,
-        query=query,
-        resolver=resolve_user,
-        variables={"with_name": True},
+        """
     )
-    assert included.user is not None
-    assert included.user.name == "Morty"
+    ''',
+)
 
-    omitted = await _execute_get_user(
-        test_project,
-        httpserver,
-        schema=schema,
-        query=query,
-        resolver=resolve_user,
-        variables={"with_name": False},
-    )
-    assert omitted.user is not None
-    assert omitted.user.name is None
+generated_package(
+    "directives_include_inline_fragment",
+    schema="""
+    type Query {
+        user: User
+    }
+    type User {
+        id: ID!
+        name: String!
+        email: String!
+    }
+    """,
+    queries='''
+    from tests.generated.directives_include_inline_fragment.gql.api import api_gql
 
-
-async def test_include_on_inline_fragment(
-    test_project: ProjectBuilder, httpserver: HTTPServer
-):
-    schema = """
-        type Query {
-            user: User
-        }
-        type User {
-            id: ID!
-            name: String!
-            email: String!
-        }
-    """
-
-    def resolve_user(_root, _info):
-        return {"id": "user-1", "name": "Morty", "email": "morty@example.com"}
-
-    query = """
+    get_user = api_gql(
+        """
         query GetUser($withDetails: Boolean!) {
             user {
                 id
@@ -274,312 +141,196 @@ async def test_include_on_inline_fragment(
                 }
             }
         }
-    """
-
-    included = await _execute_get_user(
-        test_project,
-        httpserver,
-        schema=schema,
-        query=query,
-        resolver=resolve_user,
-        variables={"with_details": True},
+        """
     )
-    assert included.user is not None
-    assert included.user.id == "user-1"
-    assert included.user.name == "Morty"
-    assert included.user.email == "morty@example.com"
+    ''',
+)
 
-    omitted = await _execute_get_user(
-        test_project,
-        httpserver,
-        schema=schema,
-        query=query,
-        resolver=resolve_user,
-        variables={"with_details": False},
-    )
-    assert omitted.user is not None
-    assert omitted.user.id == "user-1"
-    assert omitted.user.name is None
-    assert omitted.user.email is None
+generated_package(
+    "directives_conditional_and_unconditional",
+    schema="""
+    type Query {
+        user: User
+    }
+    type User {
+        id: ID!
+        name: String!
+    }
+    """,
+    queries='''
+    from tests.generated.directives_conditional_and_unconditional.gql.api import api_gql
 
-
-async def test_field_both_conditional_and_unconditional(
-    test_project: ProjectBuilder, httpserver: HTTPServer
-):
-    schema = """
-        type Query {
-            user: User
-        }
-        type User {
-            id: ID!
-            name: String!
-        }
-    """
-
-    def resolve_user(_root, _info):
-        return {"id": "user-1", "name": "Morty"}
-
-    result = await _execute_get_user(
-        test_project,
-        httpserver,
-        schema=schema,
-        query="""
-            query GetUser($withDetails: Boolean!) {
-                user {
-                    id
+    get_user = api_gql(
+        """
+        query GetUser($withDetails: Boolean!) {
+            user {
+                id
+                name
+                ... @include(if: $withDetails) {
                     name
-                    ... @include(if: $withDetails) {
-                        name
-                    }
                 }
             }
-        """,
-        resolver=resolve_user,
-        variables={"with_details": False},
+        }
+        """
     )
-    assert result.user is not None
-    assert result.user.id == "user-1"
-    assert result.user.name == "Morty"
+    ''',
+)
 
+generated_package(
+    "directives_skip_literal_false",
+    schema="""
+    type Query {
+        user: User
+    }
+    type User {
+        id: ID!
+        name: String!
+    }
+    """,
+    queries='''
+    from tests.generated.directives_skip_literal_false.gql.api import api_gql
 
-async def test_skip_with_literal_false(
-    test_project: ProjectBuilder, httpserver: HTTPServer
-):
-    schema = """
-        type Query {
-            user: User
-        }
-        type User {
-            id: ID!
-            name: String!
-        }
-    """
-
-    def resolve_user(_root, _info):
-        return {"id": "user-1", "name": "Morty"}
-
-    result = await _execute_get_user(
-        test_project,
-        httpserver,
-        schema=schema,
-        query="""
-            query GetUser {
-                user {
-                    id
-                    name @skip(if: false)
-                }
+    get_user = api_gql(
+        """
+        query GetUser {
+            user {
+                id
+                name @skip(if: false)
             }
-        """,
-        resolver=resolve_user,
+        }
+        """
     )
-    assert result.user is not None
-    assert result.user.id == "user-1"
-    assert result.user.name == "Morty"
+    ''',
+)
 
+generated_package(
+    "directives_include_skip_same_field",
+    schema="""
+    type Query {
+        user: User
+    }
+    type User {
+        id: ID!
+        name: String!
+    }
+    """,
+    queries='''
+    from tests.generated.directives_include_skip_same_field.gql.api import api_gql
 
-async def test_include_and_skip_on_same_field(
-    test_project: ProjectBuilder, httpserver: HTTPServer
-):
-    schema = """
-        type Query {
-            user: User
-        }
-        type User {
-            id: ID!
-            name: String!
-        }
-    """
-
-    def resolve_user(_root, _info):
-        return {"id": "user-1", "name": "Morty"}
-
-    query = """
+    get_user = api_gql(
+        """
         query GetUser($show: Boolean!, $hide: Boolean!) {
             user {
                 id
                 name @include(if: $show) @skip(if: $hide)
             }
         }
-    """
-
-    visible = await _execute_get_user(
-        test_project,
-        httpserver,
-        schema=schema,
-        query=query,
-        resolver=resolve_user,
-        variables={"show": True, "hide": False},
+        """
     )
-    assert visible.user is not None
-    assert visible.user.name == "Morty"
+    ''',
+)
 
-    omitted = await _execute_get_user(
-        test_project,
-        httpserver,
-        schema=schema,
-        query=query,
-        resolver=resolve_user,
-        variables={"show": True, "hide": True},
-    )
-    assert omitted.user is not None
-    assert omitted.user.name is None
+generated_package(
+    "directives_include_camel_case",
+    schema="""
+    type Query {
+        user: User
+    }
+    type User {
+        id: ID!
+        firstName: String!
+    }
+    """,
+    queries='''
+    from tests.generated.directives_include_camel_case.gql.api import api_gql
 
-
-async def test_include_on_camel_case_field(
-    test_project: ProjectBuilder, httpserver: HTTPServer
-):
-    schema = """
-        type Query {
-            user: User
-        }
-        type User {
-            id: ID!
-            firstName: String!
-        }
-    """
-
-    def resolve_user(_root, _info):
-        return {"id": "user-1", "firstName": "Morty"}
-
-    query = """
+    get_user = api_gql(
+        """
         query GetUser($withName: Boolean!) {
             user {
                 id
                 firstName @include(if: $withName)
             }
         }
-    """
-
-    included = await _execute_get_user(
-        test_project,
-        httpserver,
-        schema=schema,
-        query=query,
-        resolver=resolve_user,
-        variables={"with_name": True},
+        """
     )
-    assert included.user is not None
-    assert included.user.first_name == "Morty"
+    ''',
+)
 
-    omitted = await _execute_get_user(
-        test_project,
-        httpserver,
-        schema=schema,
-        query=query,
-        resolver=resolve_user,
-        variables={"with_name": False},
-    )
-    assert omitted.user is not None
-    assert omitted.user.first_name is None
+generated_package(
+    "directives_include_list",
+    schema="""
+    type Query {
+        user: User
+    }
+    type User {
+        id: ID!
+        tags: [String]!
+    }
+    """,
+    queries='''
+    from tests.generated.directives_include_list.gql.api import api_gql
 
-
-async def test_include_on_non_null_list_of_nullable(
-    test_project: ProjectBuilder, httpserver: HTTPServer
-):
-    schema = """
-        type Query {
-            user: User
-        }
-        type User {
-            id: ID!
-            tags: [String]!
-        }
-    """
-
-    def resolve_user(_root, _info):
-        return {"id": "user-1", "tags": ["vip", None]}
-
-    query = """
+    get_user = api_gql(
+        """
         query GetUser($withTags: Boolean!) {
             user {
                 id
                 tags @include(if: $withTags)
             }
         }
-    """
-
-    included = await _execute_get_user(
-        test_project,
-        httpserver,
-        schema=schema,
-        query=query,
-        resolver=resolve_user,
-        variables={"with_tags": True},
+        """
     )
-    assert included.user is not None
-    assert included.user.tags == ["vip", None]
+    ''',
+)
 
-    omitted = await _execute_get_user(
-        test_project,
-        httpserver,
-        schema=schema,
-        query=query,
-        resolver=resolve_user,
-        variables={"with_tags": False},
-    )
-    assert omitted.user is not None
-    assert omitted.user.tags is None
+generated_package(
+    "directives_include_literal_true",
+    schema="""
+    type Query {
+        user: User
+    }
+    type User {
+        id: ID!
+        name: String!
+    }
+    """,
+    queries='''
+    from tests.generated.directives_include_literal_true.gql.api import api_gql
 
-
-async def test_include_with_literal_true(
-    test_project: ProjectBuilder, httpserver: HTTPServer
-):
-    schema = """
-        type Query {
-            user: User
-        }
-        type User {
-            id: ID!
-            name: String!
-        }
-    """
-
-    def resolve_user(_root, _info):
-        return {"id": "user-1", "name": "Morty"}
-
-    result = await _execute_get_user(
-        test_project,
-        httpserver,
-        schema=schema,
-        query="""
-            query GetUser {
-                user {
-                    id
-                    name @include(if: true)
-                }
+    get_user = api_gql(
+        """
+        query GetUser {
+            user {
+                id
+                name @include(if: true)
             }
-        """,
-        resolver=resolve_user,
+        }
+        """
     )
-    assert result.user is not None
-    assert result.user.id == "user-1"
-    assert result.user.name == "Morty"
+    ''',
+)
 
+generated_package(
+    "directives_include_nested_object",
+    schema="""
+    type Query {
+        user: User
+    }
+    type User {
+        id: ID!
+        address: Address!
+    }
+    type Address {
+        city: String!
+        zip: String!
+    }
+    """,
+    queries='''
+    from tests.generated.directives_include_nested_object.gql.api import api_gql
 
-async def test_include_on_nested_object_field(
-    test_project: ProjectBuilder, httpserver: HTTPServer
-):
-    schema = """
-        type Query {
-            user: User
-        }
-        type User {
-            id: ID!
-            address: Address!
-        }
-        type Address {
-            city: String!
-            zip: String!
-        }
-    """
-
-    def resolve_user(_root, _info):
-        return {
-            "id": "user-1",
-            "address": {"city": "Madrid", "zip": "28001"},
-        }
-
-    query = """
+    get_user = api_gql(
+        """
         query GetUser($withAddress: Boolean!) {
             user {
                 id
@@ -589,55 +340,28 @@ async def test_include_on_nested_object_field(
                 }
             }
         }
-    """
-
-    included = await _execute_get_user(
-        test_project,
-        httpserver,
-        schema=schema,
-        query=query,
-        resolver=resolve_user,
-        variables={"with_address": True},
+        """
     )
-    assert included.user is not None
-    assert included.user.address is not None
-    assert included.user.address.city == "Madrid"
-    assert included.user.address.zip == "28001"
+    ''',
+)
 
-    omitted = await _execute_get_user(
-        test_project,
-        httpserver,
-        schema=schema,
-        query=query,
-        resolver=resolve_user,
-        variables={"with_address": False},
-    )
-    assert omitted.user is not None
-    assert omitted.user.address is None
+generated_package(
+    "directives_shared_variable",
+    schema="""
+    type Query {
+        user: User
+    }
+    type User {
+        id: ID!
+        email: String!
+        phone: String!
+    }
+    """,
+    queries='''
+    from tests.generated.directives_shared_variable.gql.api import api_gql
 
-
-async def test_shared_variable_in_include_and_skip(
-    test_project: ProjectBuilder, httpserver: HTTPServer
-):
-    schema = """
-        type Query {
-            user: User
-        }
-        type User {
-            id: ID!
-            email: String!
-            phone: String!
-        }
-    """
-
-    def resolve_user(_root, _info):
-        return {
-            "id": "user-1",
-            "email": "morty@example.com",
-            "phone": "+34-123",
-        }
-
-    query = """
+    get_user = api_gql(
+        """
         query GetUser($flag: Boolean!) {
             user {
                 id
@@ -645,28 +369,356 @@ async def test_shared_variable_in_include_and_skip(
                 phone @skip(if: $flag)
             }
         }
-    """
-
-    enabled = await _execute_get_user(
-        test_project,
-        httpserver,
-        schema=schema,
-        query=query,
-        resolver=resolve_user,
-        variables={"flag": True},
+        """
     )
-    assert enabled.user is not None
-    assert enabled.user.email == "morty@example.com"
-    assert enabled.user.phone is None
+    ''',
+)
 
-    disabled = await _execute_get_user(
-        test_project,
+from tests.generated.directives_conditional_and_unconditional import (
+    queries as conditional_and_unconditional_queries,
+)
+from tests.generated.directives_include_camel_case import (
+    queries as include_camel_case_queries,
+)
+from tests.generated.directives_include_inline_fragment import (
+    queries as include_inline_fragment_queries,
+)
+from tests.generated.directives_include_list import queries as include_list_queries
+from tests.generated.directives_include_literal_true import (
+    queries as include_literal_true_queries,
+)
+from tests.generated.directives_include_nested_object import (
+    queries as include_nested_object_queries,
+)
+from tests.generated.directives_include_non_null import (
+    queries as include_non_null_queries,
+)
+from tests.generated.directives_include_nullable import (
+    queries as include_nullable_queries,
+)
+from tests.generated.directives_include_skip import queries as include_skip_queries
+from tests.generated.directives_include_skip_same_field import (
+    queries as include_skip_same_field_queries,
+)
+from tests.generated.directives_shared_variable import (
+    queries as shared_variable_queries,
+)
+from tests.generated.directives_skip_literal_false import (
+    queries as skip_literal_false_queries,
+)
+from tests.generated.directives_skip_non_null import queries as skip_non_null_queries
+
+
+async def test_include_skip_directives(
+    httpserver: HTTPServer, monkeypatch: pytest.MonkeyPatch
+):
+    def resolve_user(
+        _root: None, _info: GraphQLResolveInfo, *, id: str
+    ) -> dict[str, str]:
+        return {
+            "name": f"Morty {id}",
+            "email": f"{id}@example.com",
+            "phone": "+34-123",
+        }
+
+    async with gql_server(
         httpserver,
-        schema=schema,
-        query=query,
-        resolver=resolve_user,
-        variables={"flag": False},
-    )
-    assert disabled.user is not None
-    assert disabled.user.email is None
-    assert disabled.user.phone == "+34-123"
+        monkeypatch,
+        "directives_include_skip",
+        {"Query": {"user": resolve_user}},
+    ):
+        visible = await include_skip_queries.get_user.execute(
+            id="u-1", with_email=True, skip_phone=False
+        )
+        assert visible.user is not None
+        assert visible.user.name == "Morty u-1"
+        assert visible.user.email == "u-1@example.com"
+        assert visible.user.phone == "+34-123"
+
+        hidden = await include_skip_queries.get_user.execute(
+            id="u-1", with_email=False, skip_phone=True
+        )
+        assert hidden.user is not None
+        assert hidden.user.name == "Morty u-1"
+        assert hidden.user.email is None
+        assert hidden.user.phone is None
+
+
+async def test_include_on_non_null_field(
+    httpserver: HTTPServer, monkeypatch: pytest.MonkeyPatch
+):
+    def resolve_user(_root: None, _info: GraphQLResolveInfo) -> dict[str, str]:
+        return {"id": "user-1", "name": "Morty"}
+
+    async with gql_server(
+        httpserver,
+        monkeypatch,
+        "directives_include_non_null",
+        {"Query": {"user": resolve_user}},
+    ):
+        included = await include_non_null_queries.get_user.execute(with_name=True)
+        assert included.user is not None
+        assert included.user.id == "user-1"
+        assert included.user.name == "Morty"
+
+        omitted = await include_non_null_queries.get_user.execute(with_name=False)
+        assert omitted.user is not None
+        assert omitted.user.id == "user-1"
+        assert omitted.user.name is None
+
+
+async def test_skip_on_non_null_field(
+    httpserver: HTTPServer, monkeypatch: pytest.MonkeyPatch
+):
+    def resolve_user(_root: None, _info: GraphQLResolveInfo) -> dict[str, str]:
+        return {"id": "user-1", "name": "Morty"}
+
+    async with gql_server(
+        httpserver,
+        monkeypatch,
+        "directives_skip_non_null",
+        {"Query": {"user": resolve_user}},
+    ):
+        kept = await skip_non_null_queries.get_user.execute(skip_name=False)
+        assert kept.user is not None
+        assert kept.user.id == "user-1"
+        assert kept.user.name == "Morty"
+
+        skipped = await skip_non_null_queries.get_user.execute(skip_name=True)
+        assert skipped.user is not None
+        assert skipped.user.id == "user-1"
+        assert skipped.user.name is None
+
+
+async def test_include_on_nullable_field(
+    httpserver: HTTPServer, monkeypatch: pytest.MonkeyPatch
+):
+    def resolve_user(_root: None, _info: GraphQLResolveInfo) -> dict[str, str]:
+        return {"id": "user-1", "name": "Morty"}
+
+    async with gql_server(
+        httpserver,
+        monkeypatch,
+        "directives_include_nullable",
+        {"Query": {"user": resolve_user}},
+    ):
+        included = await include_nullable_queries.get_user.execute(with_name=True)
+        assert included.user is not None
+        assert included.user.name == "Morty"
+
+        omitted = await include_nullable_queries.get_user.execute(with_name=False)
+        assert omitted.user is not None
+        assert omitted.user.name is None
+
+
+async def test_include_on_inline_fragment(
+    httpserver: HTTPServer, monkeypatch: pytest.MonkeyPatch
+):
+    def resolve_user(_root: None, _info: GraphQLResolveInfo) -> dict[str, str]:
+        return {"id": "user-1", "name": "Morty", "email": "morty@example.com"}
+
+    async with gql_server(
+        httpserver,
+        monkeypatch,
+        "directives_include_inline_fragment",
+        {"Query": {"user": resolve_user}},
+    ):
+        included = await include_inline_fragment_queries.get_user.execute(
+            with_details=True
+        )
+        assert included.user is not None
+        assert included.user.id == "user-1"
+        assert included.user.name == "Morty"
+        assert included.user.email == "morty@example.com"
+
+        omitted = await include_inline_fragment_queries.get_user.execute(
+            with_details=False
+        )
+        assert omitted.user is not None
+        assert omitted.user.id == "user-1"
+        assert omitted.user.name is None
+        assert omitted.user.email is None
+
+
+async def test_field_both_conditional_and_unconditional(
+    httpserver: HTTPServer, monkeypatch: pytest.MonkeyPatch
+):
+    def resolve_user(_root: None, _info: GraphQLResolveInfo) -> dict[str, str]:
+        return {"id": "user-1", "name": "Morty"}
+
+    async with gql_server(
+        httpserver,
+        monkeypatch,
+        "directives_conditional_and_unconditional",
+        {"Query": {"user": resolve_user}},
+    ):
+        result = await conditional_and_unconditional_queries.get_user.execute(
+            with_details=False
+        )
+        assert result.user is not None
+        assert result.user.id == "user-1"
+        assert result.user.name == "Morty"
+
+
+async def test_skip_with_literal_false(
+    httpserver: HTTPServer, monkeypatch: pytest.MonkeyPatch
+):
+    def resolve_user(_root: None, _info: GraphQLResolveInfo) -> dict[str, str]:
+        return {"id": "user-1", "name": "Morty"}
+
+    async with gql_server(
+        httpserver,
+        monkeypatch,
+        "directives_skip_literal_false",
+        {"Query": {"user": resolve_user}},
+    ):
+        result = await skip_literal_false_queries.get_user.execute()
+        assert result.user is not None
+        assert result.user.id == "user-1"
+        assert result.user.name == "Morty"
+
+
+async def test_include_and_skip_on_same_field(
+    httpserver: HTTPServer, monkeypatch: pytest.MonkeyPatch
+):
+    def resolve_user(_root: None, _info: GraphQLResolveInfo) -> dict[str, str]:
+        return {"id": "user-1", "name": "Morty"}
+
+    async with gql_server(
+        httpserver,
+        monkeypatch,
+        "directives_include_skip_same_field",
+        {"Query": {"user": resolve_user}},
+    ):
+        visible = await include_skip_same_field_queries.get_user.execute(
+            show=True, hide=False
+        )
+        assert visible.user is not None
+        assert visible.user.name == "Morty"
+
+        omitted = await include_skip_same_field_queries.get_user.execute(
+            show=True, hide=True
+        )
+        assert omitted.user is not None
+        assert omitted.user.name is None
+
+
+async def test_include_on_camel_case_field(
+    httpserver: HTTPServer, monkeypatch: pytest.MonkeyPatch
+):
+    def resolve_user(_root: None, _info: GraphQLResolveInfo) -> dict[str, str]:
+        return {"id": "user-1", "firstName": "Morty"}
+
+    async with gql_server(
+        httpserver,
+        monkeypatch,
+        "directives_include_camel_case",
+        {"Query": {"user": resolve_user}},
+    ):
+        included = await include_camel_case_queries.get_user.execute(with_name=True)
+        assert included.user is not None
+        assert included.user.first_name == "Morty"
+
+        omitted = await include_camel_case_queries.get_user.execute(with_name=False)
+        assert omitted.user is not None
+        assert omitted.user.first_name is None
+
+
+async def test_include_on_non_null_list_of_nullable(
+    httpserver: HTTPServer, monkeypatch: pytest.MonkeyPatch
+):
+    def resolve_user(
+        _root: None, _info: GraphQLResolveInfo
+    ) -> dict[str, str | list[str | None]]:
+        return {"id": "user-1", "tags": ["vip", None]}
+
+    async with gql_server(
+        httpserver,
+        monkeypatch,
+        "directives_include_list",
+        {"Query": {"user": resolve_user}},
+    ):
+        included = await include_list_queries.get_user.execute(with_tags=True)
+        assert included.user is not None
+        assert included.user.tags == ["vip", None]
+
+        omitted = await include_list_queries.get_user.execute(with_tags=False)
+        assert omitted.user is not None
+        assert omitted.user.tags is None
+
+
+async def test_include_with_literal_true(
+    httpserver: HTTPServer, monkeypatch: pytest.MonkeyPatch
+):
+    def resolve_user(_root: None, _info: GraphQLResolveInfo) -> dict[str, str]:
+        return {"id": "user-1", "name": "Morty"}
+
+    async with gql_server(
+        httpserver,
+        monkeypatch,
+        "directives_include_literal_true",
+        {"Query": {"user": resolve_user}},
+    ):
+        result = await include_literal_true_queries.get_user.execute()
+        assert result.user is not None
+        assert result.user.id == "user-1"
+        assert result.user.name == "Morty"
+
+
+async def test_include_on_nested_object_field(
+    httpserver: HTTPServer, monkeypatch: pytest.MonkeyPatch
+):
+    def resolve_user(
+        _root: None, _info: GraphQLResolveInfo
+    ) -> dict[str, str | dict[str, str]]:
+        return {
+            "id": "user-1",
+            "address": {"city": "Madrid", "zip": "28001"},
+        }
+
+    async with gql_server(
+        httpserver,
+        monkeypatch,
+        "directives_include_nested_object",
+        {"Query": {"user": resolve_user}},
+    ):
+        included = await include_nested_object_queries.get_user.execute(
+            with_address=True
+        )
+        assert included.user is not None
+        assert included.user.address is not None
+        assert included.user.address.city == "Madrid"
+        assert included.user.address.zip == "28001"
+
+        omitted = await include_nested_object_queries.get_user.execute(
+            with_address=False
+        )
+        assert omitted.user is not None
+        assert omitted.user.address is None
+
+
+async def test_shared_variable_in_include_and_skip(
+    httpserver: HTTPServer, monkeypatch: pytest.MonkeyPatch
+):
+    def resolve_user(_root: None, _info: GraphQLResolveInfo) -> dict[str, str]:
+        return {
+            "id": "user-1",
+            "email": "morty@example.com",
+            "phone": "+34-123",
+        }
+
+    async with gql_server(
+        httpserver,
+        monkeypatch,
+        "directives_shared_variable",
+        {"Query": {"user": resolve_user}},
+    ):
+        enabled = await shared_variable_queries.get_user.execute(flag=True)
+        assert enabled.user is not None
+        assert enabled.user.email == "morty@example.com"
+        assert enabled.user.phone is None
+
+        disabled = await shared_variable_queries.get_user.execute(flag=False)
+        assert disabled.user is not None
+        assert disabled.user.email is None
+        assert disabled.user.phone == "+34-123"

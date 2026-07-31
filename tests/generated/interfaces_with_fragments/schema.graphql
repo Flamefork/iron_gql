@@ -1,0 +1,22 @@
+interface Node {
+    id: ID!
+}
+
+type User implements Node {
+    id: ID!
+    name: String
+}
+
+type Post implements Node {
+    id: ID!
+    title: String
+}
+
+type Comment implements Node {
+    id: ID!
+    body: String
+}
+
+type Query {
+    node(id: ID!): Node
+}

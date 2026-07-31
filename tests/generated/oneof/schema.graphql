@@ -1,0 +1,63 @@
+type Query {
+    ping: Boolean
+}
+
+type Mutation {
+    search(criteria: SearchCriteria!): Boolean
+    update(input: UpdateAction!): Boolean
+    doSearch(input: WrapperInput!): Boolean
+    act(input: SingleChoice!): Boolean
+    filter(by: FilterBy!): Boolean
+    searchBy(by: SearchBy!): Boolean
+    actNested(input: OuterChoice!): Boolean
+}
+
+input SearchCriteria @oneOf {
+    name: String
+    email: String
+    userId: ID
+}
+
+input AddressInput {
+    street: String!
+    city: String!
+}
+
+input UpdateAction @oneOf {
+    setName: String
+    setAddress: AddressInput
+}
+
+input WrapperInput {
+    criteria: SearchCriteria!
+    limit: Int
+}
+
+input SingleChoice @oneOf {
+    value: String
+}
+
+enum Status {
+    ACTIVE
+    INACTIVE
+}
+
+input FilterBy @oneOf {
+    status: Status
+    name: String
+}
+
+input SearchBy @oneOf {
+    name: String
+    tags: [String!]
+}
+
+input InnerChoice @oneOf {
+    x: String
+    y: Int
+}
+
+input OuterChoice @oneOf {
+    inner: InnerChoice
+    direct: String
+}

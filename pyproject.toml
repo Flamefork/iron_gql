@@ -47,22 +47,12 @@ dev = [
     "ruff>=0.14.1",
 ]
 
-[tool.pyright]
-typeCheckingMode = "strict"
-reportUnknownArgumentType = "none"
-reportUnknownLambdaType = "none"
-reportUnknownMemberType = "none"
-reportUnknownParameterType = "none"
-reportUnknownVariableType = "none"
-reportMissingParameterType = "none"
-reportMissingTypeArgument = "none"
-reportMissingTypeStubs = "none"
+[tool.basedpyright]
+typeCheckingMode = "all"
 deprecateTypingAliases = true
-reportImportCycles = true
-reportUnnecessaryTypeIgnoreComment = true
-reportUnreachable = true
-reportIgnoreCommentWithoutRule = true
-reportImplicitRelativeImport = true
+reportUnannotatedClassAttribute = "none"
+reportUnusedCallResult = "none"
+reportExplicitAny = "none"
 
 [tool.ruff]
 target-version = "py313"
@@ -93,8 +83,10 @@ ignore = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
-"test_*.py" = ["A002", "PLR2004", "S", "FBT"]
+# E402: test files generate committed packages at module level before importing them
+"test_*.py" = ["A002", "PLR2004", "S", "FBT", "E402"]
 "example/*.py" = ["C901", "E501", "T201", "PGH004"]
+"tests/generated/**/*.py" = ["C901", "E501", "T201", "PGH004"]
 
 [tool.ruff.lint.isort]
 force-single-line = true

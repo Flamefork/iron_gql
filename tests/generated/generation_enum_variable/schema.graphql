@@ -1,0 +1,8 @@
+type Query {
+    search(status: Status!): Boolean
+}
+
+enum Status {
+    ACTIVE
+    INACTIVE
+}

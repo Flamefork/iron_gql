@@ -149,7 +149,7 @@ type FindUserBy = FindUserById | FindUserByEmail
 
 
 class GetUser(runtime.GQLOperation):
-    # See: example/main.py:12
+    # See: main.py:12
     async def execute(self, *, id: builtins.str) -> GetUserResult:
         return await API_CLIENT.query(
             GetUserResult,
@@ -160,7 +160,7 @@ class GetUser(runtime.GQLOperation):
 
 
 class CreateUser(runtime.GQLOperation):
-    # See: example/main.py:33
+    # See: main.py:33
     async def execute(self, *, input: CreateUserInput) -> CreateUserResult:
         return await API_CLIENT.query(
             CreateUserResult,
@@ -171,7 +171,7 @@ class CreateUser(runtime.GQLOperation):
 
 
 class Search(runtime.GQLOperation):
-    # See: example/main.py:47
+    # See: main.py:47
     async def execute(self, *, query: str) -> SearchResult:
         return await API_CLIENT.query(
             SearchResult,
@@ -182,7 +182,7 @@ class Search(runtime.GQLOperation):
 
 
 class GetProfile(runtime.GQLOperation):
-    # See: example/main.py:71
+    # See: main.py:71
     async def execute(self, *, id: builtins.str, with_email: bool, skip_phone: bool) -> GetProfileResult:
         return await API_CLIENT.query(
             GetProfileResult,
@@ -193,7 +193,7 @@ class GetProfile(runtime.GQLOperation):
 
 
 class FindUser(runtime.GQLOperation):
-    # See: example/main.py:89, example/main.py:101
+    # See: main.py:89, main.py:101
     async def execute(self, *, by: FindUserBy) -> FindUserResult:
         return await API_CLIENT.query(
             FindUserResult,
@@ -204,7 +204,7 @@ class FindUser(runtime.GQLOperation):
 
 
 class PostAdded(runtime.GQLOperation):
-    # See: example/main.py:113
+    # See: main.py:113
     def execute(self, *, user_id: builtins.str) -> AbstractAsyncContextManager[AsyncGenerator[PostAddedResult]]:
         return API_CLIENT.subscribe(
             PostAddedResult,

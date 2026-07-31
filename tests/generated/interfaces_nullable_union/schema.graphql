@@ -1,0 +1,15 @@
+type Query {
+    node(id: ID!): Node
+}
+
+union Node = User | Admin
+
+type User {
+    id: ID!
+    name: String!
+}
+
+type Admin {
+    id: ID!
+    permissions: [String!]!
+}

@@ -1,0 +1,10 @@
+scalar DateTime
+
+type Query {
+    events(since: DateTime!): [Event!]!
+}
+
+type Event {
+    name: String!
+    startedAt: DateTime!
+}

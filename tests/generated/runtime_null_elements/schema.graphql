@@ -1,0 +1,4 @@
+type Query {
+    numbers1: [Int]!
+    numbers2: [Int!]
+}

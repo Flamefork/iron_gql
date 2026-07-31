@@ -9,6 +9,9 @@ import graphql
 from graphql.execution.collect_fields import collect_fields
 from graphql.execution.execute import get_field_def
 
+from iron_gql.codegen.accessors import field_type
+from iron_gql.codegen.accessors import union_types
+from iron_gql.codegen.accessors import wrapping_of_type
 from iron_gql.codegen.collect_inputs import collect_input_artifacts
 from iron_gql.codegen.collect_inputs import collect_input_type_closure
 from iron_gql.codegen.ir import BUILTIN_SCALARS
@@ -101,15 +104,17 @@ class PackageCollector:
         child_model_name: str | None = None,
     ) -> TypeRef:
         match gql_type:
-            case graphql.GraphQLNonNull(of_type=inner):
+            case graphql.GraphQLNonNull():
                 return self.collect_type(
-                    inner,
+                    wrapping_of_type(gql_type),
                     nullable=False,
                     child_model_name=child_model_name,
                 )
-            case graphql.GraphQLList(of_type=inner):
+            case graphql.GraphQLList():
                 typ: TypeRef = ListRef(
-                    element=self.collect_type(inner, child_model_name=child_model_name)
+                    element=self.collect_type(
+                        wrapping_of_type(gql_type), child_model_name=child_model_name
+                    )
                 )
             case graphql.GraphQLNamedType() if child_model_name is not None:
                 typ = NamedRef(name=child_model_name)
@@ -144,9 +149,9 @@ class PackageCollector:
                 self._collect_enum(gql_type)
                 return NamedRef(name=gql_type.name)
             case _:
+                type_desc = f"{gql_type.name} ({type(gql_type).__name__})"
                 warn(
-                    f"Unknown GraphQL type: {gql_type.name}"
-                    f" ({type(gql_type).__name__}), mapped to 'object'",
+                    f"Unknown GraphQL type: {type_desc}, mapped to 'object'",
                     category=UnknownGQLTypeWarning,
                     stacklevel=1,
                 )
@@ -160,9 +165,10 @@ class PackageCollector:
             return
         for value_name, enum_value in gql_type.values.items():
             if enum_value.deprecation_reason is not None:
+                value_path = f"{gql_type.name}.{value_name}"
+                reason = enum_value.deprecation_reason
                 warn(
-                    f"Enum value '{gql_type.name}.{value_name}' is deprecated:"
-                    f" {enum_value.deprecation_reason}",
+                    f"Enum value '{value_path}' is deprecated: {reason}",
                     GraphQLDeprecationWarning,
                     stacklevel=2,
                 )
@@ -249,14 +255,14 @@ class PackageCollector:
     ) -> tuple[list[CollectedArtifact], CollectedField]:
         name, alias = python_field_name(response_key, self.to_snake_fn)
         if response_key == "__typename":
-            field_type = typename_type or ScalarRef(
+            type_info = typename_type or ScalarRef(
                 expr=f'Literal["{runtime_type.name}"]'
             )
             return (
                 [],
                 CollectedField(
                     name=name,
-                    type_info=field_type,
+                    type_info=type_info,
                     alias=alias,
                     is_conditional=is_conditional,
                 ),
@@ -274,10 +280,10 @@ class PackageCollector:
             )
             raise ValueError(msg)
         warn_deprecated_field(ctx.query_name, runtime_type, representative, field_def)
-        child_models, field_type = self._collect_typed_field(
+        child_models, type_info = self._collect_typed_field(
             model_name_base=model_name_base,
             response_key=response_key,
-            gql_type=field_def.type,
+            gql_type=field_type(field_def),
             field_nodes=field_nodes,
             ctx=ctx,
         )
@@ -285,7 +291,7 @@ class PackageCollector:
             child_models,
             CollectedField(
                 name=name,
-                type_info=field_type,
+                type_info=type_info,
                 alias=alias,
                 is_conditional=is_conditional,
             ),
@@ -319,7 +325,7 @@ class PackageCollector:
                     self.collect_type(gql_type, child_model_name=child_base),
                 )
             case graphql.GraphQLUnionType():
-                possible = sorted(named.types, key=lambda typ: typ.name)
+                possible = sorted(union_types(named), key=lambda typ: typ.name)
                 return self._collect_polymorphic_models(
                     base_name=child_base,
                     possible_types=possible,

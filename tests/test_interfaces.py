@@ -1,58 +1,599 @@
 import pytest
+from graphql import GraphQLResolveInfo
 from pytest_httpserver import HTTPServer
 
 from iron_gql.codegen import GraphQLGenerationError
 from tests.conftest import ProjectBuilder
+from tests.conftest import generated_package
+from tests.conftest import gql_server
+
+generated_package(
+    "interfaces_union_result",
+    schema="""
+    type Query {
+        node(id: ID!): Node
+        count: Int!
+    }
+
+    union Node = User | Admin
+
+    type User {
+        id: ID!
+        name: String!
+    }
+
+    type Admin {
+        id: ID!
+        name: String!
+        permissions: [String!]!
+    }
+    """,
+    queries='''
+    from tests.generated.interfaces_union_result.gql.api import api_gql
+
+    get_node_and_count = api_gql(
+        """
+        query GetNodeAndCount($id: ID!) {
+            node(id: $id) {
+                __typename
+                ... on User {
+                    id
+                    name
+                }
+                ... on Admin {
+                    id
+                    name
+                    permissions
+                }
+            }
+            count
+        }
+        """
+    )
+    ''',
+)
+
+generated_package(
+    "interfaces_union_iface_fragment",
+    schema="""
+    interface Node {
+        id: ID!
+    }
+
+    type User implements Node {
+        id: ID!
+        name: String!
+    }
+
+    type Admin implements Node {
+        id: ID!
+        permissions: [String!]!
+    }
+
+    union Actor = User | Admin
+
+    type Query {
+        actor(id: ID!): Actor
+    }
+    """,
+    queries='''
+    from tests.generated.interfaces_union_iface_fragment.gql.api import api_gql
+
+    get_actor = api_gql(
+        """
+        query GetActor($id: ID!) {
+            actor(id: $id) {
+                __typename
+                ... on Node {
+                    id
+                }
+                ... on User {
+                    name
+                }
+                ... on Admin {
+                    permissions
+                }
+            }
+        }
+        """
+    )
+    ''',
+)
+
+generated_package(
+    "interfaces_no_fragments",
+    schema="""
+    interface Node {
+        id: ID!
+    }
+
+    type User implements Node {
+        id: ID!
+        name: String
+    }
+
+    type Post implements Node {
+        id: ID!
+        title: String
+    }
+
+    type Query {
+        node(id: ID!): Node
+    }
+    """,
+    queries='''
+    from tests.generated.interfaces_no_fragments.gql.api import api_gql
+
+    get_node = api_gql(
+        """
+        query GetNode($id: ID!) {
+            node(id: $id) {
+                id
+            }
+        }
+        """
+    )
+    ''',
+)
+
+generated_package(
+    "interfaces_with_fragments",
+    schema="""
+    interface Node {
+        id: ID!
+    }
+
+    type User implements Node {
+        id: ID!
+        name: String
+    }
+
+    type Post implements Node {
+        id: ID!
+        title: String
+    }
+
+    type Comment implements Node {
+        id: ID!
+        body: String
+    }
+
+    type Query {
+        node(id: ID!): Node
+    }
+    """,
+    queries='''
+    from tests.generated.interfaces_with_fragments.gql.api import api_gql
+
+    get_node = api_gql(
+        """
+        query GetNode($id: ID!) {
+            node(id: $id) {
+                __typename
+                id
+                ... on User {
+                    name
+                }
+                ... on Post {
+                    title
+                }
+            }
+        }
+        """
+    )
+    ''',
+)
+
+generated_package(
+    "interfaces_nested",
+    schema="""
+    interface Child {
+        id: ID!
+    }
+
+    interface Node {
+        id: ID!
+        child: Child
+    }
+
+    type User implements Node {
+        id: ID!
+        child: Child
+    }
+
+    type Post implements Node {
+        id: ID!
+        child: Child
+    }
+
+    type Comment implements Child {
+        id: ID!
+    }
+
+    type Query {
+        node(id: ID!): Node
+    }
+    """,
+    queries='''
+    from tests.generated.interfaces_nested.gql.api import api_gql
+
+    get_node = api_gql(
+        """
+        query GetNode($id: ID!) {
+            node(id: $id) {
+                __typename
+                id
+                child {
+                    id
+                }
+            }
+        }
+        """
+    )
+    ''',
+)
+
+generated_package(
+    "interfaces_hierarchy",
+    schema="""
+    interface Node {
+        id: ID!
+    }
+
+    interface Entity implements Node {
+        id: ID!
+        createdAt: String!
+    }
+
+    type User implements Entity & Node {
+        id: ID!
+        createdAt: String!
+        name: String
+    }
+
+    type Post implements Node {
+        id: ID!
+        title: String
+    }
+
+    type Query {
+        node(id: ID!): Node
+    }
+    """,
+    queries='''
+    from tests.generated.interfaces_hierarchy.gql.api import api_gql
+
+    get_node = api_gql(
+        """
+        query GetNode($id: ID!) {
+            node(id: $id) {
+                __typename
+                id
+                ... on Entity {
+                    createdAt
+                }
+            }
+        }
+        """
+    )
+    ''',
+)
+
+generated_package(
+    "interfaces_overlapping",
+    schema="""
+    interface Node {
+        id: ID!
+    }
+
+    interface Named {
+        name: String!
+    }
+
+    type User implements Node & Named {
+        id: ID!
+        name: String!
+    }
+
+    type Post implements Node {
+        id: ID!
+    }
+
+    type Org implements Named {
+        name: String!
+    }
+
+    type Query {
+        node(id: ID!): Node
+    }
+    """,
+    queries='''
+    from tests.generated.interfaces_overlapping.gql.api import api_gql
+
+    get_node = api_gql(
+        """
+        query GetNode($id: ID!) {
+            node(id: $id) {
+                __typename
+                id
+                ... on Named {
+                    name
+                }
+            }
+        }
+        """
+    )
+    ''',
+)
+
+generated_package(
+    "interfaces_nullable_union",
+    schema="""
+    type Query {
+        node(id: ID!): Node
+    }
+
+    union Node = User | Admin
+
+    type User {
+        id: ID!
+        name: String!
+    }
+
+    type Admin {
+        id: ID!
+        permissions: [String!]!
+    }
+    """,
+    queries='''
+    from tests.generated.interfaces_nullable_union.gql.api import api_gql
+
+    get_node = api_gql(
+        """
+        query GetNode($id: ID!) {
+            node(id: $id) {
+                __typename
+                ... on User {
+                    id
+                    name
+                }
+                ... on Admin {
+                    id
+                    permissions
+                }
+            }
+        }
+        """
+    )
+    ''',
+)
+
+generated_package(
+    "interfaces_list_union",
+    schema="""
+    type Query {
+        nodes: [Node!]!
+    }
+
+    union Node = User | Post
+
+    type User {
+        id: ID!
+        name: String!
+    }
+
+    type Post {
+        id: ID!
+        title: String!
+    }
+    """,
+    queries='''
+    from tests.generated.interfaces_list_union.gql.api import api_gql
+
+    get_nodes = api_gql(
+        """
+        query GetNodes {
+            nodes {
+                __typename
+                ... on User {
+                    id
+                    name
+                }
+                ... on Post {
+                    id
+                    title
+                }
+            }
+        }
+        """
+    )
+    ''',
+)
+
+generated_package(
+    "interfaces_named_fragment",
+    schema="""
+    interface Node {
+        id: ID!
+    }
+
+    type User implements Node {
+        id: ID!
+        name: String
+    }
+
+    type Post implements Node {
+        id: ID!
+        title: String
+    }
+
+    type Query {
+        node(id: ID!): Node
+    }
+    """,
+    queries='''
+    from tests.generated.interfaces_named_fragment.gql.api import api_gql
+
+    user_fields = api_gql(
+        """
+        fragment UserFields on User {
+            name
+        }
+        """
+    )
+
+    get_node = api_gql(
+        """
+        query GetNode($id: ID!) {
+            node(id: $id) {
+                __typename
+                id
+                ...UserFields
+            }
+        }
+        """
+    )
+    ''',
+)
+
+generated_package(
+    "interfaces_typename_fragment",
+    schema="""
+    interface Node {
+        id: ID!
+    }
+
+    type User implements Node {
+        id: ID!
+        name: String
+    }
+
+    type Post implements Node {
+        id: ID!
+        title: String
+    }
+
+    type Query {
+        node(id: ID!): Node
+    }
+    """,
+    queries='''
+    from tests.generated.interfaces_typename_fragment.gql.api import api_gql
+
+    node_base = api_gql(
+        """
+        fragment NodeBase on Node {
+            __typename
+            id
+        }
+        """
+    )
+
+    get_node = api_gql(
+        """
+        query GetNode($id: ID!) {
+            node(id: $id) {
+                ...NodeBase
+                ... on User {
+                    name
+                }
+                ... on Post {
+                    title
+                }
+            }
+        }
+        """
+    )
+    ''',
+)
+
+generated_package(
+    "interfaces_exhaustive",
+    schema="""
+    interface Node {
+        id: ID!
+    }
+
+    type User implements Node {
+        id: ID!
+        name: String
+    }
+
+    type Post implements Node {
+        id: ID!
+        title: String
+    }
+    type Query {
+        node: Node
+    }
+    """,
+    queries='''
+    from tests.generated.interfaces_exhaustive.gql.api import api_gql
+
+    get_node = api_gql(
+        """
+        query GetNode {
+            node {
+                __typename
+                ... on User {
+                    id
+                    name
+                }
+                ... on Post {
+                    id
+                    title
+                }
+            }
+        }
+        """
+    )
+    ''',
+)
+
+from tests.generated.interfaces_exhaustive import queries as exhaustive_queries
+from tests.generated.interfaces_hierarchy import queries as hierarchy_queries
+from tests.generated.interfaces_hierarchy.gql.api import User as HierarchyUser
+from tests.generated.interfaces_list_union import queries as list_union_queries
+from tests.generated.interfaces_list_union.gql.api import Post as ListUnionPost
+from tests.generated.interfaces_list_union.gql.api import User as ListUnionUser
+from tests.generated.interfaces_named_fragment import queries as named_fragment_queries
+from tests.generated.interfaces_named_fragment.gql.api import User as NamedFragmentUser
+from tests.generated.interfaces_nested import queries as nested_queries
+from tests.generated.interfaces_no_fragments import queries as no_fragments_queries
+from tests.generated.interfaces_nullable_union import queries as nullable_union_queries
+from tests.generated.interfaces_nullable_union.gql.api import Admin as NullableAdmin
+from tests.generated.interfaces_nullable_union.gql.api import User as NullableUser
+from tests.generated.interfaces_overlapping import queries as overlapping_queries
+from tests.generated.interfaces_overlapping.gql.api import User as OverlappingUser
+from tests.generated.interfaces_typename_fragment import (
+    queries as typename_fragment_queries,
+)
+from tests.generated.interfaces_typename_fragment.gql.api import (
+    Post as TypenameFragmentPost,
+)
+from tests.generated.interfaces_typename_fragment.gql.api import (
+    User as TypenameFragmentUser,
+)
+from tests.generated.interfaces_union_iface_fragment import (
+    queries as union_iface_queries,
+)
+from tests.generated.interfaces_union_iface_fragment.gql.api import (
+    Admin as UnionIfaceAdmin,
+)
+from tests.generated.interfaces_union_iface_fragment.gql.api import (
+    User as UnionIfaceUser,
+)
+from tests.generated.interfaces_union_result import queries as union_result_queries
+from tests.generated.interfaces_with_fragments import queries as with_fragments_queries
+from tests.generated.interfaces_with_fragments.gql.api import User as WithFragmentsUser
 
 
 async def test_union_result_validation(
-    test_project: ProjectBuilder, httpserver: HTTPServer
+    httpserver: HTTPServer, monkeypatch: pytest.MonkeyPatch
 ):
-    schema = """
-        type Query {
-            node(id: ID!): Node
-            count: Int!
-        }
-
-        union Node = User | Admin
-
-        type User {
-            id: ID!
-            name: String!
-        }
-
-        type Admin {
-            id: ID!
-            name: String!
-            permissions: [String!]!
-        }
-    """
-
-    query_source = """
-        from sample_app.gql.api import api_gql
-
-        get_node_and_count = api_gql(
-            '''
-            query GetNodeAndCount($id: ID!) {
-                node(id: $id) {
-                    __typename
-                    ... on User {
-                        id
-                        name
-                    }
-                    ... on Admin {
-                        id
-                        name
-                        permissions
-                    }
-                }
-                count
-            }
-            '''
-        )
-    """
-
-    def resolve_node(_root, _info, *, id: str):
+    def resolve_node(
+        _root: None, _info: GraphQLResolveInfo, *, id: str
+    ) -> dict[str, object]:
         if id == "user-1":
             return {"__typename": "User", "id": id, "name": "Morty"}
         return {
@@ -62,81 +603,38 @@ async def test_union_result_validation(
             "permissions": ["portal"],
         }
 
-    def resolve_count(_root, _info):
+    def resolve_count(_root: None, _info: GraphQLResolveInfo) -> int:
         return 3
 
-    async with test_project.server(
+    async with gql_server(
         httpserver,
-        schema=schema,
-        queries=query_source,
-        resolvers={"Query": {"node": resolve_node, "count": resolve_count}},
-    ) as (_, queries):
-        result = await queries.get_node_and_count.execute(id="user-1")
+        monkeypatch,
+        "interfaces_union_result",
+        {"Query": {"node": resolve_node, "count": resolve_count}},
+    ):
+        result = await union_result_queries.get_node_and_count.execute(id="user-1")
         assert result.node is not None
         assert result.count == 3
 
 
 async def test_union_with_interface_fragment(
-    test_project: ProjectBuilder, httpserver: HTTPServer
+    httpserver: HTTPServer, monkeypatch: pytest.MonkeyPatch
 ):
-    schema = """
-        interface Node {
-            id: ID!
-        }
-
-        type User implements Node {
-            id: ID!
-            name: String!
-        }
-
-        type Admin implements Node {
-            id: ID!
-            permissions: [String!]!
-        }
-
-        union Actor = User | Admin
-
-        type Query {
-            actor(id: ID!): Actor
-        }
-    """
-
-    query_source = """
-        from sample_app.gql.api import api_gql
-
-        get_actor = api_gql(
-            '''
-            query GetActor($id: ID!) {
-                actor(id: $id) {
-                    __typename
-                    ... on Node {
-                        id
-                    }
-                    ... on User {
-                        name
-                    }
-                    ... on Admin {
-                        permissions
-                    }
-                }
-            }
-            '''
-        )
-    """
-
-    def resolve_actor(_root, _info, *, id: str):
+    def resolve_actor(
+        _root: None, _info: GraphQLResolveInfo, *, id: str
+    ) -> dict[str, object]:
         if id == "user-1":
             return {"__typename": "User", "id": id, "name": "Morty"}
         return {"__typename": "Admin", "id": id, "permissions": ["portal"]}
 
-    async with test_project.server(
+    async with gql_server(
         httpserver,
-        schema=schema,
-        queries=query_source,
-        resolvers={"Query": {"actor": resolve_actor}},
-    ) as (_, queries):
-        user_result = await queries.get_actor.execute(id="user-1")
-        assert user_result.actor is not None
+        monkeypatch,
+        "interfaces_union_iface_fragment",
+        {"Query": {"actor": resolve_actor}},
+    ):
+        user_result = await union_iface_queries.get_actor.execute(id="user-1")
+        assert isinstance(user_result.actor, UnionIfaceUser)
         assert user_result.actor.id == "user-1"
         assert user_result.actor.name == "Morty"
         assert user_result.actor.model_dump() == {
@@ -145,8 +643,8 @@ async def test_union_with_interface_fragment(
             "name": "Morty",
         }
 
-        admin_result = await queries.get_actor.execute(id="admin-1")
-        assert admin_result.actor is not None
+        admin_result = await union_iface_queries.get_actor.execute(id="admin-1")
+        assert isinstance(admin_result.actor, UnionIfaceAdmin)
         assert admin_result.actor.id == "admin-1"
         assert admin_result.actor.permissions == ["portal"]
         assert admin_result.actor.model_dump() == {
@@ -157,122 +655,46 @@ async def test_union_with_interface_fragment(
 
 
 async def test_interface_without_fragments(
-    test_project: ProjectBuilder, httpserver: HTTPServer
+    httpserver: HTTPServer, monkeypatch: pytest.MonkeyPatch
 ):
-    schema = """
-        interface Node {
-            id: ID!
-        }
-
-        type User implements Node {
-            id: ID!
-            name: String
-        }
-
-        type Post implements Node {
-            id: ID!
-            title: String
-        }
-
-        type Query {
-            node(id: ID!): Node
-        }
-    """
-
-    query_source = """
-        from sample_app.gql.api import api_gql
-
-        get_node = api_gql(
-            '''
-            query GetNode($id: ID!) {
-                node(id: $id) {
-                    id
-                }
-            }
-            '''
-        )
-    """
-
-    def resolve_node(_root, _info, *, id: str):
+    def resolve_node(
+        _root: None, _info: GraphQLResolveInfo, *, id: str
+    ) -> dict[str, str]:
         if id == "user-1":
             return {"__typename": "User", "id": id, "name": "Morty"}
         return {"__typename": "Post", "id": id, "title": "GraphQL 101"}
 
-    async with test_project.server(
+    async with gql_server(
         httpserver,
-        schema=schema,
-        queries=query_source,
-        resolvers={"Query": {"node": resolve_node}},
-    ) as (_, queries):
-        result = await queries.get_node.execute(id="user-1")
+        monkeypatch,
+        "interfaces_no_fragments",
+        {"Query": {"node": resolve_node}},
+    ):
+        result = await no_fragments_queries.get_node.execute(id="user-1")
         assert result.node is not None
         assert result.node.id == "user-1"
 
 
 async def test_interface_with_fragments(
-    test_project: ProjectBuilder, httpserver: HTTPServer
+    httpserver: HTTPServer, monkeypatch: pytest.MonkeyPatch
 ):
-    schema = """
-        interface Node {
-            id: ID!
-        }
-
-        type User implements Node {
-            id: ID!
-            name: String
-        }
-
-        type Post implements Node {
-            id: ID!
-            title: String
-        }
-
-        type Comment implements Node {
-            id: ID!
-            body: String
-        }
-
-        type Query {
-            node(id: ID!): Node
-        }
-    """
-
-    query_source = """
-        from sample_app.gql.api import api_gql
-
-        get_node = api_gql(
-            '''
-            query GetNode($id: ID!) {
-                node(id: $id) {
-                    __typename
-                    id
-                    ... on User {
-                        name
-                    }
-                    ... on Post {
-                        title
-                    }
-                }
-            }
-            '''
-        )
-    """
-
-    def resolve_node(_root, _info, *, id: str):
+    def resolve_node(
+        _root: None, _info: GraphQLResolveInfo, *, id: str
+    ) -> dict[str, str]:
         if id == "user-1":
             return {"__typename": "User", "id": id, "name": "Morty"}
         if id == "post-1":
             return {"__typename": "Post", "id": id, "title": "GraphQL 101"}
         return {"__typename": "Comment", "id": id, "body": "First!"}
 
-    async with test_project.server(
+    async with gql_server(
         httpserver,
-        schema=schema,
-        queries=query_source,
-        resolvers={"Query": {"node": resolve_node}},
-    ) as (_, queries):
-        user_result = await queries.get_node.execute(id="user-1")
-        assert user_result.node is not None
+        monkeypatch,
+        "interfaces_with_fragments",
+        {"Query": {"node": resolve_node}},
+    ):
+        user_result = await with_fragments_queries.get_node.execute(id="user-1")
+        assert isinstance(user_result.node, WithFragmentsUser)
         assert user_result.node.name == "Morty"
         assert user_result.node.model_dump() == {
             "__typename": "User",
@@ -280,7 +702,7 @@ async def test_interface_with_fragments(
             "name": "Morty",
         }
 
-        comment_result = await queries.get_node.execute(id="comment-1")
+        comment_result = await with_fragments_queries.get_node.execute(id="comment-1")
         assert comment_result.node is not None
         assert comment_result.node.id == "comment-1"
         assert comment_result.node.model_dump() == {
@@ -289,121 +711,36 @@ async def test_interface_with_fragments(
         }
 
 
-async def test_nested_interface(test_project: ProjectBuilder, httpserver: HTTPServer):
-    schema = """
-        interface Child {
-            id: ID!
-        }
-
-        interface Node {
-            id: ID!
-            child: Child
-        }
-
-        type User implements Node {
-            id: ID!
-            child: Child
-        }
-
-        type Post implements Node {
-            id: ID!
-            child: Child
-        }
-
-        type Comment implements Child {
-            id: ID!
-        }
-
-        type Query {
-            node(id: ID!): Node
-        }
-    """
-
-    query_source = """
-        from sample_app.gql.api import api_gql
-
-        get_node = api_gql(
-            '''
-            query GetNode($id: ID!) {
-                node(id: $id) {
-                    __typename
-                    id
-                    child {
-                        id
-                    }
-                }
-            }
-            '''
-        )
-    """
-
-    def resolve_node(_root, _info, *, id: str):
+async def test_nested_interface(
+    httpserver: HTTPServer, monkeypatch: pytest.MonkeyPatch
+):
+    def resolve_node(
+        _root: None, _info: GraphQLResolveInfo, *, id: str
+    ) -> dict[str, object]:
         return {
             "__typename": "User",
             "id": id,
             "child": {"__typename": "Comment", "id": "child-1"},
         }
 
-    async with test_project.server(
+    async with gql_server(
         httpserver,
-        schema=schema,
-        queries=query_source,
-        resolvers={"Query": {"node": resolve_node}},
-    ) as (_, queries):
-        result = await queries.get_node.execute(id="user-1")
+        monkeypatch,
+        "interfaces_nested",
+        {"Query": {"node": resolve_node}},
+    ):
+        result = await nested_queries.get_node.execute(id="user-1")
         assert result.node is not None
         assert result.node.child is not None
         assert result.node.child.id == "child-1"
 
 
 async def test_interface_hierarchy(
-    test_project: ProjectBuilder, httpserver: HTTPServer
+    httpserver: HTTPServer, monkeypatch: pytest.MonkeyPatch
 ):
-    schema = """
-        interface Node {
-            id: ID!
-        }
-
-        interface Entity implements Node {
-            id: ID!
-            createdAt: String!
-        }
-
-        type User implements Entity & Node {
-            id: ID!
-            createdAt: String!
-            name: String
-        }
-
-        type Post implements Node {
-            id: ID!
-            title: String
-        }
-
-        type Query {
-            node(id: ID!): Node
-        }
-    """
-
-    query_source = """
-        from sample_app.gql.api import api_gql
-
-        get_node = api_gql(
-            '''
-            query GetNode($id: ID!) {
-                node(id: $id) {
-                    __typename
-                    id
-                    ... on Entity {
-                        createdAt
-                    }
-                }
-            }
-            '''
-        )
-    """
-
-    def resolve_node(_root, _info, *, id: str):
+    def resolve_node(
+        _root: None, _info: GraphQLResolveInfo, *, id: str
+    ) -> dict[str, str]:
         if id == "user-1":
             return {
                 "__typename": "User",
@@ -413,14 +750,14 @@ async def test_interface_hierarchy(
             }
         return {"__typename": "Post", "id": id, "title": "GraphQL 101"}
 
-    async with test_project.server(
+    async with gql_server(
         httpserver,
-        schema=schema,
-        queries=query_source,
-        resolvers={"Query": {"node": resolve_node}},
-    ) as (_, queries):
-        user_result = await queries.get_node.execute(id="user-1")
-        assert user_result.node is not None
+        monkeypatch,
+        "interfaces_hierarchy",
+        {"Query": {"node": resolve_node}},
+    ):
+        user_result = await hierarchy_queries.get_node.execute(id="user-1")
+        assert isinstance(user_result.node, HierarchyUser)
         assert user_result.node.created_at == "2024-01-01"
         assert user_result.node.model_dump() == {
             "__typename": "User",
@@ -428,7 +765,7 @@ async def test_interface_hierarchy(
             "createdAt": "2024-01-01",
         }
 
-        post_result = await queries.get_node.execute(id="post-1")
+        post_result = await hierarchy_queries.get_node.execute(id="post-1")
         assert post_result.node is not None
         assert post_result.node.id == "post-1"
         assert post_result.node.model_dump() == {
@@ -438,66 +775,23 @@ async def test_interface_hierarchy(
 
 
 async def test_interface_fragment_on_overlapping_interface(
-    test_project: ProjectBuilder, httpserver: HTTPServer
+    httpserver: HTTPServer, monkeypatch: pytest.MonkeyPatch
 ):
-    schema = """
-        interface Node {
-            id: ID!
-        }
-
-        interface Named {
-            name: String!
-        }
-
-        type User implements Node & Named {
-            id: ID!
-            name: String!
-        }
-
-        type Post implements Node {
-            id: ID!
-        }
-
-        type Org implements Named {
-            name: String!
-        }
-
-        type Query {
-            node(id: ID!): Node
-        }
-    """
-
-    query_source = """
-        from sample_app.gql.api import api_gql
-
-        get_node = api_gql(
-            '''
-            query GetNode($id: ID!) {
-                node(id: $id) {
-                    __typename
-                    id
-                    ... on Named {
-                        name
-                    }
-                }
-            }
-            '''
-        )
-    """
-
-    def resolve_node(_root, _info, *, id: str):
+    def resolve_node(
+        _root: None, _info: GraphQLResolveInfo, *, id: str
+    ) -> dict[str, str]:
         if id == "user-1":
             return {"__typename": "User", "id": id, "name": "Morty"}
         return {"__typename": "Post", "id": id}
 
-    async with test_project.server(
+    async with gql_server(
         httpserver,
-        schema=schema,
-        queries=query_source,
-        resolvers={"Query": {"node": resolve_node}},
-    ) as (_, queries):
-        user_result = await queries.get_node.execute(id="user-1")
-        assert user_result.node is not None
+        monkeypatch,
+        "interfaces_overlapping",
+        {"Query": {"node": resolve_node}},
+    ):
+        user_result = await overlapping_queries.get_node.execute(id="user-1")
+        assert isinstance(user_result.node, OverlappingUser)
         assert user_result.node.id == "user-1"
         assert user_result.node.name == "Morty"
         assert user_result.node.model_dump() == {
@@ -506,7 +800,7 @@ async def test_interface_fragment_on_overlapping_interface(
             "name": "Morty",
         }
 
-        post_result = await queries.get_node.execute(id="post-1")
+        post_result = await overlapping_queries.get_node.execute(id="post-1")
         assert post_result.node is not None
         assert post_result.node.id == "post-1"
         assert post_result.node.model_dump() == {
@@ -704,66 +998,28 @@ def test_union_fragment_typename_in_variants(test_project: ProjectBuilder):
 
 
 async def test_nullable_union_result_validation(
-    test_project: ProjectBuilder, httpserver: HTTPServer
+    httpserver: HTTPServer, monkeypatch: pytest.MonkeyPatch
 ):
-    schema = """
-        type Query {
-            node(id: ID!): Node
-        }
-
-        union Node = User | Admin
-
-        type User {
-            id: ID!
-            name: String!
-        }
-
-        type Admin {
-            id: ID!
-            permissions: [String!]!
-        }
-    """
-
-    query_source = """
-        from sample_app.gql.api import api_gql
-
-        get_node = api_gql(
-            '''
-            query GetNode($id: ID!) {
-                node(id: $id) {
-                    __typename
-                    ... on User {
-                        id
-                        name
-                    }
-                    ... on Admin {
-                        id
-                        permissions
-                    }
-                }
-            }
-            '''
-        )
-    """
-
-    def resolve_node(_root, _info, *, id: str):
+    def resolve_node(
+        _root: None, _info: GraphQLResolveInfo, *, id: str
+    ) -> dict[str, object] | None:
         if id == "none":
             return None
         if id == "user-1":
             return {"__typename": "User", "id": id, "name": "Morty"}
         return {"__typename": "Admin", "id": id, "permissions": ["portal"]}
 
-    async with test_project.server(
+    async with gql_server(
         httpserver,
-        schema=schema,
-        queries=query_source,
-        resolvers={"Query": {"node": resolve_node}},
-    ) as (_, queries):
-        none_result = await queries.get_node.execute(id="none")
+        monkeypatch,
+        "interfaces_nullable_union",
+        {"Query": {"node": resolve_node}},
+    ):
+        none_result = await nullable_union_queries.get_node.execute(id="none")
         assert none_result.node is None
 
-        user_result = await queries.get_node.execute(id="user-1")
-        assert user_result.node is not None
+        user_result = await nullable_union_queries.get_node.execute(id="user-1")
+        assert isinstance(user_result.node, NullableUser)
         assert user_result.node.name == "Morty"
         assert user_result.node.model_dump() == {
             "__typename": "User",
@@ -771,8 +1027,8 @@ async def test_nullable_union_result_validation(
             "name": "Morty",
         }
 
-        admin_result = await queries.get_node.execute(id="admin-1")
-        assert admin_result.node is not None
+        admin_result = await nullable_union_queries.get_node.execute(id="admin-1")
+        assert isinstance(admin_result.node, NullableAdmin)
         assert admin_result.node.permissions == ["portal"]
         assert admin_result.node.model_dump() == {
             "__typename": "Admin",
@@ -781,67 +1037,31 @@ async def test_nullable_union_result_validation(
         }
 
 
-async def test_list_wrapped_union(test_project: ProjectBuilder, httpserver: HTTPServer):
-    schema = """
-        type Query {
-            nodes: [Node!]!
-        }
-
-        union Node = User | Post
-
-        type User {
-            id: ID!
-            name: String!
-        }
-
-        type Post {
-            id: ID!
-            title: String!
-        }
-    """
-
-    query_source = """
-        from sample_app.gql.api import api_gql
-
-        get_nodes = api_gql(
-            '''
-            query GetNodes {
-                nodes {
-                    __typename
-                    ... on User {
-                        id
-                        name
-                    }
-                    ... on Post {
-                        id
-                        title
-                    }
-                }
-            }
-            '''
-        )
-    """
-
-    def resolve_nodes(_root, _info):
+async def test_list_wrapped_union(
+    httpserver: HTTPServer, monkeypatch: pytest.MonkeyPatch
+):
+    def resolve_nodes(_root: None, _info: GraphQLResolveInfo) -> list[dict[str, str]]:
         return [
             {"__typename": "User", "id": "u-1", "name": "Morty"},
             {"__typename": "Post", "id": "p-1", "title": "GraphQL 101"},
         ]
 
-    async with test_project.server(
+    async with gql_server(
         httpserver,
-        schema=schema,
-        queries=query_source,
-        resolvers={"Query": {"nodes": resolve_nodes}},
-    ) as (_, queries):
-        result = await queries.get_nodes.execute()
+        monkeypatch,
+        "interfaces_list_union",
+        {"Query": {"nodes": resolve_nodes}},
+    ):
+        result = await list_union_queries.get_nodes.execute()
         assert len(result.nodes) == 2
+        assert isinstance(result.nodes[0], ListUnionUser)
         assert result.nodes[0].name == "Morty"
         assert result.nodes[0].model_dump() == {
             "__typename": "User",
             "id": "u-1",
             "name": "Morty",
         }
+        assert isinstance(result.nodes[1], ListUnionPost)
         assert result.nodes[1].title == "GraphQL 101"
         assert result.nodes[1].model_dump() == {
             "__typename": "Post",
@@ -851,65 +1071,23 @@ async def test_list_wrapped_union(test_project: ProjectBuilder, httpserver: HTTP
 
 
 async def test_interface_with_named_fragment_type_condition(
-    test_project: ProjectBuilder, httpserver: HTTPServer
+    httpserver: HTTPServer, monkeypatch: pytest.MonkeyPatch
 ):
-    schema = """
-        interface Node {
-            id: ID!
-        }
-
-        type User implements Node {
-            id: ID!
-            name: String
-        }
-
-        type Post implements Node {
-            id: ID!
-            title: String
-        }
-
-        type Query {
-            node(id: ID!): Node
-        }
-    """
-
-    query_source = """
-        from sample_app.gql.api import api_gql
-
-        user_fields = api_gql(
-            '''
-            fragment UserFields on User {
-                name
-            }
-            '''
-        )
-
-        get_node = api_gql(
-            '''
-            query GetNode($id: ID!) {
-                node(id: $id) {
-                    __typename
-                    id
-                    ...UserFields
-                }
-            }
-            '''
-        )
-    """
-
-    def resolve_node(_root, _info, *, id: str):
+    def resolve_node(
+        _root: None, _info: GraphQLResolveInfo, *, id: str
+    ) -> dict[str, str]:
         if id == "user-1":
             return {"__typename": "User", "id": id, "name": "Morty"}
         return {"__typename": "Post", "id": id, "title": "GraphQL 101"}
 
-    async with test_project.server(
+    async with gql_server(
         httpserver,
-        schema=schema,
-        queries=query_source,
-        resolvers={"Query": {"node": resolve_node}},
-    ) as (_, queries):
-        user_result = await queries.get_node.execute(id="user-1")
-        assert user_result.node is not None
+        monkeypatch,
+        "interfaces_named_fragment",
+        {"Query": {"node": resolve_node}},
+    ):
+        user_result = await named_fragment_queries.get_node.execute(id="user-1")
+        assert isinstance(user_result.node, NamedFragmentUser)
         assert user_result.node.name == "Morty"
         assert user_result.node.model_dump() == {
             "__typename": "User",
@@ -917,7 +1095,7 @@ async def test_interface_with_named_fragment_type_condition(
             "name": "Morty",
         }
 
-        post_result = await queries.get_node.execute(id="post-1")
+        post_result = await named_fragment_queries.get_node.execute(id="post-1")
         assert post_result.node is not None
         assert post_result.node.id == "post-1"
         assert post_result.node.model_dump() == {
@@ -927,70 +1105,23 @@ async def test_interface_with_named_fragment_type_condition(
 
 
 async def test_interface_typename_in_named_fragment(
-    test_project: ProjectBuilder, httpserver: HTTPServer
+    httpserver: HTTPServer, monkeypatch: pytest.MonkeyPatch
 ):
-    schema = """
-        interface Node {
-            id: ID!
-        }
-
-        type User implements Node {
-            id: ID!
-            name: String
-        }
-
-        type Post implements Node {
-            id: ID!
-            title: String
-        }
-
-        type Query {
-            node(id: ID!): Node
-        }
-    """
-
-    query_source = """
-        from sample_app.gql.api import api_gql
-
-        node_base = api_gql(
-            '''
-            fragment NodeBase on Node {
-                __typename
-                id
-            }
-            '''
-        )
-
-        get_node = api_gql(
-            '''
-            query GetNode($id: ID!) {
-                node(id: $id) {
-                    ...NodeBase
-                    ... on User {
-                        name
-                    }
-                    ... on Post {
-                        title
-                    }
-                }
-            }
-            '''
-        )
-    """
-
-    def resolve_node(_root, _info, *, id: str):
+    def resolve_node(
+        _root: None, _info: GraphQLResolveInfo, *, id: str
+    ) -> dict[str, str]:
         if id == "user-1":
             return {"__typename": "User", "id": id, "name": "Morty"}
         return {"__typename": "Post", "id": id, "title": "GraphQL 101"}
 
-    async with test_project.server(
+    async with gql_server(
         httpserver,
-        schema=schema,
-        queries=query_source,
-        resolvers={"Query": {"node": resolve_node}},
-    ) as (_, queries):
-        user_result = await queries.get_node.execute(id="user-1")
-        assert user_result.node is not None
+        monkeypatch,
+        "interfaces_typename_fragment",
+        {"Query": {"node": resolve_node}},
+    ):
+        user_result = await typename_fragment_queries.get_node.execute(id="user-1")
+        assert isinstance(user_result.node, TypenameFragmentUser)
         assert user_result.node.name == "Morty"
         assert user_result.node.model_dump() == {
             "__typename": "User",
@@ -998,8 +1129,8 @@ async def test_interface_typename_in_named_fragment(
             "name": "Morty",
         }
 
-        post_result = await queries.get_node.execute(id="post-1")
-        assert post_result.node is not None
+        post_result = await typename_fragment_queries.get_node.execute(id="post-1")
+        assert isinstance(post_result.node, TypenameFragmentPost)
         assert post_result.node.title == "GraphQL 101"
         assert post_result.node.model_dump() == {
             "__typename": "Post",
@@ -1009,64 +1140,24 @@ async def test_interface_typename_in_named_fragment(
 
 
 async def test_interface_exhaustively_covered(
-    test_project: ProjectBuilder, httpserver: HTTPServer
+    httpserver: HTTPServer, monkeypatch: pytest.MonkeyPatch
 ):
-    schema = """
-        interface Node {
-            id: ID!
-        }
-
-        type User implements Node {
-            id: ID!
-            name: String
-        }
-
-        type Post implements Node {
-            id: ID!
-            title: String
-        }
-        type Query {
-            node: Node
-        }
-    """
-    query_source = """
-        from sample_app.gql.api import api_gql
-
-        get_node = api_gql(
-            '''
-            query GetNode {
-                node {
-                    __typename
-                    ... on User {
-                        id
-                        name
-                    }
-                    ... on Post {
-                        id
-                        title
-                    }
-                }
-            }
-            '''
-        )
-    """
-
     calls = 0
 
-    def resolve_node(_root, _info):
+    def resolve_node(_root: None, _info: GraphQLResolveInfo) -> dict[str, str]:
         nonlocal calls
         if calls == 0:
             calls += 1
             return {"__typename": "User", "id": "user-1", "name": "Morty"}
         return {"__typename": "Post", "id": "post-1", "title": "GraphQL 101"}
 
-    async with test_project.server(
+    async with gql_server(
         httpserver,
-        schema=schema,
-        queries=query_source,
-        resolvers={"Query": {"node": resolve_node}},
-    ) as (_, queries):
-        user_result = await queries.get_node.execute()
+        monkeypatch,
+        "interfaces_exhaustive",
+        {"Query": {"node": resolve_node}},
+    ):
+        user_result = await exhaustive_queries.get_node.execute()
         assert user_result.node is not None
         assert user_result.node.model_dump() == {
             "__typename": "User",
@@ -1074,7 +1165,7 @@ async def test_interface_exhaustively_covered(
             "name": "Morty",
         }
 
-        post_result = await queries.get_node.execute()
+        post_result = await exhaustive_queries.get_node.execute()
         assert post_result.node is not None
         assert post_result.node.model_dump() == {
             "__typename": "Post",

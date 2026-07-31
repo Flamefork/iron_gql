@@ -1,5 +1,6 @@
 import pytest
 
+from iron_gql.codegen.ir import CollectedArtifact
 from iron_gql.codegen.ir import CollectedField
 from iron_gql.codegen.ir import CollectedModel
 from iron_gql.codegen.ir import CollectedPackageIR
@@ -141,8 +142,12 @@ def test_apply_rename_collision_on_different_shapes_fails(
     )
     ir = _pkg([first, second])
     bad_rename = {"Foo_1": "Foo", "Foo_2": "Foo"}
+
+    def bad_build_rename_map(_artifacts: list[CollectedArtifact]) -> dict[str, str]:
+        return bad_rename
+
     monkeypatch.setattr(
-        "iron_gql.codegen.naming.build_rename_map", lambda _artifacts: bad_rename
+        "iron_gql.codegen.naming.build_rename_map", bad_build_rename_map
     )
     with pytest.raises(AssertionError, match="differing shapes"):
         apply_rename(ir)

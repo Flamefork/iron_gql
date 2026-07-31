@@ -1,0 +1,23 @@
+interface Node {
+    id: ID!
+}
+
+interface Entity implements Node {
+    id: ID!
+    createdAt: String!
+}
+
+type User implements Entity & Node {
+    id: ID!
+    createdAt: String!
+    name: String
+}
+
+type Post implements Node {
+    id: ID!
+    title: String
+}
+
+type Query {
+    node(id: ID!): Node
+}

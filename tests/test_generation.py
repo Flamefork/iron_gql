@@ -1,6 +1,7 @@
 import importlib
 
 import pytest
+from graphql import GraphQLResolveInfo
 from pydantic import alias_generators
 from pytest_httpserver import HTTPServer
 
@@ -9,6 +10,86 @@ from iron_gql.codegen import GraphQLGenerationError
 from iron_gql.codegen import UnknownGQLTypeWarning
 from iron_gql.codegen import generate_gql_package
 from tests.conftest import ProjectBuilder
+from tests.conftest import generated_package
+from tests.conftest import gql_server
+
+generated_package(
+    "generation_nested_inputs",
+    schema="""
+    type Query {
+        ping: Boolean
+    }
+
+    type Mutation {
+        updateUser(input: UpdateUserInput!): Boolean
+    }
+
+    input UpdateUserInput {
+        id: ID!
+        address: AddressInput
+    }
+
+    input AddressInput {
+        street: String!
+    }
+    """,
+    queries='''
+    from tests.generated.generation_nested_inputs.gql.api import api_gql
+
+    update_user = api_gql(
+        """
+        mutation UpdateUser($input: UpdateUserInput!) {
+            updateUser(input: $input)
+        }
+        """
+    )
+    ''',
+)
+
+generated_package(
+    "generation_enum_variable",
+    schema="""
+    type Query {
+        search(status: Status!): Boolean
+    }
+
+    enum Status {
+        ACTIVE
+        INACTIVE
+    }
+    """,
+    queries='''
+    from tests.generated.generation_enum_variable.gql.api import api_gql
+
+    search = api_gql(
+        """
+        query Search($status: Status!) {
+            search(status: $status)
+        }
+        """
+    )
+    ''',
+)
+
+generated_package(
+    "generation_anonymous",
+    schema="""
+    type Query {
+        ping: String
+    }
+    """,
+    queries="""
+    from tests.generated.generation_anonymous.gql.api import api_gql
+
+    # Anonymous query
+    q = api_gql("query { ping }")
+    """,
+)
+
+from tests.generated.generation_anonymous import queries as anonymous_queries
+from tests.generated.generation_enum_variable import queries as enum_variable_queries
+from tests.generated.generation_nested_inputs.gql.api import AddressInput
+from tests.generated.generation_nested_inputs.gql.api import UpdateUserInput
 
 
 def test_generate_with_schema_outside_src(test_project: ProjectBuilder):
@@ -61,7 +142,8 @@ ping = api_gql(
 
     test_project.clear_modules()
     api_module = importlib.import_module("sample_app.gql.api")
-    assert isinstance(api_module.API_CLIENT, runtime.GQLClient)
+    # attributes of a dynamically imported module are Any
+    assert isinstance(api_module.API_CLIENT, runtime.GQLClient)  # pyright: ignore[reportAny]
 
 
 def test_duplicate_operations_raise(test_project: ProjectBuilder):
@@ -111,44 +193,9 @@ def test_duplicate_operations_raise(test_project: ProjectBuilder):
         test_project.generate()
 
 
-def test_nested_input_objects_missing(test_project: ProjectBuilder):
-    schema = """
-        type Query {
-            ping: Boolean
-        }
-
-        type Mutation {
-            updateUser(input: UpdateUserInput!): Boolean
-        }
-
-        input UpdateUserInput {
-            id: ID!
-            address: AddressInput
-        }
-
-        input AddressInput {
-            street: String!
-        }
-    """
-
-    test_project.prepare(
-        schema=schema,
-        queries="""
-        from sample_app.gql.api import api_gql
-
-        update_user = api_gql(
-            '''
-            mutation UpdateUser($input: UpdateUserInput!) {
-                updateUser(input: $input)
-            }
-            '''
-        )
-        """,
-    )
-
-    api, _ = test_project.generate_and_import()
-    address = api.AddressInput(street="Main St")
-    api.UpdateUserInput(id="u-1", address=address)
+def test_nested_input_objects_missing():
+    address = AddressInput(street="Main St")
+    UpdateUserInput(id="u-1", address=address)
 
 
 def test_invalid_query_reports_error(test_project: ProjectBuilder):
@@ -217,8 +264,9 @@ def test_input_type_dependency_ordering(test_project: ProjectBuilder):
     assert changed is True
 
     api = test_project.import_api()
-    item = api.ItemInput(sku="ABC123", quantity=2)
-    api.OrderInput(id="o-1", item=item)
+    # attributes of a dynamically imported module are Any
+    item = api.ItemInput(sku="ABC123", quantity=2)  # pyright: ignore[reportAny]
+    api.OrderInput(id="o-1", item=item)  # pyright: ignore[reportAny]
 
 
 def test_self_referential_input_type(test_project: ProjectBuilder):
@@ -256,9 +304,10 @@ def test_self_referential_input_type(test_project: ProjectBuilder):
     assert changed is True
 
     api = test_project.import_api()
-    leaf = api.TreeNode(value="leaf")
-    parent = api.TreeNode(value="parent", children=[leaf])
-    assert parent.children[0].value == "leaf"
+    # attributes of a dynamically imported module are Any
+    leaf = api.TreeNode(value="leaf")  # pyright: ignore[reportAny]
+    parent = api.TreeNode(value="parent", children=[leaf])  # pyright: ignore[reportAny]
+    assert parent.children[0].value == "leaf"  # pyright: ignore[reportAny]
 
 
 def test_input_enums_and_defaults(test_project: ProjectBuilder):
@@ -306,65 +355,30 @@ def test_input_enums_and_defaults(test_project: ProjectBuilder):
     assert changed is True
 
     api = test_project.import_api()
-    update = api.UpdateInput(status="ACTIVE")
-    assert isinstance(update.child, api.ChildInput)
-    assert update.child.code == "X"
-    serialized = runtime.serialize_variables({"x": update})[0]["x"]
+    # attributes of a dynamically imported module are Any
+    update = api.UpdateInput(status="ACTIVE")  # pyright: ignore[reportAny]
+    assert isinstance(update.child, api.ChildInput)  # pyright: ignore[reportAny]
+    assert update.child.code == "X"  # pyright: ignore[reportAny]
+    serialized = runtime.serialize_variables({"x": update})[0]["x"]  # pyright: ignore[reportAny]
     assert serialized == {"status": "ACTIVE"}
 
 
 async def test_operation_variable_enum_variable_executes(
-    test_project: ProjectBuilder, httpserver: HTTPServer
+    httpserver: HTTPServer, monkeypatch: pytest.MonkeyPatch
 ):
-    schema = """
-        type Query {
-            search(status: Status!): Boolean
-        }
-
-        enum Status {
-            ACTIVE
-            INACTIVE
-        }
-    """
-
-    test_project.prepare(
-        schema=schema,
-        queries="""
-        from sample_app.gql.api import api_gql
-
-        search = api_gql(
-            '''
-            query Search($status: Status!) {
-                search(status: $status)
-            }
-            '''
-        )
-        """,
-    )
-
-    def resolve_search(_root, _info, *, status: str):
+    def resolve_search(_root: None, _info: GraphQLResolveInfo, *, status: str) -> bool:
         return status == "ACTIVE"
 
-    async with test_project.server(
+    async with gql_server(
         httpserver,
-        schema=schema,
-        queries="""
-        from sample_app.gql.api import api_gql
-
-        search = api_gql(
-            '''
-            query Search($status: Status!) {
-                search(status: $status)
-            }
-            '''
-        )
-        """,
-        resolvers={"Query": {"search": resolve_search}},
-    ) as (_, queries):
-        active = await queries.search.execute(status="ACTIVE")
+        monkeypatch,
+        "generation_enum_variable",
+        {"Query": {"search": resolve_search}},
+    ):
+        active = await enum_variable_queries.search.execute(status="ACTIVE")
         assert active.search is True
 
-        inactive = await queries.search.execute(status="INACTIVE")
+        inactive = await enum_variable_queries.search.execute(status="INACTIVE")
         assert inactive.search is False
 
 
@@ -397,8 +411,9 @@ def test_unknown_scalar_warning(test_project: ProjectBuilder):
     assert changed is True
 
     api = test_project.import_api()
-    result = api.GetValueResult(custom_value={"raw": "value"})
-    assert result.custom_value == {"raw": "value"}
+    # attributes of a dynamically imported module are Any
+    result = api.GetValueResult(custom_value={"raw": "value"})  # pyright: ignore[reportAny]
+    assert result.custom_value == {"raw": "value"}  # pyright: ignore[reportAny]
 
 
 def test_debug_artifacts_generation(test_project: ProjectBuilder):
@@ -497,42 +512,26 @@ def test_default_scalars_and_nested_list_input(test_project: ProjectBuilder):
 
     api = test_project.import_api()
     variables, files = runtime.serialize_variables({
-        "input": api.ComplexInput(matrix=[[1, None], None])
+        # attributes of a dynamically imported module are Any
+        "input": api.ComplexInput(matrix=[[1, None], None])  # pyright: ignore[reportAny]
     })
     assert variables == {"input": {"matrix": [[1, None], None]}}
     assert files == {}
 
 
 async def test_anonymous_query_generation(
-    test_project: ProjectBuilder, httpserver: HTTPServer
+    httpserver: HTTPServer, monkeypatch: pytest.MonkeyPatch
 ):
-    schema = """
-        type Query {
-            ping: String
-        }
-    """
-    test_project.prepare(
-        schema=schema,
-        queries="""
-        from sample_app.gql.api import api_gql
-        # Anonymous query
-        q = api_gql("query { ping }")
-        """,
-    )
-
-    def resolve_ping(_root, _info):
+    def resolve_ping(_root: None, _info: GraphQLResolveInfo) -> str:
         return "pong"
 
-    async with test_project.server(
+    async with gql_server(
         httpserver,
-        schema=schema,
-        queries="""
-        from sample_app.gql.api import api_gql
-        q = api_gql("query { ping }")
-        """,
-        resolvers={"Query": {"ping": resolve_ping}},
-    ) as (_, queries):
-        result = await queries.q.execute()
+        monkeypatch,
+        "generation_anonymous",
+        {"Query": {"ping": resolve_ping}},
+    ):
+        result = await anonymous_queries.q.execute()
         assert result.ping == "pong"
 
 
@@ -563,7 +562,9 @@ async def test_list_variable_argument(
         """,
     )
 
-    def resolve_users(_root, _info, *, ids: list[str] | None = None):
+    def resolve_users(
+        _root: None, _info: GraphQLResolveInfo, *, ids: list[str] | None = None
+    ) -> list[dict[str, str]]:
         if ids is None:
             return []
         return [{"id": id_value} for id_value in ids]
@@ -585,8 +586,9 @@ async def test_list_variable_argument(
         """,
         resolvers={"Query": {"users": resolve_users}},
     ) as (_, queries):
-        result = await queries.get_users.execute(ids=["u-1", "u-2"])
-        assert [user.id for user in result.users] == ["u-1", "u-2"]
+        # attributes of a dynamically imported module are Any
+        result = await queries.get_users.execute(ids=["u-1", "u-2"])  # pyright: ignore[reportAny]
+        assert [user.id for user in result.users] == ["u-1", "u-2"]  # pyright: ignore[reportAny]
 
 
 def test_regeneration_is_idempotent(test_project: ProjectBuilder):
@@ -622,7 +624,8 @@ def test_no_queries_generates_module(test_project: ProjectBuilder):
 
     assert test_project.generate() is True
     api = test_project.import_api()
-    assert isinstance(api.API_CLIENT, runtime.GQLClient)
+    # attributes of a dynamically imported module are Any
+    assert isinstance(api.API_CLIENT, runtime.GQLClient)  # pyright: ignore[reportAny]
 
 
 def test_invalid_gql_call_arguments(test_project: ProjectBuilder):

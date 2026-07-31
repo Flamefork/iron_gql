@@ -4,7 +4,6 @@ import shutil
 import textwrap
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
 
 import graphql
 import pydantic
@@ -36,7 +35,7 @@ class Statement:
 class GQLVar:
     name: str
     gql_type: graphql.GraphQLType
-    default_value: Any = graphql.Undefined
+    default_value: object = graphql.Undefined
 
 
 def parse_var(
@@ -46,15 +45,18 @@ def parse_var(
     context: str = "",
 ) -> GQLVar:
     var_name = var_def.variable.name.value
-    gql_type = graphql.type_from_ast(schema, var_def.type)
+    gql_type: graphql.GraphQLType | None = graphql.type_from_ast(  # pyright: ignore[reportUnknownMemberType]
+        schema, var_def.type
+    )
     if gql_type is None:
         msg = f"Cannot resolve type for ${var_name}"
         if context:
             msg = f"{msg} in {context}"
         raise ValueError(msg)
-    default_value = graphql.Undefined
+    default_value: object = graphql.Undefined
     if var_def.default_value is not None:
-        default_value = value_from_ast_untyped(var_def.default_value)
+        # `value_from_ast_untyped` is typed as Any by design
+        default_value = value_from_ast_untyped(var_def.default_value)  # pyright: ignore[reportAny]
     return GQLVar(name=var_name, gql_type=gql_type, default_value=default_value)
 
 
@@ -185,8 +187,16 @@ def write_debug_artifacts(
     dump_strings(
         debug_path / "queries.gql", [query.stmt.clean_text for query in queries]
     )
-    dump_json(debug_path / "queries.json", [query.doc.to_dict() for query in queries])
-    dump_json(debug_path / "schema.json", schema_document.to_dict())
+    # graphql-core's `Node.to_dict` is typed as `Dict[Unknown, Unknown]`;
+    # `dump_json` accepts `object`, so we just suppress the leak here.
+    dump_json(
+        debug_path / "queries.json",
+        [query.doc.to_dict() for query in queries],  # pyright: ignore[reportUnknownMemberType, reportUnknownArgumentType]
+    )
+    dump_json(
+        debug_path / "schema.json",
+        schema_document.to_dict(),  # pyright: ignore[reportUnknownMemberType, reportUnknownArgumentType]
+    )
     dump_json(
         debug_path / "out.json",
         [

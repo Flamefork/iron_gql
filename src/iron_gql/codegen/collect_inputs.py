@@ -3,6 +3,8 @@ from warnings import warn
 
 import graphql
 
+from iron_gql.codegen.accessors import field_type
+from iron_gql.codegen.accessors import input_fields
 from iron_gql.codegen.ir import CollectedArtifact
 from iron_gql.codegen.ir import CollectedField
 from iron_gql.codegen.ir import CollectedModel
@@ -39,8 +41,8 @@ def collect_input_type_closure(
             continue
         visited.add(typ.name)
         result.append(typ)
-        for gql_field in typ.fields.values():
-            target = graphql.get_named_type(gql_field.type)
+        for gql_field in input_fields(typ).values():
+            target = graphql.get_named_type(field_type(gql_field))
             if isinstance(target, graphql.GraphQLInputObjectType):
                 queue.append(target)
     return sorted(result, key=lambda typ: typ.name)
@@ -76,18 +78,19 @@ def _collect_regular_input_type(
     collect_type: TypeRefBuilder,
 ) -> CollectedModel:
     fields: list[CollectedField] = []
-    for field_name, gql_field in gql_type.fields.items():
+    for field_name, gql_field in input_fields(gql_type).items():
         if gql_field.deprecation_reason is not None:
+            field_path = f"{gql_type.name}.{field_name}"
+            reason = gql_field.deprecation_reason
             warn(
-                f"Input field '{gql_type.name}.{field_name}' is deprecated:"
-                f" {gql_field.deprecation_reason}",
+                f"Input field '{field_path}' is deprecated: {reason}",
                 GraphQLDeprecationWarning,
                 stacklevel=2,
             )
         fields.append(
             CollectedField(
                 name=to_snake_fn(field_name),
-                type_info=collect_type(gql_field.type),
+                type_info=collect_type(field_type(gql_field)),
                 default_expr=_input_default_expr(gql_field),
             )
         )
@@ -102,11 +105,12 @@ def _collect_one_of_input_type(
 ) -> list[CollectedArtifact]:
     variant_names: list[str] = []
     artifacts: list[CollectedArtifact] = []
-    for field_name, gql_field in gql_type.fields.items():
+    for field_name, gql_field in input_fields(gql_type).items():
         if gql_field.deprecation_reason is not None:
+            field_path = f"{gql_type.name}.{field_name}"
+            reason = gql_field.deprecation_reason
             warn(
-                f"Input field '{gql_type.name}.{field_name}' is deprecated:"
-                f" {gql_field.deprecation_reason}",
+                f"Input field '{field_path}' is deprecated: {reason}",
                 GraphQLDeprecationWarning,
                 stacklevel=2,
             )
@@ -118,7 +122,7 @@ def _collect_one_of_input_type(
                 fields=[
                     CollectedField(
                         name=to_snake_fn(field_name),
-                        type_info=collect_type(gql_field.type, nullable=False),
+                        type_info=collect_type(field_type(gql_field), nullable=False),
                     )
                 ],
             )
@@ -130,8 +134,10 @@ def _collect_one_of_input_type(
 
 
 def _input_default_expr(gql_field: graphql.GraphQLInputField) -> str | None:
-    if gql_field.default_value != graphql.Undefined:
-        return repr(gql_field.default_value)
-    if not isinstance(gql_field.type, graphql.GraphQLNonNull):
+    # graphql-core declares `default_value` as Any
+    default_value: object = gql_field.default_value  # pyright: ignore[reportAny]
+    if default_value != graphql.Undefined:
+        return repr(default_value)
+    if not isinstance(field_type(gql_field), graphql.GraphQLNonNull):
         return "None"
     return None
