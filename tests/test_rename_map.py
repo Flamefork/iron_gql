@@ -13,7 +13,7 @@ from iron_gql.codegen.naming import build_rename_map
 
 
 def _field(name: str, type_info: TypeRef) -> CollectedField:
-    return CollectedField(name=name, type_info=type_info)
+    return CollectedField(name=name, response_key=name, type_info=type_info)
 
 
 def _scalar(expr: str) -> ScalarRef:

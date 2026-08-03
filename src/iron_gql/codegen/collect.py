@@ -56,10 +56,10 @@ class CollectionContext:
 def python_field_name(
     response_key: str,
     to_snake_fn: StrTransform,
-) -> tuple[str, str | None]:
+) -> str:
     if response_key.startswith("__"):
-        return to_snake_fn(f"{response_key[2:]}__"), response_key
-    return to_snake_fn(response_key), None
+        return to_snake_fn(f"{response_key[2:]}__")
+    return to_snake_fn(response_key)
 
 
 @dataclass(kw_only=True)
@@ -256,7 +256,7 @@ class PackageCollector:
         typename_type: TypeRef | None,
         is_conditional: bool,
     ) -> tuple[list[CollectedArtifact], CollectedField]:
-        name, alias = python_field_name(response_key, self.to_snake_fn)
+        name = python_field_name(response_key, self.to_snake_fn)
         if response_key == "__typename":
             type_info = typename_type or ScalarRef(
                 expr=f'Literal["{runtime_type.name}"]'
@@ -265,8 +265,8 @@ class PackageCollector:
                 [],
                 CollectedField(
                     name=name,
+                    response_key=response_key,
                     type_info=type_info,
-                    alias=alias,
                     is_conditional=is_conditional,
                 ),
             )
@@ -294,8 +294,8 @@ class PackageCollector:
             child_models,
             CollectedField(
                 name=name,
+                response_key=response_key,
                 type_info=type_info,
-                alias=alias,
                 is_conditional=is_conditional,
             ),
         )

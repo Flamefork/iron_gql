@@ -119,10 +119,22 @@ def referenced_names(typ: TypeRef) -> Iterator[str]:
 @dataclass(kw_only=True, frozen=True)
 class CollectedField:
     name: str
+    # The key this field arrives under in the raw JSON response: the alias when
+    # one is given, the GraphQL field name otherwise.
+    response_key: str
     type_info: TypeRef
-    alias: str | None = None
     default_expr: str | None = None
     is_conditional: bool = False
+
+    @property
+    def alias(self) -> str | None:
+        # Derived from the response key, not stored: only a `__`-prefixed
+        # introspection key needs an explicit pydantic alias — its python
+        # name moves the prefix to a suffix, out of the alias generator's
+        # reach.
+        if self.response_key.startswith("__"):
+            return self.response_key
+        return None
 
     @property
     def rendered_type(self) -> TypeRef:
