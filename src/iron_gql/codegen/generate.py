@@ -60,6 +60,12 @@ def _find_all_queries(
         yield Statement(raw_text=node.args[0].value, file=relative_path, lineno=lineno)
 
 
+# Generates a typed GraphQL client from schema_path and the api_gql() calls
+# discovered under src_path: a module at package_full_name with Pydantic
+# models and typed operation classes. Returns True when the generated file
+# changed. A diagnosed rejection of the GraphQL input raises
+# GraphQLGenerationError; a malformed api_gql call site (anything but a single
+# string literal) raises TypeError before any GraphQL is read.
 def generate_gql_package(
     *,
     schema_path: Path,
@@ -71,31 +77,6 @@ def generate_gql_package(
     debug_path: Path | None = None,
     src_path: Path,
 ) -> bool:
-    """Generate a typed GraphQL client from schema and discovered queries.
-
-    Scans src_path for calls to `<package>_gql()`, validates queries against
-    schema_path, and generates a module with Pydantic models and typed query
-    classes with async execution methods.
-
-    Args:
-        schema_path: Path to GraphQL SDL schema file
-        package_full_name: Full module name for generated package
-            (e.g., "myapp.gql.client")
-        base_url_import: Import path to base URL
-            (e.g., "myapp.config:GRAPHQL_URL")
-        scalars: Custom GraphQL scalar to Python type mapping
-            (e.g., {"ID": "builtins:str"})
-        to_camel_fn_full_name: Import path to camelCase conversion function
-        to_snake_fn: Function for converting names to snake_case
-        debug_path: Optional path for saving debug artifacts
-        src_path: Root directory to search for GraphQL query calls
-
-    Returns:
-        True if the generated file was modified, False if content unchanged
-
-    Raises:
-        GraphQLGenerationError: If any query fails schema validation
-    """
     if scalars is None:
         scalars = {}
 

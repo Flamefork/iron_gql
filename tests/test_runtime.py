@@ -467,13 +467,13 @@ async def test_generate_and_execute_queries(
         assert initial.user is not None
         assert initial.user.name == "Graph"
 
-        mutation_input = UpdateUserInput(id="user-1", name="Morty")
+        mutation_input = UpdateUserInput(id="user-1", name="Bob")
         updated = await crud_queries.update_user.execute(input=mutation_input)
         assert updated.update_user is not None
-        assert updated.update_user.name == "Morty"
+        assert updated.update_user.name == "Bob"
         refreshed = await crud_queries.get_user.execute(id="user-1")
         assert refreshed.user is not None
-        assert refreshed.user.name == "Morty"
+        assert refreshed.user.name == "Bob"
 
 
 async def test_list_allows_null_elements(
@@ -597,11 +597,11 @@ def test_prepare_variables_nested_files():
     f1 = io.BytesIO(b"one")
     f2 = io.BytesIO(b"two")
     variables = {
-        "input": {"avatar": FileVar(f1, filename="a.png"), "name": "Morty"},
+        "input": {"avatar": FileVar(f1, filename="a.png"), "name": "Bob"},
         "cover": FileVar(f2, filename="c.jpg", content_type="image/jpeg"),
     }
     nulled, files = serialize_variables(variables)
-    assert nulled == {"input": {"avatar": None, "name": "Morty"}, "cover": None}
+    assert nulled == {"input": {"avatar": None, "name": "Bob"}, "cover": None}
     assert "variables.input.avatar" in files
     assert "variables.cover" in files
     assert files["variables.input.avatar"].f is f1
@@ -619,9 +619,9 @@ def test_prepare_variables_files_in_list():
 
 
 def test_prepare_variables_no_files():
-    variables = {"name": "Morty", "age": 14}
+    variables = {"name": "Bob", "age": 14}
     nulled, files = serialize_variables(variables)
-    assert nulled == {"name": "Morty", "age": 14}
+    assert nulled == {"name": "Bob", "age": 14}
     assert files == {}
 
 

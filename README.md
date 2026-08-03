@@ -22,7 +22,7 @@ pip install iron-gql[codegen]   # + graphql-core for code generation
 
 ## Package Layout
 - `runtime.py` – provides the async `GQLClient`, the reusable `GQLOperation` base class, and value serialization helpers.
-- `codegen/generator.py` – orchestrates query discovery, validation, and module rendering.
+- `codegen/generate.py` – orchestrates query discovery, validation, and module rendering.
 - `codegen/parser.py` – converts GraphQL AST into typed helper structures consumed by the renderer.
 
 ## Getting Started
@@ -114,7 +114,7 @@ Custom scalar types must be Pydantic-compatible — i.e. Pydantic should know ho
 
 ## Example
 
-The [`example/`](example/) directory contains a complete working setup: a GraphQL schema with queries, mutations, enums, interfaces, unions, and fragments, plus the generation script and sample query definitions. See [`example/generate.py`](example/generate.py) for the codegen call and [`example/myapp/main.py`](example/myapp/main.py) for query usage.
+The [`example/`](example/) directory contains a complete working setup: a GraphQL schema with queries, mutations, enums, interfaces, unions, and fragments, plus the generation script and sample query definitions. See [`example/generate.py`](example/generate.py) for the codegen call and [`example/main.py`](example/main.py) for query usage.
 
 ## Testing
 
