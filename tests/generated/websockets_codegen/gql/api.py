@@ -23,7 +23,7 @@ import builtins
 from tests.generated.websockets_codegen.settings import GRAPHQL_URL
 
 
-API_CLIENT = runtime.GQLClient(
+API_CLIENT = runtime.AsyncGQLClient(
     base_url=GRAPHQL_URL,
 )
 

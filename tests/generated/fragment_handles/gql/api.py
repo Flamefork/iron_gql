@@ -26,7 +26,7 @@ import builtins
 from tests.generated.fragment_handles.settings import GRAPHQL_URL
 
 
-API_CLIENT = runtime.GQLClient(
+API_CLIENT = runtime.AsyncGQLClient(
     base_url=GRAPHQL_URL,
 )
 

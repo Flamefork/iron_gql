@@ -13,6 +13,7 @@ from iron_gql.codegen.naming import validate_execute_signatures
 from iron_gql.codegen.naming import validate_module_names
 from iron_gql.codegen.parser import Statement
 from iron_gql.codegen.parser import parse_gql_queries
+from iron_gql.codegen.render import GenerationMode
 from iron_gql.codegen.render import render_package
 from iron_gql.codegen.render import scaffold_claims
 from iron_gql.codegen.slots import validate_no_nested_slots
@@ -73,14 +74,15 @@ def _find_all_queries(
 # string literal) raises TypeError before any GraphQL is read.
 def generate_gql_package(
     *,
+    mode: GenerationMode,
     schema_path: Path,
+    src_path: Path,
     package_full_name: str,
     base_url_import: str,
     scalars: dict[str, str] | None = None,
     to_camel_fn_full_name: str = "pydantic.alias_generators:to_camel",
     to_snake_fn: StrTransform = alias_generators.to_snake,
     debug_path: Path | None = None,
-    src_path: Path,
 ) -> bool:
     if scalars is None:
         scalars = {}
@@ -150,6 +152,7 @@ def generate_gql_package(
     )
 
     new_content = render_package(
+        mode=mode,
         base_url_ref=base_url_ref,
         package_name=package_name,
         gql_fn_name=gql_fn_name,

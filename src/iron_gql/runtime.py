@@ -2,9 +2,11 @@ import json
 from collections.abc import AsyncGenerator
 from collections.abc import Awaitable
 from collections.abc import Callable
+from collections.abc import Generator
 from collections.abc import Mapping
 from collections.abc import MutableMapping
 from contextlib import asynccontextmanager
+from contextlib import contextmanager
 from typing import IO
 from typing import Any
 from typing import Self
@@ -14,9 +16,11 @@ import httpx2
 import pydantic
 from httpx2.websockets import ASGIWebSocketTransport
 from httpx2.websockets import AsyncWebSocketClient
+from httpx2.websockets import WebSocketClient
 
 from iron_gql.errors import GraphQLResponseError
 from iron_gql.slots import SlotFragments
+from iron_gql.websockets import async_graphql_ws_subscribe
 from iron_gql.websockets import graphql_ws_subscribe
 from iron_gql.websockets import ws_url
 
@@ -68,7 +72,66 @@ class GQLOperation:
         return q
 
 
-class GQLClient:
+def _build_payload(
+    query: str, variables: dict[str, Any]
+) -> tuple[dict[str, Any], dict[str, FileVar]]:
+    payload: dict[str, Any] = {"query": query}
+    serialized_vars, files = serialize_variables(variables)
+    if serialized_vars:
+        payload["variables"] = serialized_vars
+    return payload, files
+
+
+def _multipart_body(
+    payload: dict[str, Any], files: dict[str, FileVar]
+) -> tuple[dict[str, str], dict[str, tuple[str, Any] | tuple[str, Any, str]]]:
+    file_map: dict[str, list[str]] = {}
+    file_streams: dict[str, tuple[str, Any] | tuple[str, Any, str]] = {}
+
+    for i, (path, file_var) in enumerate(files.items()):
+        key = str(i)
+        file_map[key] = [path]
+        name = file_var.filename or key
+        if file_var.content_type:
+            file_streams[key] = (name, file_var.f, file_var.content_type)
+        else:
+            file_streams[key] = (name, file_var.f)
+
+    body = {"operations": json.dumps(payload), "map": json.dumps(file_map)}
+    return body, file_streams
+
+
+def _parse_query_response[T: pydantic.BaseModel](
+    response: httpx2.Response,
+    result_type: type[T],
+    slot_fragments: SlotFragments | None,
+) -> T:
+    if httpx2.codes.is_redirect(response.status_code):
+        # httpx2 `Headers.get` is typed as Any
+        location: str = response.headers.get("Location", "")  # pyright: ignore[reportAny]
+        message = f"Unexpected 3xx response ({response.status_code})"
+        if location:
+            message = f"{message} to {location}"
+        raise httpx2.HTTPStatusError(
+            message, request=response.request, response=response
+        )
+    response.raise_for_status()
+    try:
+        body = _ResponseBody.model_validate(response.json())
+    except pydantic.ValidationError as exc:
+        raise GraphQLResponseError([
+            {"message": f"Malformed response body: {exc}"}
+        ]) from exc
+
+    if body.errors:
+        raise GraphQLResponseError(body.errors)
+    if body.data is None:
+        raise GraphQLResponseError([{"message": "No data in response"}])
+
+    return result_type.model_validate(body.data, context=slot_fragments)
+
+
+class AsyncGQLClient:
     def __init__(
         self,
         *,
@@ -95,77 +158,17 @@ class GQLClient:
         headers: dict[str, str],
         slot_fragments: SlotFragments | None = None,
     ) -> T:
-        payload: dict[str, Any] = {"query": query}
-        serialized_vars, files = serialize_variables(variables)
-        if serialized_vars:
-            payload["variables"] = serialized_vars
+        payload, files = _build_payload(query, variables)
         if files:
-            response = await self._post_multipart_request(payload, files, headers)
-        else:
-            response = await self._post_normal_request(payload, headers)
-
-        if httpx2.codes.is_redirect(response.status_code):
-            # httpx2 `Headers.get` is typed as Any
-            location: str = response.headers.get("Location", "")  # pyright: ignore[reportAny]
-            message = f"Unexpected 3xx response ({response.status_code})"
-            if location:
-                message = f"{message} to {location}"
-            raise httpx2.HTTPStatusError(
-                message, request=response.request, response=response
+            body, file_streams = _multipart_body(payload, files)
+            response = await self._client.post(
+                self._endpoint_url, data=body, files=file_streams, headers=headers
             )
-        response.raise_for_status()
-        try:
-            body = _ResponseBody.model_validate(response.json())
-        except pydantic.ValidationError as exc:
-            raise GraphQLResponseError([
-                {"message": f"Malformed response body: {exc}"}
-            ]) from exc
-
-        if body.errors:
-            raise GraphQLResponseError(body.errors)
-        if body.data is None:
-            raise GraphQLResponseError([{"message": "No data in response"}])
-
-        return result_type.model_validate(body.data, context=slot_fragments)
-
-    async def _post_normal_request(
-        self,
-        payload: dict[str, Any],
-        headers: dict[str, str],
-    ) -> httpx2.Response:
-        return await self._client.post(
-            self._endpoint_url,
-            json=payload,
-            headers=headers,
-        )
-
-    async def _post_multipart_request(
-        self,
-        payload: dict[str, Any],
-        files: dict[str, FileVar],
-        headers: dict[str, str],
-    ) -> httpx2.Response:
-        file_map: dict[str, list[str]] = {}
-        file_streams: dict[str, tuple[str, Any] | tuple[str, Any, str]] = {}
-
-        for i, (path, file_var) in enumerate(files.items()):
-            key = str(i)
-            file_map[key] = [path]
-            name = file_var.filename or key
-            if file_var.content_type:
-                file_streams[key] = (name, file_var.f, file_var.content_type)
-            else:
-                file_streams[key] = (name, file_var.f)
-
-        return await self._client.post(
-            self._endpoint_url,
-            data={
-                "operations": json.dumps(payload),
-                "map": json.dumps(file_map),
-            },
-            files=file_streams,
-            headers=headers,
-        )
+        else:
+            response = await self._client.post(
+                self._endpoint_url, json=payload, headers=headers
+            )
+        return _parse_query_response(response, result_type, slot_fragments)
 
     @asynccontextmanager
     async def subscribe[T: pydantic.BaseModel](
@@ -198,7 +201,7 @@ class GQLClient:
                 AsyncWebSocketClient(client).connect(
                     url, subprotocols=["graphql-transport-ws"]
                 ) as ws,
-                graphql_ws_subscribe(
+                async_graphql_ws_subscribe(
                     ws, result_type, query, serialized_vars, slot_fragments
                 ) as stream,
             ):
@@ -213,6 +216,70 @@ class GQLClient:
 
     async def close(self) -> None:
         await self._client.aclose()
+
+
+class GQLClient:
+    def __init__(
+        self,
+        *,
+        base_url: str,
+        headers: dict[str, str] | None = None,
+        query_timeout: int = DEFAULT_QUERY_TIMEOUT,
+    ):
+        self._endpoint_url = httpx2.URL(base_url)
+        self._client = httpx2.Client(headers=headers or {}, timeout=query_timeout)
+
+    def query[T: pydantic.BaseModel](
+        self,
+        result_type: type[T],
+        query: str,
+        *,
+        variables: dict[str, Any],
+        headers: dict[str, str],
+        slot_fragments: SlotFragments | None = None,
+    ) -> T:
+        payload, files = _build_payload(query, variables)
+        if files:
+            body, file_streams = _multipart_body(payload, files)
+            response = self._client.post(
+                self._endpoint_url, data=body, files=file_streams, headers=headers
+            )
+        else:
+            response = self._client.post(
+                self._endpoint_url, json=payload, headers=headers
+            )
+        return _parse_query_response(response, result_type, slot_fragments)
+
+    @contextmanager
+    def subscribe[T: pydantic.BaseModel](
+        self,
+        result_type: type[T],
+        query: str,
+        *,
+        variables: dict[str, Any],
+        headers: dict[str, str],
+        slot_fragments: SlotFragments | None = None,
+    ) -> Generator[Generator[T]]:
+        serialized_vars, files = serialize_variables(variables)
+        if files:
+            msg = "File uploads are not supported in subscriptions"
+            raise TypeError(msg)
+        url = str(ws_url(self._endpoint_url))
+        # The sync session reuses the query client, so its default headers and
+        # cookies already apply; the async client has to rebuild them because
+        # its websocket transport differs from its HTTP one.
+        with (
+            WebSocketClient(self._client).connect(
+                url, subprotocols=["graphql-transport-ws"], headers=headers
+            ) as ws,
+            graphql_ws_subscribe(
+                ws, result_type, query, serialized_vars, slot_fragments
+            ) as stream,
+        ):
+            yield stream
+
+    def close(self) -> None:
+        self._client.close()
 
 
 # typeshed quirk: `BaseExceptionGroup.exceptions` is declared via a Self-bound

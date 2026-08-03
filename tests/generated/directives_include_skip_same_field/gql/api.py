@@ -23,7 +23,7 @@ import builtins
 from tests.generated.directives_include_skip_same_field.settings import GRAPHQL_URL
 
 
-API_CLIENT = runtime.GQLClient(
+API_CLIENT = runtime.AsyncGQLClient(
     base_url=GRAPHQL_URL,
 )
 

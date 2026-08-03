@@ -1,4 +1,6 @@
+from dataclasses import dataclass
 from itertools import starmap
+from typing import Literal
 
 from iron_gql.codegen.ir import CollectedArtifact
 from iron_gql.codegen.ir import CollectedEnum
@@ -44,8 +46,11 @@ STDLIB_MODULE_NAMES = ("datetime",)
 # unconditionally too — deriving the claim from `to_camel_ref` instead would
 # drop it as soon as a package points that option somewhere other than pydantic.
 THIRD_PARTY_MODULE_NAMES = ("pydantic",)
-CONTEXTLIB_NAMES = ("AbstractAsyncContextManager",)
-ABC_NAMES = ("AsyncGenerator", "Sequence")
+# Both modes' names are reserved whichever mode a package is generated in: the
+# reserved set must not depend on the mode in force today, or switching a
+# package to the other mode would rebind a name that generated fine before.
+CONTEXTLIB_NAMES = ("AbstractAsyncContextManager", "AbstractContextManager")
+ABC_NAMES = ("AsyncGenerator", "Generator", "Sequence")
 TYPING_NAMES = ("Annotated", "ClassVar", "Literal", "overload")
 IRON_GQL_NAMES = ("runtime", "slots")
 
@@ -61,6 +66,36 @@ class {OPEN_MODEL_BASE_NAME}({MODEL_BASE_NAME}):
 SLOT_BASE = f"""\
 class {SLOT_MODEL_BASE_NAME}({OPEN_MODEL_BASE_NAME}, slots.GQLSlotNode):
     pass"""
+
+
+type GenerationMode = Literal["async", "sync"]
+
+
+@dataclass(frozen=True, slots=True)
+class ModeConfig:
+    client_class: str
+    async_kw: str
+    await_kw: str
+    stream_context: str
+    generator: str
+
+
+RENDER_MODES: dict[GenerationMode, ModeConfig] = {
+    "async": ModeConfig(
+        client_class="AsyncGQLClient",
+        async_kw="async ",
+        await_kw="await ",
+        stream_context="AbstractAsyncContextManager",
+        generator="AsyncGenerator",
+    ),
+    "sync": ModeConfig(
+        client_class="GQLClient",
+        async_kw="",
+        await_kw="",
+        stream_context="AbstractContextManager",
+        generator="Generator",
+    ),
+}
 
 
 def scaffold_claims(
@@ -142,6 +177,7 @@ def render_imports(
     to_camel_ref: ImportRef,
     scalars: dict[str, ImportRef],
     base_url_ref: ImportRef,
+    mode: ModeConfig,
     *,
     uses_slot_models: bool,
     uses_slot_kwargs: bool,
@@ -154,8 +190,12 @@ def render_imports(
     # constructor; every slot kwarg also accepts several handles at once.
     pins_metadata = uses_slot_models or uses_fragments
     emitted = {
-        "AsyncGenerator": True,
+        "AsyncGenerator": mode.generator == "AsyncGenerator",
+        "Generator": mode.generator == "Generator",
         "Sequence": uses_slot_kwargs,
+        "AbstractAsyncContextManager": mode.stream_context
+        == "AbstractAsyncContextManager",
+        "AbstractContextManager": mode.stream_context == "AbstractContextManager",
         "Annotated": True,
         "ClassVar": uses_slot_models,
         "Literal": True,
@@ -174,7 +214,7 @@ def render_imports(
     )
     stdlib_imports = "\n".join(f"import {module}" for module in STDLIB_MODULE_NAMES)
     contextlib_imports = "\n".join(
-        f"from contextlib import {name}" for name in CONTEXTLIB_NAMES
+        f"from contextlib import {name}" for name in CONTEXTLIB_NAMES if emitted[name]
     )
     third_party_imports = "\n".join(
         f"import {module}" for module in THIRD_PARTY_MODULE_NAMES
@@ -200,9 +240,10 @@ def render_client_init(
     package_name: str,
     base_url_ref: ImportRef,
     to_camel_ref: ImportRef,
+    mode: ModeConfig,
 ) -> str:
     return f"""\
-{package_name.upper()}_CLIENT = runtime.GQLClient(
+{package_name.upper()}_CLIENT = runtime.{mode.client_class}(
     base_url={base_url_ref.symbol},
 )
 
@@ -370,6 +411,7 @@ def render_gql_fn(
 
 
 def render_package(
+    mode: GenerationMode,
     base_url_ref: ImportRef,
     package_name: str,
     gql_fn_name: str,
@@ -378,6 +420,7 @@ def render_package(
     to_camel_ref: ImportRef,
     passthrough_texts: tuple[str, ...] = (),
 ) -> str:
+    mode_config = RENDER_MODES[mode]
     # The slot node base is only referenced by generated slot models, so a
     # package without them does not grow a class it never uses; the slot module
     # itself is also what fragment handles derive from. The open base exists
@@ -395,11 +438,12 @@ def render_package(
             to_camel_ref,
             scalars,
             base_url_ref,
+            mode_config,
             uses_slot_models=uses_slot_models,
             uses_slot_kwargs=any(operation.slots for operation in collected.operations),
             uses_fragments=bool(collected.fragments),
         ),
-        render_client_init(package_name, base_url_ref, to_camel_ref),
+        render_client_init(package_name, base_url_ref, to_camel_ref, mode_config),
         OPEN_BASE if uses_open_models else "",
         SLOT_BASE if uses_slot_models else "",
         render_fragment_bases(collected.slot_types),
@@ -408,7 +452,9 @@ def render_package(
             render_artifacts(collected.result_artifacts, collected.open_model_names)
         ),
         "\n\n\n".join(render_artifacts(collected.input_artifacts, frozenset())),
-        "\n\n\n".join(render_operations(collected.operations, package_name)),
+        "\n\n\n".join(
+            render_operations(collected.operations, package_name, mode_config)
+        ),
         "\n\n\n".join(render_fragments(collected.fragments)),
         render_gql_fn(
             collected.operations,
@@ -446,18 +492,21 @@ def render_artifacts(
 def render_operations(
     operations: list[CollectedOperation],
     package_name: str,
+    mode: ModeConfig,
 ) -> list[str]:
     rendered: list[str] = []
     for operation in operations:
         see_comment = f"# See: {', '.join(operation.locations)}"
         signature = ", ".join(operation.signature_parts)
         if operation.is_subscription:
+            # A subscription's execute hands back the context manager the
+            # client returns, so it is never awaited in either mode.
             async_kw, await_kw = "", ""
             return_type = (
-                f"AbstractAsyncContextManager[AsyncGenerator[{operation.result_type}]]"
+                f"{mode.stream_context}[{mode.generator}[{operation.result_type}]]"
             )
         else:
-            async_kw, await_kw = "async ", "await "
+            async_kw, await_kw = mode.async_kw, mode.await_kw
             return_type = operation.result_type
         prelude: list[str] = []
         source_expr = repr(operation.exec_head)

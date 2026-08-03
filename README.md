@@ -17,11 +17,12 @@ pip install iron-gql[codegen]   # + graphql-core for code generation
 ## Key Features
 - **Query discovery.** `generate_gql_package` scans your codebase for calls of the form `<package>_gql("""...""")`. It validates each statement and writes a module with typed helpers.
 - **Typed inputs and results.** The generated Pydantic models match every selection set, enum, and input object that the discovered queries reference.
-- **Async runtime.** `runtime.GQLClient` sends requests to GraphQL endpoints through `httpx2`. When you set an ASGI `target_app`, the client calls the app in-process and does not use the network.
+- **Sync or async runtime.** Pick the mode per package with `mode="sync"` or `mode="async"`. The generated module targets `runtime.GQLClient` or `runtime.AsyncGQLClient`, both of which send requests through `httpx2`. One project can hold packages of both kinds.
+- **ASGI in-process calls.** `AsyncGQLClient` accepts an ASGI `target_app` and then calls the app in-process without using the network. The sync client has no such transport: the ASGI transport of `httpx2` is async-only, and WSGI cannot carry websockets. Test synchronous packages against a real server on a loopback port.
 - **Deterministic validation.** `graphql-core` (a codegen dependency) validates every statement against the schema. It rejects operations that share a name but have different bodies.
 
 ## Package Layout
-- `runtime.py` contains the async `GQLClient`, the reusable `GQLOperation` base class, and the value serialization helpers.
+- `runtime.py` contains `GQLClient` and `AsyncGQLClient`, the reusable `GQLOperation` base class, and the value serialization helpers.
 - `codegen/generate.py` runs query discovery, validation, and module rendering.
 - `codegen/parser.py` converts the GraphQL AST into typed helper structures for the renderer.
 
@@ -50,26 +51,36 @@ pip install iron-gql[codegen]   # + graphql-core for code generation
    from iron_gql.codegen import generate_gql_package
 
    generate_gql_package(
+       mode="async",
        schema_path=Path("schema.graphql"),
+       src_path=Path("."),
        package_full_name="myapp.gql.client",
        base_url_import="myapp.config:GRAPHQL_URL",
        scalars={"ID": "builtins:str"},
        to_camel_fn_full_name="myapp.inflection:to_camel",
        to_snake_fn=my_project_to_snake,
        debug_path=Path("iron_gql/debug/myapp.gql.client"),
-       src_path=Path("."),
    )
    ```
+   `mode` is required: pass `"async"` or `"sync"` for every package. Each package is self-contained, so one project can generate both.
+
    The call writes `myapp/gql/client.py`. The module contains:
-   - an async client singleton,
+   - a client singleton for the chosen mode,
    - Pydantic result and input models,
    - a query class per operation with typed `execute` methods,
    - overloads for the helper function, so editors can infer return types.
-4. **Call your API.**
+4. **Call your API.** An async package awaits `execute`:
    ```python
    async def fetch_user(user_id: str):
        query = get_user.with_headers({"Authorization": "Bearer token"})
        result = await query.execute(id=user_id)
+       return result.user
+   ```
+   A sync package calls it directly:
+   ```python
+   def fetch_user(user_id: str):
+       query = get_user.with_headers({"Authorization": "Bearer token"})
+       result = query.execute(id=user_id)
        return result.user
    ```
 
@@ -181,14 +192,15 @@ Three rules apply:
 - **Endpoint configuration.** The generator writes `base_url_import` verbatim into the generated module. Set it to a global string, a configuration object, or a helper that returns the GraphQL endpoint.
 
 ## Runtime Highlights
-- `GQLClient` accepts an ASGI `target_app`. You can use the same runtime for production HTTP calls and for in-process ASGI execution.
+- `AsyncGQLClient` accepts an ASGI `target_app`. You can use the same runtime for production HTTP calls and for in-process ASGI execution.
+- `GQLClient.subscribe` returns a plain context manager over a blocking generator, so a synchronous consumer reads subscription messages with `for`.
 - `GQLOperation.with_headers` clones the operation object. The original does not change, so each call can have its own headers.
 - `Upload` scalars map to `iron_gql.FileVar`. When variables contain `FileVar` instances, the client automatically sends a multipart upload (see the [GraphQL multipart request spec](https://github.com/jaydenseric/graphql-multipart-request-spec)).
 - `serialize_var` converts variables to JSON-compatible structures with the Pydantic `TypeAdapter`. It supports custom scalar types, nested models, dicts, and lists.
 
 ## Example
 
-The [`example/`](example/) directory contains a complete working setup. It has a GraphQL schema with queries, mutations, enums, interfaces, unions, and fragments. It also has the generation script and sample query definitions. See [`example/generate.py`](example/generate.py) for the codegen call, and [`example/main.py`](example/main.py) for query usage.
+The [`example/`](example/) directory contains a complete working setup. It has a GraphQL schema with queries, mutations, enums, interfaces, unions, and fragments. It also has the generation script and sample query definitions. See [`example/generate.py`](example/generate.py) for the codegen calls of both modes, [`example/main.py`](example/main.py) for async query usage, and [`example/main_sync.py`](example/main_sync.py) for the synchronous form.
 
 ## Testing
 
@@ -199,7 +211,7 @@ from iron_gql import runtime
 from myapp.gql import api
 
 async def test_get_user(monkeypatch):
-    test_client = runtime.GQLClient(
+    test_client = runtime.AsyncGQLClient(
         base_url="http://testserver",
         target_app=my_asgi_app,
     )
@@ -208,6 +220,19 @@ async def test_get_user(monkeypatch):
     result = await get_user.execute(id="1")
     assert result.user.name == "Alice"
 ```
+
+A synchronous package needs a real endpoint, because `GQLClient` has no ASGI transport:
+
+```python
+def test_get_user_sync(monkeypatch, live_server_url):
+    test_client = runtime.GQLClient(base_url=live_server_url)
+    monkeypatch.setattr(api, "API_CLIENT", test_client)
+
+    result = get_user.execute(id="1")
+    assert result.user.name == "Alice"
+```
+
+The `live_asgi_server` helper in this repository's `tests/conftest.py` shows one way to serve an ASGI app on a loopback port for such a test.
 
 The generated query classes resolve the client by module attribute name at call time. As a result, the replacement is sufficient. The name of the attribute is always `{PACKAGE}_CLIENT`. For the package `myapp.gql.api`, the attribute is `API_CLIENT`.
 

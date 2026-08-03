@@ -23,7 +23,7 @@ import builtins
 from tests.generated.runtime_custom_scalar.settings import GRAPHQL_URL
 
 
-API_CLIENT = runtime.GQLClient(
+API_CLIENT = runtime.AsyncGQLClient(
     base_url=GRAPHQL_URL,
 )
 

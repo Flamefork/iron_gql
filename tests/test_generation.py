@@ -130,20 +130,21 @@ ping = api_gql(
     test_project.activate_workspace(workspace)
 
     changed = generate_gql_package(
+        mode="async",
         schema_path=schema_path,
+        src_path=workspace,
         package_full_name="sample_app.gql.api",
         base_url_import="sample_app.settings:GRAPHQL_URL",
         scalars={"ID": "builtins:str"},
         to_camel_fn_full_name="pydantic.alias_generators:to_camel",
         to_snake_fn=alias_generators.to_snake,
-        src_path=workspace,
     )
     assert changed is True
 
     test_project.clear_modules()
     api_module = importlib.import_module("sample_app.gql.api")
     # attributes of a dynamically imported module are Any
-    assert isinstance(api_module.API_CLIENT, runtime.GQLClient)  # pyright: ignore[reportAny]
+    assert isinstance(api_module.API_CLIENT, runtime.AsyncGQLClient)  # pyright: ignore[reportAny]
 
 
 def test_duplicate_operations_raise(test_project: ProjectBuilder):
@@ -432,10 +433,11 @@ def test_debug_artifacts_generation(test_project: ProjectBuilder):
 
     debug_dir = test_project.root / "debug_out"
     generate_gql_package(
+        mode="async",
         schema_path=test_project.root / "schema.graphql",
+        src_path=test_project.root,
         package_full_name="sample_app.gql.api",
         base_url_import="sample_app.settings:GRAPHQL_URL",
-        src_path=test_project.root,
         debug_path=debug_dir,
     )
 
@@ -503,10 +505,11 @@ def test_default_scalars_and_nested_list_input(test_project: ProjectBuilder):
     # helper to test scalars=None path involved in default args
     # generate_gql_package has scalars=None default.
     generate_gql_package(
+        mode="async",
         schema_path=test_project.root / "schema.graphql",
+        src_path=test_project.root,
         package_full_name="sample_app.gql.api",
         base_url_import="sample_app.settings:GRAPHQL_URL",
-        src_path=test_project.root,
         # scalars argument omitted to test default None -> {}
     )
 
@@ -625,7 +628,7 @@ def test_no_queries_generates_module(test_project: ProjectBuilder):
     assert test_project.generate() is True
     api = test_project.import_api()
     # attributes of a dynamically imported module are Any
-    assert isinstance(api.API_CLIENT, runtime.GQLClient)  # pyright: ignore[reportAny]
+    assert isinstance(api.API_CLIENT, runtime.AsyncGQLClient)  # pyright: ignore[reportAny]
 
 
 def test_invalid_gql_call_arguments(test_project: ProjectBuilder):
@@ -1018,3 +1021,53 @@ async def test_defaulted_directive_variable_stays_conditional(
         assert on.user.name == "Alice"  # pyright: ignore[reportAny]
         off = await queries_module.q.execute(with_name=False)  # pyright: ignore[reportAny]
         assert off.user.name is None  # pyright: ignore[reportAny]
+
+
+def test_sync_and_async_packages_coexist(test_project: ProjectBuilder):
+    test_project.prepare(
+        schema="""
+        type Query {
+            ping: String!
+        }
+        """,
+        queries='''
+        from sample_app.gql.api import api_gql
+
+        ping = api_gql("""
+            query Ping {
+                ping
+            }
+        """)
+        ''',
+    )
+    test_project.write_file(
+        test_project.root / "sample_app" / "sync_queries.py",
+        '''
+        from sample_app.gql.api_sync import api_sync_gql
+
+        ping_sync = api_sync_gql("""
+            query PingSync {
+                ping
+            }
+        """)
+        ''',
+    )
+
+    assert test_project.generate() is True
+    assert (
+        test_project.generate(package_full_name="sample_app.gql.api_sync", mode="sync")
+        is True
+    )
+
+    async_source = (test_project.root / "sample_app/gql/api.py").read_text()
+    sync_source = (test_project.root / "sample_app/gql/api_sync.py").read_text()
+
+    assert "runtime.AsyncGQLClient(" in async_source
+    assert "    async def execute(self) -> PingResult:" in async_source
+    assert "from collections.abc import AsyncGenerator" in async_source
+
+    assert "runtime.GQLClient(" in sync_source
+    assert "    def execute(self) -> PingSyncResult:" in sync_source
+    assert "async def" not in sync_source
+    assert "await " not in sync_source
+    assert "from collections.abc import Generator" in sync_source
