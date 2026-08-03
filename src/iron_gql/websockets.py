@@ -10,6 +10,7 @@ from httpx_ws import AsyncWebSocketSession
 from httpx_ws import WebSocketDisconnect
 
 from iron_gql.errors import GraphQLResponseError
+from iron_gql.slots import SlotFragments
 
 
 class _WSMessage(pydantic.BaseModel):
@@ -40,14 +41,15 @@ async def graphql_ws_subscribe[T: pydantic.BaseModel](
     ws: AsyncWebSocketSession,
     result_type: type[T],
     query: str,
-    variables: dict[str, Any] | None = None,
+    variables: dict[str, Any] | None,
+    slot_fragments: SlotFragments | None,
 ) -> AsyncGenerator[AsyncGenerator[T]]:
     await _ws_handshake(ws)
     payload: dict[str, Any] = {"query": query}
     if variables:
         payload["variables"] = variables
     await ws.send_json({"id": "1", "type": "subscribe", "payload": payload})
-    yield _ws_receive_messages(ws, result_type)
+    yield _ws_receive_messages(ws, result_type, slot_fragments)
 
 
 async def _ws_handshake(ws: AsyncWebSocketSession) -> None:
@@ -108,6 +110,7 @@ def ws_url(url: httpx.URL) -> httpx.URL:
 async def _ws_receive_messages[T: pydantic.BaseModel](  # noqa: C901, PLR0912
     ws: AsyncWebSocketSession,
     result_type: type[T],
+    slot_fragments: SlotFragments | None,
 ) -> AsyncGenerator[T]:
     while True:
         try:
@@ -139,12 +142,10 @@ async def _ws_receive_messages[T: pydantic.BaseModel](  # noqa: C901, PLR0912
                     raise GraphQLResponseError(
                         payload.errors or [{"message": "No data in response"}]
                     )
-                try:
-                    yield result_type.model_validate(payload.data)
-                except pydantic.ValidationError as exc:
-                    raise GraphQLResponseError([
-                        {"message": f"Invalid data in response: {exc}"}
-                    ]) from exc
+                # Same contract as GQLClient.query: a payload that fails
+                # result validation surfaces as pydantic.ValidationError with
+                # a response path, identically across both transports.
+                yield result_type.model_validate(payload.data, context=slot_fragments)
             case "error":
                 try:
                     error_payload = _ERROR_PAYLOAD.validate_python(message.payload)

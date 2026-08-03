@@ -9,9 +9,14 @@ from iron_gql.codegen.ir import GraphQLGenerationError
 from iron_gql.codegen.ir import ImportRef
 from iron_gql.codegen.ir import StrTransform
 from iron_gql.codegen.naming import apply_rename
+from iron_gql.codegen.naming import validate_execute_signatures
+from iron_gql.codegen.naming import validate_module_names
 from iron_gql.codegen.parser import Statement
 from iron_gql.codegen.parser import parse_gql_queries
 from iron_gql.codegen.render import render_package
+from iron_gql.codegen.render import scaffold_claims
+from iron_gql.codegen.slots import validate_no_nested_slots
+from iron_gql.codegen.slots import validate_slots_are_collected
 from iron_gql.codegen.util import write_if_changed
 
 
@@ -60,6 +65,12 @@ def _find_all_queries(
         yield Statement(raw_text=node.args[0].value, file=relative_path, lineno=lineno)
 
 
+# Generates a typed GraphQL client from schema_path and the api_gql() calls
+# discovered under src_path: a module at package_full_name with Pydantic
+# models and typed operation classes. Returns True when the generated file
+# changed. A diagnosed rejection of the GraphQL input raises
+# GraphQLGenerationError; a malformed api_gql call site (anything but a single
+# string literal) raises TypeError before any GraphQL is read.
 def generate_gql_package(
     *,
     schema_path: Path,
@@ -71,31 +82,6 @@ def generate_gql_package(
     debug_path: Path | None = None,
     src_path: Path,
 ) -> bool:
-    """Generate a typed GraphQL client from schema and discovered queries.
-
-    Scans src_path for calls to `<package>_gql()`, validates queries against
-    schema_path, and generates a module with Pydantic models and typed query
-    classes with async execution methods.
-
-    Args:
-        schema_path: Path to GraphQL SDL schema file
-        package_full_name: Full module name for generated package
-            (e.g., "myapp.gql.client")
-        base_url_import: Import path to base URL
-            (e.g., "myapp.config:GRAPHQL_URL")
-        scalars: Custom GraphQL scalar to Python type mapping
-            (e.g., {"ID": "builtins:str"})
-        to_camel_fn_full_name: Import path to camelCase conversion function
-        to_snake_fn: Function for converting names to snake_case
-        debug_path: Optional path for saving debug artifacts
-        src_path: Root directory to search for GraphQL query calls
-
-    Returns:
-        True if the generated file was modified, False if content unchanged
-
-    Raises:
-        GraphQLGenerationError: If any query fails schema validation
-    """
     if scalars is None:
         scalars = {}
 
@@ -120,13 +106,49 @@ def generate_gql_package(
     if parse_res.errors:
         raise GraphQLGenerationError(parse_res.errors)
 
+    scaffold = scaffold_claims(
+        package_name=package_name,
+        gql_fn_name=gql_fn_name,
+        base_url_ref=base_url_ref,
+        scalars=scalar_refs,
+        to_camel_ref=to_camel_ref,
+    )
     collected = apply_rename(
         collect_package_ir(
+            schema=parse_res.schema,
             queries=parse_res.queries,
+            fragment_statements=parse_res.reachable_statements,
             scalars=scalar_refs,
             to_snake_fn=to_snake_fn,
+        ),
+        frozenset(scaffold),
+    )
+    # Checked here rather than in the parser: these rules read the collected
+    # module — the python names it binds, which are only final once the rename
+    # pass has run, and the model graph, which has already merged the field
+    # nodes a response key was assembled from.
+    ir_errors = [
+        *validate_module_names(collected, scaffold),
+        *validate_execute_signatures(collected),
+        *validate_no_nested_slots(collected),
+        *validate_slots_are_collected(collected),
+    ]
+    if ir_errors:
+        raise GraphQLGenerationError(ir_errors)
+
+    # Statements the scan discovered but nothing typed: fragment bundles and
+    # single fragments no slot accepts. Their fragments are spread statically
+    # by name, and the call site legitimately receives the untyped catch-all —
+    # only a statement the generator has never seen is an error there.
+    typed_texts = {
+        text for operation in collected.operations for text in operation.stmt_texts
+    } | {text for fragment in collected.fragments for text in fragment.stmt_texts}
+    passthrough_texts = tuple(
+        dict.fromkeys(
+            stmt.raw_text for stmt in queries if stmt.raw_text not in typed_texts
         )
     )
+
     new_content = render_package(
         base_url_ref=base_url_ref,
         package_name=package_name,
@@ -134,5 +156,6 @@ def generate_gql_package(
         collected=collected,
         scalars=scalar_refs,
         to_camel_ref=to_camel_ref,
+        passthrough_texts=passthrough_texts,
     )
     return write_if_changed(target_package_path, new_content + "\n")

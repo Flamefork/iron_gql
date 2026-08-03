@@ -269,4 +269,8 @@ def api_gql(stmt: str) -> runtime.GQLOperation:
     query_cls = _API_GQL_DISPATCH.get(stmt)
     if query_cls is not None:
         return query_cls()
-    return runtime.GQLOperation()
+    msg = "unknown GraphQL statement passed to api_gql; "
+    msg += "the generator only discovers bare-name calls with a "
+    msg += "single string literal - check the call site, then "
+    msg += "regenerate the package"
+    raise LookupError(msg)

@@ -90,6 +90,7 @@ def _collect_regular_input_type(
         fields.append(
             CollectedField(
                 name=to_snake_fn(field_name),
+                response_key=field_name,
                 type_info=collect_type(field_type(gql_field)),
                 default_expr=_input_default_expr(gql_field),
             )
@@ -122,6 +123,7 @@ def _collect_one_of_input_type(
                 fields=[
                     CollectedField(
                         name=to_snake_fn(field_name),
+                        response_key=field_name,
                         type_info=collect_type(field_type(gql_field), nullable=False),
                     )
                 ],

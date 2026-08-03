@@ -86,6 +86,10 @@ def api_gql(stmt: Literal['\n    query GetUser($id: ID!) {\n        user(id: $id
 @overload
 def api_gql(stmt: Literal['\n    query GetPost($id: ID!) {\n        post(id: $id) {\n            ...PostFields\n        }\n    }\n    ']) -> GetPost: ...
 @overload
+def api_gql(stmt: Literal['\n    fragment UserFields on User {\n        id\n        name\n    }\n    ']) -> runtime.GQLOperation: ...
+@overload
+def api_gql(stmt: Literal['\n    fragment PostFields on Post {\n        id\n        title\n    }\n    ']) -> runtime.GQLOperation: ...
+@overload
 def api_gql(stmt: str) -> runtime.GQLOperation: ...
 
 
@@ -95,8 +99,20 @@ _API_GQL_DISPATCH: dict[str, type[runtime.GQLOperation]] = {
 }
 
 
+_API_GQL_PASSTHROUGH: frozenset[str] = frozenset({
+    '\n    fragment UserFields on User {\n        id\n        name\n    }\n    ',
+    '\n    fragment PostFields on Post {\n        id\n        title\n    }\n    ',
+})
+
+
 def api_gql(stmt: str) -> runtime.GQLOperation:
     query_cls = _API_GQL_DISPATCH.get(stmt)
     if query_cls is not None:
         return query_cls()
-    return runtime.GQLOperation()
+    if stmt in _API_GQL_PASSTHROUGH:
+        return runtime.GQLOperation()
+    msg = "unknown GraphQL statement passed to api_gql; "
+    msg += "the generator only discovers bare-name calls with a "
+    msg += "single string literal - check the call site, then "
+    msg += "regenerate the package"
+    raise LookupError(msg)

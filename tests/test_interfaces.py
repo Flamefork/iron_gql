@@ -595,11 +595,11 @@ async def test_union_result_validation(
         _root: None, _info: GraphQLResolveInfo, *, id: str
     ) -> dict[str, object]:
         if id == "user-1":
-            return {"__typename": "User", "id": id, "name": "Morty"}
+            return {"__typename": "User", "id": id, "name": "Bob"}
         return {
             "__typename": "Admin",
             "id": id,
-            "name": "Rick",
+            "name": "Alice",
             "permissions": ["portal"],
         }
 
@@ -624,7 +624,7 @@ async def test_union_with_interface_fragment(
         _root: None, _info: GraphQLResolveInfo, *, id: str
     ) -> dict[str, object]:
         if id == "user-1":
-            return {"__typename": "User", "id": id, "name": "Morty"}
+            return {"__typename": "User", "id": id, "name": "Bob"}
         return {"__typename": "Admin", "id": id, "permissions": ["portal"]}
 
     async with gql_server(
@@ -636,11 +636,11 @@ async def test_union_with_interface_fragment(
         user_result = await union_iface_queries.get_actor.execute(id="user-1")
         assert isinstance(user_result.actor, UnionIfaceUser)
         assert user_result.actor.id == "user-1"
-        assert user_result.actor.name == "Morty"
+        assert user_result.actor.name == "Bob"
         assert user_result.actor.model_dump() == {
             "__typename": "User",
             "id": "user-1",
-            "name": "Morty",
+            "name": "Bob",
         }
 
         admin_result = await union_iface_queries.get_actor.execute(id="admin-1")
@@ -661,7 +661,7 @@ async def test_interface_without_fragments(
         _root: None, _info: GraphQLResolveInfo, *, id: str
     ) -> dict[str, str]:
         if id == "user-1":
-            return {"__typename": "User", "id": id, "name": "Morty"}
+            return {"__typename": "User", "id": id, "name": "Bob"}
         return {"__typename": "Post", "id": id, "title": "GraphQL 101"}
 
     async with gql_server(
@@ -682,7 +682,7 @@ async def test_interface_with_fragments(
         _root: None, _info: GraphQLResolveInfo, *, id: str
     ) -> dict[str, str]:
         if id == "user-1":
-            return {"__typename": "User", "id": id, "name": "Morty"}
+            return {"__typename": "User", "id": id, "name": "Bob"}
         if id == "post-1":
             return {"__typename": "Post", "id": id, "title": "GraphQL 101"}
         return {"__typename": "Comment", "id": id, "body": "First!"}
@@ -695,11 +695,11 @@ async def test_interface_with_fragments(
     ):
         user_result = await with_fragments_queries.get_node.execute(id="user-1")
         assert isinstance(user_result.node, WithFragmentsUser)
-        assert user_result.node.name == "Morty"
+        assert user_result.node.name == "Bob"
         assert user_result.node.model_dump() == {
             "__typename": "User",
             "id": "user-1",
-            "name": "Morty",
+            "name": "Bob",
         }
 
         comment_result = await with_fragments_queries.get_node.execute(id="comment-1")
@@ -746,7 +746,7 @@ async def test_interface_hierarchy(
                 "__typename": "User",
                 "id": id,
                 "createdAt": "2024-01-01",
-                "name": "Morty",
+                "name": "Bob",
             }
         return {"__typename": "Post", "id": id, "title": "GraphQL 101"}
 
@@ -781,7 +781,7 @@ async def test_interface_fragment_on_overlapping_interface(
         _root: None, _info: GraphQLResolveInfo, *, id: str
     ) -> dict[str, str]:
         if id == "user-1":
-            return {"__typename": "User", "id": id, "name": "Morty"}
+            return {"__typename": "User", "id": id, "name": "Bob"}
         return {"__typename": "Post", "id": id}
 
     async with gql_server(
@@ -793,11 +793,11 @@ async def test_interface_fragment_on_overlapping_interface(
         user_result = await overlapping_queries.get_node.execute(id="user-1")
         assert isinstance(user_result.node, OverlappingUser)
         assert user_result.node.id == "user-1"
-        assert user_result.node.name == "Morty"
+        assert user_result.node.name == "Bob"
         assert user_result.node.model_dump() == {
             "__typename": "User",
             "id": "user-1",
-            "name": "Morty",
+            "name": "Bob",
         }
 
         post_result = await overlapping_queries.get_node.execute(id="post-1")
@@ -850,6 +850,157 @@ def test_interface_fragment_requires_typename(test_project: ProjectBuilder):
         match=r"Missing __typename in selection set for interface 'Node'",
     ):
         test_project.generate()
+
+
+def test_conditional_typename_on_polymorphic_selection_is_rejected(
+    test_project: ProjectBuilder,
+):
+    # __typename is the pydantic discriminator of the variant union; a
+    # conditional one would render an optional-Literal discriminator that
+    # pydantic rejects when the generated module is imported. The rejection
+    # has to come from the generator, with a diagnosis, not from the import.
+    schema = """
+        interface Node {
+            id: ID!
+        }
+
+        type User implements Node {
+            id: ID!
+            name: String
+        }
+
+        type Query {
+            node(id: ID!): Node
+        }
+    """
+
+    test_project.prepare(
+        schema=schema,
+        queries="""
+        from sample_app.gql.api import api_gql
+
+        get_node = api_gql(
+            '''
+            query GetNode($id: ID!, $x: Boolean!) {
+                node(id: $id) {
+                    __typename @include(if: $x)
+                    id
+                    ... on User {
+                        name
+                    }
+                }
+            }
+            '''
+        )
+        """,
+    )
+
+    with pytest.raises(
+        ValueError,
+        match=r"__typename .* must be selected unconditionally",
+    ):
+        test_project.generate()
+
+
+def test_typename_reached_only_through_a_conditional_fragment_is_rejected(
+    test_project: ProjectBuilder,
+):
+    # The same discriminator rule when the only __typename lives inside a
+    # conditional inline fragment: its condition is inherited, so it does not
+    # cover every state in which the variant payload exists.
+    schema = """
+        interface Node {
+            id: ID!
+        }
+
+        type User implements Node {
+            id: ID!
+            name: String
+        }
+
+        type Query {
+            node(id: ID!): Node
+        }
+    """
+
+    test_project.prepare(
+        schema=schema,
+        queries="""
+        from sample_app.gql.api import api_gql
+
+        get_node = api_gql(
+            '''
+            query GetNode($id: ID!, $x: Boolean!) {
+                node(id: $id) {
+                    ... @include(if: $x) { __typename }
+                    id
+                    ... on User {
+                        name
+                    }
+                }
+            }
+            '''
+        )
+        """,
+    )
+
+    with pytest.raises(
+        ValueError,
+        match=r"__typename .* must be selected unconditionally",
+    ):
+        test_project.generate()
+
+
+def test_union_type_condition_inside_interface_selection_generates(
+    test_project: ProjectBuilder,
+):
+    # `... on Media` where Media is a union overlapping the interface: a valid
+    # spread (possible types intersect), so the members of the union become
+    # explicit variants instead of crashing the explicit-type resolution.
+    schema = """
+        interface Node {
+            id: ID!
+        }
+
+        type Photo implements Node {
+            id: ID!
+            url: String!
+        }
+
+        type Post implements Node {
+            id: ID!
+            title: String!
+        }
+
+        union Media = Photo
+
+        type Query {
+            node(id: ID!): Node
+        }
+    """
+
+    test_project.prepare(
+        schema=schema,
+        queries="""
+        from sample_app.gql.api import api_gql
+
+        get_node = api_gql(
+            '''
+            query GetNode($id: ID!) {
+                node(id: $id) {
+                    __typename
+                    id
+                    ... on Media {
+                        ... on Photo { url }
+                    }
+                }
+            }
+            '''
+        )
+        """,
+    )
+
+    assert test_project.generate() is True
 
 
 def test_invalid_interface_fragment_reports_error(test_project: ProjectBuilder):
@@ -1006,7 +1157,7 @@ async def test_nullable_union_result_validation(
         if id == "none":
             return None
         if id == "user-1":
-            return {"__typename": "User", "id": id, "name": "Morty"}
+            return {"__typename": "User", "id": id, "name": "Bob"}
         return {"__typename": "Admin", "id": id, "permissions": ["portal"]}
 
     async with gql_server(
@@ -1020,11 +1171,11 @@ async def test_nullable_union_result_validation(
 
         user_result = await nullable_union_queries.get_node.execute(id="user-1")
         assert isinstance(user_result.node, NullableUser)
-        assert user_result.node.name == "Morty"
+        assert user_result.node.name == "Bob"
         assert user_result.node.model_dump() == {
             "__typename": "User",
             "id": "user-1",
-            "name": "Morty",
+            "name": "Bob",
         }
 
         admin_result = await nullable_union_queries.get_node.execute(id="admin-1")
@@ -1042,7 +1193,7 @@ async def test_list_wrapped_union(
 ):
     def resolve_nodes(_root: None, _info: GraphQLResolveInfo) -> list[dict[str, str]]:
         return [
-            {"__typename": "User", "id": "u-1", "name": "Morty"},
+            {"__typename": "User", "id": "u-1", "name": "Bob"},
             {"__typename": "Post", "id": "p-1", "title": "GraphQL 101"},
         ]
 
@@ -1055,11 +1206,11 @@ async def test_list_wrapped_union(
         result = await list_union_queries.get_nodes.execute()
         assert len(result.nodes) == 2
         assert isinstance(result.nodes[0], ListUnionUser)
-        assert result.nodes[0].name == "Morty"
+        assert result.nodes[0].name == "Bob"
         assert result.nodes[0].model_dump() == {
             "__typename": "User",
             "id": "u-1",
-            "name": "Morty",
+            "name": "Bob",
         }
         assert isinstance(result.nodes[1], ListUnionPost)
         assert result.nodes[1].title == "GraphQL 101"
@@ -1077,7 +1228,7 @@ async def test_interface_with_named_fragment_type_condition(
         _root: None, _info: GraphQLResolveInfo, *, id: str
     ) -> dict[str, str]:
         if id == "user-1":
-            return {"__typename": "User", "id": id, "name": "Morty"}
+            return {"__typename": "User", "id": id, "name": "Bob"}
         return {"__typename": "Post", "id": id, "title": "GraphQL 101"}
 
     async with gql_server(
@@ -1088,11 +1239,11 @@ async def test_interface_with_named_fragment_type_condition(
     ):
         user_result = await named_fragment_queries.get_node.execute(id="user-1")
         assert isinstance(user_result.node, NamedFragmentUser)
-        assert user_result.node.name == "Morty"
+        assert user_result.node.name == "Bob"
         assert user_result.node.model_dump() == {
             "__typename": "User",
             "id": "user-1",
-            "name": "Morty",
+            "name": "Bob",
         }
 
         post_result = await named_fragment_queries.get_node.execute(id="post-1")
@@ -1111,7 +1262,7 @@ async def test_interface_typename_in_named_fragment(
         _root: None, _info: GraphQLResolveInfo, *, id: str
     ) -> dict[str, str]:
         if id == "user-1":
-            return {"__typename": "User", "id": id, "name": "Morty"}
+            return {"__typename": "User", "id": id, "name": "Bob"}
         return {"__typename": "Post", "id": id, "title": "GraphQL 101"}
 
     async with gql_server(
@@ -1122,11 +1273,11 @@ async def test_interface_typename_in_named_fragment(
     ):
         user_result = await typename_fragment_queries.get_node.execute(id="user-1")
         assert isinstance(user_result.node, TypenameFragmentUser)
-        assert user_result.node.name == "Morty"
+        assert user_result.node.name == "Bob"
         assert user_result.node.model_dump() == {
             "__typename": "User",
             "id": "user-1",
-            "name": "Morty",
+            "name": "Bob",
         }
 
         post_result = await typename_fragment_queries.get_node.execute(id="post-1")
@@ -1148,7 +1299,7 @@ async def test_interface_exhaustively_covered(
         nonlocal calls
         if calls == 0:
             calls += 1
-            return {"__typename": "User", "id": "user-1", "name": "Morty"}
+            return {"__typename": "User", "id": "user-1", "name": "Bob"}
         return {"__typename": "Post", "id": "post-1", "title": "GraphQL 101"}
 
     async with gql_server(
@@ -1162,7 +1313,7 @@ async def test_interface_exhaustively_covered(
         assert user_result.node.model_dump() == {
             "__typename": "User",
             "id": "user-1",
-            "name": "Morty",
+            "name": "Bob",
         }
 
         post_result = await exhaustive_queries.get_node.execute()

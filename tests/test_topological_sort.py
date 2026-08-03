@@ -11,12 +11,18 @@ from iron_gql.codegen.naming import topological_sort
 
 def _model(name: str, *referenced: str) -> CollectedModel:
     fields = [
-        CollectedField(name=f"ref_{index}", type_info=NamedRef(name=ref))
+        CollectedField(
+            name=f"ref_{index}",
+            response_key=f"ref_{index}",
+            type_info=NamedRef(name=ref),
+        )
         for index, ref in enumerate(referenced)
     ]
     if not fields:
         fields = [
-            CollectedField(name="value", type_info=ScalarRef(expr="str")),
+            CollectedField(
+                name="value", response_key="value", type_info=ScalarRef(expr="str")
+            ),
         ]
     return CollectedModel(name=name, fields=fields)
 
@@ -86,7 +92,9 @@ def test_self_reference_raises_cycle_error():
     model = CollectedModel(
         name="Node",
         fields=[
-            CollectedField(name="child", type_info=NamedRef(name="Node")),
+            CollectedField(
+                name="child", response_key="child", type_info=NamedRef(name="Node")
+            ),
         ],
     )
     result = topological_sort([model])

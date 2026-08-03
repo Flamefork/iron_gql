@@ -664,6 +664,196 @@ def test_duplicate_identical_query_deduplication(test_project: ProjectBuilder):
     assert test_project.generate() is True
 
 
+def test_duplicate_query_with_different_spelling_dispatches_both(
+    test_project: ProjectBuilder,
+):
+    # Deduplication compares dedented text, so the same query indented
+    # differently at two call sites is one operation — but the dispatch dict is
+    # keyed by the exact literal, so every spelling must be present in it.
+    test_project.prepare(
+        schema="""
+        type Query {
+            ping: String
+        }
+        """,
+        queries="""
+        from sample_app.gql.api import api_gql
+
+        first = api_gql("query Ping { ping }")
+        second = api_gql('''
+            query Ping { ping }
+        ''')
+        """,
+    )
+    api_module, queries_module = test_project.generate_and_import()
+    assert isinstance(queries_module.first, api_module.Ping)  # pyright: ignore[reportAny]
+    assert isinstance(queries_module.second, api_module.Ping)  # pyright: ignore[reportAny]
+
+
+def test_statically_empty_selection_is_rejected(test_project: ProjectBuilder):
+    # A literal `@skip(if: true)` on every field leaves the model without
+    # fields, and a fieldless class renders with an empty body that the
+    # generated module cannot even import.
+    test_project.prepare(
+        schema="""
+        type Query {
+            user(id: ID!): User
+        }
+
+        type User {
+            id: ID!
+        }
+        """,
+        queries="""
+        from sample_app.gql.api import api_gql
+
+        get_user = api_gql(
+            '''
+            query GetUser($id: ID!) {
+                user(id: $id) {
+                    id @skip(if: true)
+                }
+            }
+            '''
+        )
+        """,
+    )
+    with pytest.raises(ValueError, match="statically empty"):
+        test_project.generate()
+
+
+def test_enum_sharing_a_model_raw_name_is_rejected(test_project: ProjectBuilder):
+    # `q { child ... }` generates a model raw-named QResultChild; an enum with
+    # the same schema name makes every NamedRef('QResultChild') ambiguous —
+    # the subtree walks recurse through the model where the enum was meant.
+    test_project.prepare(
+        schema="""
+        type Query {
+            child: Child
+        }
+
+        type Child {
+            id: ID!
+            status: QResultChild
+        }
+
+        enum QResultChild {
+            ACTIVE
+            INACTIVE
+        }
+        """,
+        queries="""
+        from sample_app.gql.api import api_gql
+
+        q = api_gql(
+            '''
+            query q { child { id status } }
+            '''
+        )
+        """,
+    )
+    with pytest.raises(GraphQLGenerationError, match="Enum 'QResultChild' shares"):
+        test_project.generate()
+
+
+def test_colliding_paths_with_different_shapes_are_rejected(
+    test_project: ProjectBuilder,
+):
+    # `aB.c` and `a.bC` both concatenate to the raw name SResultABC; the
+    # rename map is keyed by name, so it cannot give the two shapes distinct
+    # detailed names — the collision is the developer's to resolve.
+    test_project.prepare(
+        schema="""
+        type Query {
+            aB: Outer
+            a: Inner
+        }
+
+        type Outer {
+            c: Thing
+        }
+
+        type Inner {
+            bC: Thing2
+        }
+
+        type Thing {
+            id: ID!
+        }
+
+        type Thing2 {
+            id: ID!
+            name: String
+        }
+        """,
+        queries="""
+        from sample_app.gql.api import api_gql
+
+        q = api_gql(
+            '''
+            query S { aB { c { id } } a { bC { id name } } }
+            '''
+        )
+        """,
+    )
+    with pytest.raises(
+        GraphQLGenerationError, match="colliding field paths with different shapes"
+    ):
+        test_project.generate()
+
+
+def test_variable_mapping_to_python_keyword_is_rejected(test_project: ProjectBuilder):
+    test_project.prepare(
+        schema="""
+        type Query {
+            user(id: ID): User
+        }
+
+        type User {
+            id: ID!
+        }
+        """,
+        queries="""
+        from sample_app.gql.api import api_gql
+
+        q = api_gql(
+            '''
+            query GetUser($class: ID) { user(id: $class) { id } }
+            '''
+        )
+        """,
+    )
+    with pytest.raises(
+        GraphQLGenerationError, match=r"Execute parameter 'class'.*Python keyword"
+    ):
+        test_project.generate()
+
+
+def test_field_aliased_to_python_keyword_is_rejected(test_project: ProjectBuilder):
+    test_project.prepare(
+        schema="""
+        type Query {
+            user: User
+        }
+
+        type User {
+            id: ID!
+        }
+        """,
+        queries="""
+        from sample_app.gql.api import api_gql
+
+        q = api_gql(
+            '''
+            query GetUser { user { class: id } }
+            '''
+        )
+        """,
+    )
+    with pytest.raises(GraphQLGenerationError, match=r"Field 'class'.*Python keyword"):
+        test_project.generate()
+
+
 def test_syntax_error_in_scanned_file(test_project: ProjectBuilder):
     test_project.prepare(
         schema="""
@@ -689,3 +879,142 @@ def test_syntax_error_in_scanned_file(test_project: ProjectBuilder):
 
     with pytest.raises(SyntaxError, match=r"Failed to parse.*broken\.py"):
         test_project.generate()
+
+
+def test_union_alias_colliding_with_a_model_name_is_rejected(
+    test_project: ProjectBuilder,
+):
+    # `aB` (a union field) and `a.b` (an object path) both concatenate to the
+    # raw name SResultAB — one a union alias, one a model; no rename can hold
+    # both, so the collision is the developer's to resolve.
+    test_project.prepare(
+        schema="""
+        type Query {
+            aB: U
+            a: Mid
+        }
+
+        union U = X | Y
+
+        type X {
+            id: ID!
+        }
+
+        type Y {
+            name: String
+        }
+
+        type Mid {
+            b: Z
+        }
+
+        type Z {
+            id: ID!
+        }
+        """,
+        queries="""
+        from sample_app.gql.api import api_gql
+
+        q = api_gql(
+            '''
+            query S {
+                aB { __typename ... on X { id } ... on Y { name } }
+                a { b { id } }
+            }
+            '''
+        )
+        """,
+    )
+    with pytest.raises(GraphQLGenerationError, match="two colliding selections"):
+        test_project.generate()
+
+
+def test_two_response_keys_mapping_to_one_python_name_are_rejected(
+    test_project: ProjectBuilder,
+):
+    # `userId` and `user_id` both snake to `user_id`: the class body would
+    # declare the attribute twice and the second would silently win.
+    test_project.prepare(
+        schema="""
+        type Query {
+            user: User
+        }
+
+        type User {
+            userId: ID!
+            user_id: ID!
+        }
+        """,
+        queries="""
+        from sample_app.gql.api import api_gql
+
+        q = api_gql("query Q { user { userId user_id } }")
+        """,
+    )
+    with pytest.raises(GraphQLGenerationError, match="both map to Python name"):
+        test_project.generate()
+
+
+def test_field_shadowing_pydantic_protected_namespace_is_rejected(
+    test_project: ProjectBuilder,
+):
+    # `modelDump` snakes to `model_dump`; pydantic strips such a field at
+    # class creation, so the module would fail to import.
+    test_project.prepare(
+        schema="""
+        type Query {
+            image: Image
+        }
+
+        type Image {
+            modelDump: String
+        }
+        """,
+        queries="""
+        from sample_app.gql.api import api_gql
+
+        q = api_gql("query Q { image { modelDump } }")
+        """,
+    )
+    with pytest.raises(GraphQLGenerationError, match="protected namespace"):
+        test_project.generate()
+
+
+async def test_defaulted_directive_variable_stays_conditional(
+    test_project: ProjectBuilder, httpserver: HTTPServer
+):
+    # A default on the variable does not make @include static: the caller can
+    # pass the other value at runtime, so the field is modeled optional and
+    # both states validate real responses.
+    async with test_project.server(
+        httpserver,
+        schema="""
+        type Query {
+            user: User
+        }
+
+        type User {
+            id: ID!
+            name: String
+        }
+        """,
+        queries='''
+        from sample_app.gql.api import api_gql
+
+        q = api_gql(
+            """
+            query Q($withName: Boolean! = false) {
+                user {
+                    id
+                    name @include(if: $withName)
+                }
+            }
+            """
+        )
+        ''',
+        resolvers={"Query": {"user": lambda *_: {"id": "u1", "name": "Alice"}}},
+    ) as (_api_module, queries_module):
+        on = await queries_module.q.execute(with_name=True)  # pyright: ignore[reportAny]
+        assert on.user.name == "Alice"  # pyright: ignore[reportAny]
+        off = await queries_module.q.execute(with_name=False)  # pyright: ignore[reportAny]
+        assert off.user.name is None  # pyright: ignore[reportAny]

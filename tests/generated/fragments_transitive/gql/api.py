@@ -66,6 +66,12 @@ class GetUser(runtime.GQLOperation):
 @overload
 def api_gql(stmt: Literal['\n    query GetUser($id: ID!) {\n        user(id: $id) {\n            ...UserFields\n        }\n    }\n    ']) -> GetUser: ...
 @overload
+def api_gql(stmt: Literal['\n    fragment RoleFields on User {\n        role\n    }\n    ']) -> runtime.GQLOperation: ...
+@overload
+def api_gql(stmt: Literal['\n    fragment ContactFields on User {\n        email\n        ...RoleFields\n    }\n    ']) -> runtime.GQLOperation: ...
+@overload
+def api_gql(stmt: Literal['\n    fragment UserFields on User {\n        id\n        name\n        ...ContactFields\n    }\n    ']) -> runtime.GQLOperation: ...
+@overload
 def api_gql(stmt: str) -> runtime.GQLOperation: ...
 
 
@@ -74,8 +80,21 @@ _API_GQL_DISPATCH: dict[str, type[runtime.GQLOperation]] = {
 }
 
 
+_API_GQL_PASSTHROUGH: frozenset[str] = frozenset({
+    '\n    fragment RoleFields on User {\n        role\n    }\n    ',
+    '\n    fragment ContactFields on User {\n        email\n        ...RoleFields\n    }\n    ',
+    '\n    fragment UserFields on User {\n        id\n        name\n        ...ContactFields\n    }\n    ',
+})
+
+
 def api_gql(stmt: str) -> runtime.GQLOperation:
     query_cls = _API_GQL_DISPATCH.get(stmt)
     if query_cls is not None:
         return query_cls()
-    return runtime.GQLOperation()
+    if stmt in _API_GQL_PASSTHROUGH:
+        return runtime.GQLOperation()
+    msg = "unknown GraphQL statement passed to api_gql; "
+    msg += "the generator only discovers bare-name calls with a "
+    msg += "single string literal - check the call site, then "
+    msg += "regenerate the package"
+    raise LookupError(msg)

@@ -315,7 +315,7 @@ async def test_inline_fragment_without_type_condition(
     httpserver: HTTPServer, monkeypatch: pytest.MonkeyPatch
 ):
     def resolve_viewer(_root: None, _info: GraphQLResolveInfo) -> dict[str, str]:
-        return {"id": "user-1", "name": "Morty", "email": "morty@example.com"}
+        return {"id": "user-1", "name": "Bob", "email": "bob@example.com"}
 
     async with gql_server(
         httpserver,
@@ -325,15 +325,15 @@ async def test_inline_fragment_without_type_condition(
     ):
         result = await inline_queries.get_viewer.execute()
         assert result.viewer.id == "user-1"
-        assert result.viewer.name == "Morty"
-        assert result.viewer.email == "morty@example.com"
+        assert result.viewer.name == "Bob"
+        assert result.viewer.email == "bob@example.com"
 
 
 async def test_named_fragments(httpserver: HTTPServer, monkeypatch: pytest.MonkeyPatch):
     def resolve_user(
         _root: None, _info: GraphQLResolveInfo, *, id: str
     ) -> dict[str, str]:
-        return {"id": id, "name": "Morty", "email": "morty@example.com"}
+        return {"id": id, "name": "Bob", "email": "bob@example.com"}
 
     async with gql_server(
         httpserver,
@@ -344,8 +344,8 @@ async def test_named_fragments(httpserver: HTTPServer, monkeypatch: pytest.Monke
         result = await named_queries.get_user.execute(id="u-1")
         assert result.user is not None
         assert result.user.id == "u-1"
-        assert result.user.name == "Morty"
-        assert result.user.email == "morty@example.com"
+        assert result.user.name == "Bob"
+        assert result.user.email == "bob@example.com"
 
 
 async def test_duplicate_fragment_names_use_local_definition(
@@ -354,7 +354,7 @@ async def test_duplicate_fragment_names_use_local_definition(
     def resolve_user(
         _root: None, _info: GraphQLResolveInfo, *, id: str
     ) -> dict[str, str]:
-        return {"id": id, "name": "Morty"}
+        return {"id": id, "name": "Bob"}
 
     async with gql_server(
         httpserver,
@@ -365,7 +365,7 @@ async def test_duplicate_fragment_names_use_local_definition(
         result = await dup_names_queries.get_user.execute(id="u-1")
         assert result.user is not None
         assert result.user.id == "u-1"
-        assert result.user.name == "Morty"
+        assert result.user.name == "Bob"
 
 
 async def test_fragment_validation_scoped_to_query(
@@ -374,7 +374,7 @@ async def test_fragment_validation_scoped_to_query(
     def resolve_user(
         _root: None, _info: GraphQLResolveInfo, *, id: str
     ) -> dict[str, str]:
-        return {"id": id, "name": "Morty"}
+        return {"id": id, "name": "Bob"}
 
     def resolve_post(
         _root: None, _info: GraphQLResolveInfo, *, id: str
@@ -390,7 +390,7 @@ async def test_fragment_validation_scoped_to_query(
         user_result = await scoped_queries.get_user.execute(id="u-1")
         assert user_result.user is not None
         assert user_result.user.id == "u-1"
-        assert user_result.user.name == "Morty"
+        assert user_result.user.name == "Bob"
 
         post_result = await scoped_queries.get_post.execute(id="p-1")
         assert post_result.post is not None
@@ -404,7 +404,7 @@ async def test_inline_fragment_definitions_not_duplicated(
     def resolve_user(
         _root: None, _info: GraphQLResolveInfo, *, id: str
     ) -> dict[str, str]:
-        return {"id": id, "name": "Morty"}
+        return {"id": id, "name": "Bob"}
 
     async with gql_server(
         httpserver,
@@ -415,7 +415,7 @@ async def test_inline_fragment_definitions_not_duplicated(
         result = await no_dup_queries.get_user.execute(id="u-1")
         assert result.user is not None
         assert result.user.id == "u-1"
-        assert result.user.name == "Morty"
+        assert result.user.name == "Bob"
 
 
 async def test_transitive_fragments(
@@ -428,8 +428,8 @@ async def test_transitive_fragments(
     ) -> dict[str, str]:
         return {
             "id": id,
-            "name": "Morty",
-            "email": "morty@example.com",
+            "name": "Bob",
+            "email": "bob@example.com",
             "role": "admin",
         }
 
@@ -442,8 +442,8 @@ async def test_transitive_fragments(
         result = await transitive_queries.get_user.execute(id="u-1")
         assert result.user is not None
         assert result.user.id == "u-1"
-        assert result.user.name == "Morty"
-        assert result.user.email == "morty@example.com"
+        assert result.user.name == "Bob"
+        assert result.user.email == "bob@example.com"
         assert result.user.role == "admin"
 
 
@@ -455,7 +455,7 @@ async def test_exec_source_contains_expanded_fragments(
     def resolve_user(
         _root: None, _info: GraphQLResolveInfo, *, id: str
     ) -> dict[str, str]:
-        return {"id": id, "name": "Morty"}
+        return {"id": id, "name": "Bob"}
 
     async with gql_server(
         httpserver,
