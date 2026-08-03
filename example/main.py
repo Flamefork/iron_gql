@@ -10,14 +10,6 @@ from example.gql.api import PostWithAuthorIdTitleTypename
 from example.gql.api import UserWithIdNameRoleTypename
 from example.gql.api import api_gql
 
-# A caller-side fragment: `read_attachment` below owns the operation without
-# knowing this selection; the caller passes it in through the slot.
-IMAGE_URL = api_gql("""
-    fragment ImageUrl on ImageAttachment {
-        url
-    }
-""")
-
 
 async def read_attachment[T: pydantic.BaseModel](
     post_id: str, fragment: AttachmentFragment[T]
@@ -137,7 +129,13 @@ async def main():
     if found.find_user:
         print(f"Found by email: {found.find_user.name}")
 
-    image = await read_attachment("1", IMAGE_URL)
+    image_url = api_gql("""
+        fragment ImageUrl on ImageAttachment {
+            url
+        }
+    """)
+
+    image = await read_attachment("1", image_url)
     if image is not None:
         print(f"Attachment image: {image.url}")
 

@@ -189,7 +189,7 @@ type FindUserBy = FindUserById | FindUserByEmail
 
 
 class GetPostAttachment(runtime.GQLOperation):
-    # See: main.py:25
+    # See: main.py:17
     async def execute(self, *, id: builtins.str, attachment: AttachmentFragment[pydantic.BaseModel] | Sequence[AttachmentFragment[pydantic.BaseModel]]) -> GetPostAttachmentResult:
         slot_fragments = {"attachment": slots.as_handles(attachment)}
         return await API_CLIENT.query(
@@ -202,7 +202,7 @@ class GetPostAttachment(runtime.GQLOperation):
 
 
 class GetUser(runtime.GQLOperation):
-    # See: main.py:39
+    # See: main.py:31
     async def execute(self, *, id: builtins.str) -> GetUserResult:
         return await API_CLIENT.query(
             GetUserResult,
@@ -213,7 +213,7 @@ class GetUser(runtime.GQLOperation):
 
 
 class CreateUser(runtime.GQLOperation):
-    # See: main.py:60
+    # See: main.py:52
     async def execute(self, *, input: CreateUserInput) -> CreateUserResult:
         return await API_CLIENT.query(
             CreateUserResult,
@@ -224,7 +224,7 @@ class CreateUser(runtime.GQLOperation):
 
 
 class Search(runtime.GQLOperation):
-    # See: main.py:74
+    # See: main.py:66
     async def execute(self, *, query: str) -> SearchResult:
         return await API_CLIENT.query(
             SearchResult,
@@ -235,7 +235,7 @@ class Search(runtime.GQLOperation):
 
 
 class GetProfile(runtime.GQLOperation):
-    # See: main.py:98
+    # See: main.py:90
     async def execute(self, *, id: builtins.str, with_email: bool, skip_phone: bool) -> GetProfileResult:
         return await API_CLIENT.query(
             GetProfileResult,
@@ -246,7 +246,7 @@ class GetProfile(runtime.GQLOperation):
 
 
 class FindUser(runtime.GQLOperation):
-    # See: main.py:116, main.py:128
+    # See: main.py:108, main.py:120
     async def execute(self, *, by: FindUserBy) -> FindUserResult:
         return await API_CLIENT.query(
             FindUserResult,
@@ -257,7 +257,7 @@ class FindUser(runtime.GQLOperation):
 
 
 class PostAdded(runtime.GQLOperation):
-    # See: main.py:144
+    # See: main.py:142
     def execute(self, *, user_id: builtins.str) -> AbstractAsyncContextManager[AsyncGenerator[PostAddedResult]]:
         return API_CLIENT.subscribe(
             PostAddedResult,
@@ -295,7 +295,7 @@ def api_gql(stmt: Literal['\n        query FindUser($by: FindUserBy!) {\n       
 @overload
 def api_gql(stmt: Literal['\n        subscription PostAdded($userId: ID!) {\n            postAdded(userId: $userId) {\n                id\n                title\n                body\n                author { name }\n            }\n        }\n    ']) -> PostAdded: ...
 @overload
-def api_gql(stmt: Literal['\n    fragment ImageUrl on ImageAttachment {\n        url\n    }\n']) -> ImageUrl: ...
+def api_gql(stmt: Literal['\n        fragment ImageUrl on ImageAttachment {\n            url\n        }\n    ']) -> ImageUrl: ...
 @overload
 def api_gql(stmt: str) -> runtime.GQLOperation | slots.GQLFragment[pydantic.BaseModel]: ...
 
@@ -312,7 +312,7 @@ _API_GQL_DISPATCH: dict[str, type[runtime.GQLOperation]] = {
 
 
 _API_GQL_FRAGMENTS: dict[str, slots.GQLFragment[pydantic.BaseModel]] = {
-    '\n    fragment ImageUrl on ImageAttachment {\n        url\n    }\n': IMAGE_URL,
+    '\n        fragment ImageUrl on ImageAttachment {\n            url\n        }\n    ': IMAGE_URL,
 }
 
 

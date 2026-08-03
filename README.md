@@ -5,7 +5,7 @@
 [![PyPI - Version](https://img.shields.io/pypi/v/iron-gql)](https://pypi.org/project/iron-gql/)
 
 
-`iron_gql` is a lightweight GraphQL code generator and runtime that turns schema SDL and real query documents into typed Python clients powered by Pydantic models. Use it to wire GraphQL APIs into services, CLIs, background jobs, or tests without hand-writing boilerplate.
+`iron_gql` is a GraphQL code generator and runtime. It reads a schema SDL and your query documents, and it generates a typed Python client with Pydantic models. You can connect GraphQL APIs to services, CLIs, background jobs, and tests without hand-written boilerplate.
 
 ## Installation
 
@@ -15,19 +15,19 @@ pip install iron-gql[codegen]   # + graphql-core for code generation
 ```
 
 ## Key Features
-- **Query discovery.** `generate_gql_package` scans your codebase for calls that look like `<package>_gql("""...""")`, validates each statement, and emits a module with strongly typed helpers.
-- **Typed inputs and results.** Generated Pydantic models mirror every selection set, enum, and input object referenced by the discovered queries.
-- **Async runtime.** `runtime.GQLClient` speaks to GraphQL endpoints over `httpx` and can shortcut network hops when pointed at an ASGI app.
-- **Deterministic validation.** `graphql-core` (codegen dependency) enforces schema compatibility and rejects duplicate operation names with incompatible bodies.
+- **Query discovery.** `generate_gql_package` scans your codebase for calls of the form `<package>_gql("""...""")`. It validates each statement and writes a module with typed helpers.
+- **Typed inputs and results.** The generated Pydantic models match every selection set, enum, and input object that the discovered queries reference.
+- **Async runtime.** `runtime.GQLClient` sends requests to GraphQL endpoints through `httpx`. When you set an ASGI `target_app`, the client calls the app in-process and does not use the network.
+- **Deterministic validation.** `graphql-core` (a codegen dependency) validates every statement against the schema. It rejects operations that share a name but have different bodies.
 
 ## Package Layout
-- `runtime.py` – provides the async `GQLClient`, the reusable `GQLOperation` base class, and value serialization helpers.
-- `codegen/generate.py` – orchestrates query discovery, validation, and module rendering.
-- `codegen/parser.py` – converts GraphQL AST into typed helper structures consumed by the renderer.
+- `runtime.py` contains the async `GQLClient`, the reusable `GQLOperation` base class, and the value serialization helpers.
+- `codegen/generate.py` runs query discovery, validation, and module rendering.
+- `codegen/parser.py` converts the GraphQL AST into typed helper structures for the renderer.
 
 ## Getting Started
-1. **Describe your schema.** Point `generate_gql_package` at an SDL file (`schema.graphql`). Include whichever root types you rely on (query, mutation, subscription).
-2. **Author queries where they live.** Import the future helper and wrap your GraphQL statement:
+1. **Describe your schema.** Write the schema in an SDL file (`schema.graphql`). Include the root types that you use (query, mutation, subscription).
+2. **Write queries where you use them.** Import the helper that the generator will create. Wrap each GraphQL statement in a call to this helper:
    ```python
    from myapp.gql.client import client_gql
 
@@ -42,7 +42,7 @@ pip install iron-gql[codegen]   # + graphql-core for code generation
        """
    )
    ```
-   The generator infers the helper name (`client_gql`) from the package path you ask it to build.
+   The generator derives the helper name (`client_gql`) from the package path that you ask it to build.
 3. **Generate the client module.**
    ```python
    from pathlib import Path
@@ -60,11 +60,11 @@ pip install iron-gql[codegen]   # + graphql-core for code generation
        src_path=Path("."),
    )
    ```
-   The call writes `myapp/gql/client.py` containing:
+   The call writes `myapp/gql/client.py`. The module contains:
    - an async client singleton,
    - Pydantic result and input models,
    - a query class per operation with typed `execute` methods,
-   - overloads for the helper function so editors can infer return types.
+   - overloads for the helper function, so editors can infer return types.
 4. **Call your API.**
    ```python
    async def fetch_user(user_id: str):
@@ -75,9 +75,9 @@ pip install iron-gql[codegen]   # + graphql-core for code generation
 
 ## Custom Scalars
 
-The generator maps GraphQL scalars to Python types in two layers:
+The generator maps GraphQL scalars to Python types in two layers.
 
-**Built-in scalars** are mapped automatically:
+It maps **built-in scalars** automatically:
 
 | GraphQL | Python |
 |---------|--------|
@@ -87,7 +87,7 @@ The generator maps GraphQL scalars to Python types in two layers:
 | `JSON` | `object` |
 | `Upload` | `iron_gql.FileVar` |
 
-**Custom scalars** are configured via the `scalars` parameter in `"module:type"` format:
+You configure **custom scalars** with the `scalars` parameter, in `"module:type"` format:
 
 ```python
 generate_gql_package(
@@ -100,13 +100,13 @@ generate_gql_package(
 )
 ```
 
-Custom scalar types must be Pydantic-compatible — i.e. Pydantic should know how to parse them from JSON (deserialization) and serialize them to JSON. This works out of the box for standard library types (`datetime`, `Decimal`, `UUID`, `Enum`) and for any type that implements `__get_pydantic_core_schema__`. Unknown scalars fall back to `object` with a log warning.
+Custom scalar types must be Pydantic-compatible. That is, Pydantic must know how to parse the type from JSON (deserialization) and how to serialize it to JSON. Standard library types (`datetime`, `Decimal`, `UUID`, `Enum`) are compatible by default. Any type that implements `__get_pydantic_core_schema__` is also compatible. The generator maps unknown scalars to `object` and writes a warning to the log.
 
 ## Fragment Slots
 
-Shared infrastructure code often owns a GraphQL operation without knowing which fields its callers need on one of the operation's fields. Fragment slots let each caller supply its own fragment for that field at call time, instead of the operation naming every consumer's fragment up front.
+Shared infrastructure code often owns a GraphQL operation, but it does not know which fields each caller needs on some field of that operation. A fragment slot lets each caller supply its own fragment for that field at call time. The operation does not have to name the fragments of its consumers in advance.
 
-Mark a field with `@slot` in a query, mutation, or subscription (not inside a fragment definition), giving it a static selection that selects `__typename` at the top level of the field's own selection set: unaliased, with no directives on it, and not through an inline fragment or a fragment spread. The slot field itself cannot carry `@skip`/`@include` — a slot is always requested, and a caller that wants no fragment data passes an empty list.
+Mark a field with `@slot` in a query, mutation, or subscription. Do not use `@slot` inside a fragment definition. Give the field a static selection that selects `__typename` at the top level of its own selection set. This `__typename` must be unaliased and must have no directives. It must not come through an inline fragment or a fragment spread. The slot field itself cannot have `@skip` or `@include`: the operation always requests the slot field. If a caller wants no fragment data, it passes an empty list.
 
 ```python
 get_post_attachment = api_gql("""
@@ -119,7 +119,12 @@ get_post_attachment = api_gql("""
 """)
 ```
 
-A statement holding exactly one fragment definition becomes a typed **handle** when some slot in the package can accept it — that is, when the fragment is spread-compatible with a slot field's type. The same fragment can still be spread by name into other operations as before. A single-fragment statement no slot accepts, and a statement bundling several fragment definitions without an operation, keep returning a plain `runtime.GQLOperation`: their fragments live on as name-spread building blocks and owe none of a handle's obligations (self-containedness, own `__typename` on polymorphic selections, non-empty selection). A statement containing an operation returns that operation's class exactly as it always has:
+A statement that holds exactly one fragment definition becomes a typed **handle** when some slot in the package can accept the fragment. A slot can accept a fragment when the fragment is spread-compatible with the type of the slot field. You can still spread the same fragment by name into other operations. For two kinds of statement, the helper returns a plain `runtime.GQLOperation`:
+
+- a statement with one fragment definition that no slot accepts,
+- a statement with several fragment definitions and no operation.
+
+The fragments of these statements continue to work as building blocks for name spreads. They carry none of the obligations of a handle: self-containedness, a `__typename` of its own on polymorphic selections, and a non-empty selection. For a statement that contains an operation, the helper returns the class of that operation, as always.
 
 ```python
 IMAGE_URL = api_gql("""
@@ -129,7 +134,7 @@ IMAGE_URL = api_gql("""
 """)
 ```
 
-Pass a handle, or a sequence of handles, into `execute` using the snake_case form of the slot field's name (or alias) as the keyword argument — `mainAttachment @slot` becomes `main_attachment=` — then read each fragment's own typed model back out of the slot node with `handle.read(node)`:
+Pass a handle, or a sequence of handles, into `execute`. The keyword argument is the snake_case form of the name of the slot field, or of its alias. For example, `mainAttachment @slot` becomes `main_attachment=`. Then read the typed model of each fragment from the slot node with `handle.read(node)`:
 
 ```python
 result = await get_post_attachment.execute(id="p-1", attachment=IMAGE_URL)
@@ -139,7 +144,18 @@ if result.post is not None:
         print(image.url)
 ```
 
-`read` returns `None` in exactly two situations: the node itself is `None` because the server sent `null`, or the node's runtime type is outside the fragment's own selection. Reading with a handle that was never passed to that slot raises instead of returning `None` — a wiring bug must not look like a legitimate mismatch. Fragments are isolated from each other: each one reads back exactly its own selection, never the fields another caller's fragment asked for. Slot data is reachable only through `read`: it is not part of the result model's fields, so `model_dump()` does not include it — and a dumped result does not round-trip: re-validating it demands a fragments context again (without one it fails loudly), and the fragments' data is gone either way. The generator emits one compatibility base per slot field type, named `{FieldType}Fragment`, so shared code can be generic over any fragment compatible with that field, without knowing its concrete shape:
+`read` returns `None` in exactly two situations:
+
+- The node is `None` because the server sent `null`.
+- The runtime type of the node is outside the fragment's own selection.
+
+If you read with a handle that you never passed to that slot, `read` raises an error. It does not return `None`, because a wiring bug must not look like a legitimate mismatch.
+
+Fragments are isolated from each other. Each fragment reads exactly its own selection. It never receives the fields that the fragment of another caller selected.
+
+You can reach slot data only through `read`. The data is not part of the fields of the result model, so `model_dump()` does not include it. A dumped result does not round-trip. To validate the dump again, you must supply a fragments context. Without one, validation fails with an error. With or without one, the data of the fragments is gone.
+
+For each slot field type, the generator writes one compatibility base class, named `{FieldType}Fragment`. With this class, shared code can be generic over any fragment that is compatible with that field. The shared code does not have to know the concrete shape of the fragment:
 
 ```python
 async def read_attachment[T: pydantic.BaseModel](
@@ -151,32 +167,32 @@ async def read_attachment[T: pydantic.BaseModel](
     return fragment.read(result.post.attachment)
 ```
 
-Passing a fragment that isn't spread-compatible with the slot is a type error, so mismatches are caught before your code ships.
+A fragment that is not spread-compatible with the slot causes a type error. The type checker finds the mismatch before you ship your code.
 
-Validation of every fragment passed into a slot happens eagerly — for queries and mutations inside `execute`, for subscriptions on every received message — so malformed data raises at the response boundary and never silently surfaces later from `read`.
+The runtime validates every fragment that you pass into a slot at the response boundary. For queries and mutations, validation occurs inside `execute`. For subscriptions, validation occurs on each received message. Malformed data causes an immediate error. The malformed data never surfaces later from `read`.
 
-Three things to keep in mind:
-- A handle must be self-contained: it cannot spread other fragments and cannot reference variables (`$name`) — it travels to the server as its own text alone, next to an operation that declares nothing on its behalf. Fragments no slot accepts are untouched by both rules: they keep composing through name spreads and taking their variables from the operations that spread them.
-- An operation that declares a compatible slot cannot itself define or spread any fragment name a handle ships — the handle's own name or one of its transitive dependencies. The generator rejects the combination as soon as the handle exists, whether or not anyone passes it; rename one of the two. Operations without a compatible slot are outside the rule, and the same fragment works in both roles across different operations.
-- The slot keyword argument in `execute` is mandatory — there is no default, so sending no fragments means passing an empty list explicitly.
+Three rules apply:
+- A handle must be self-contained. It cannot spread other fragments, and it cannot reference variables (`$name`). The handle travels to the server as its own text, next to an operation that declares nothing for it. Fragments that no slot accepts are free of both rules. They can spread other fragments by name, and they take their variables from the operations that spread them.
+- An operation that declares a compatible slot cannot define or spread any fragment name that a handle ships. This covers the handle's own name and its transitive dependencies. The generator rejects the combination as soon as the handle exists, whether or not anyone passes the handle. To remove the conflict, rename one of the two. Operations without a compatible slot are outside this rule. The same fragment can work in both roles across different operations.
+- The slot keyword argument in `execute` is mandatory, and there is no default. To send no fragments, pass an empty list explicitly.
 
 ## Customization Hooks
-- **Naming conventions.** Supply `to_camel_fn_full_name` (module:path string) and a `to_snake_fn` callable to align casing with your own `alias_generator`.
-- **Endpoint configuration.** `base_url_import` is written verbatim into the generated module; point it at a global string, config object, or helper that returns the GraphQL endpoint.
+- **Naming conventions.** Supply `to_camel_fn_full_name` (a module:path string) and a `to_snake_fn` callable. These functions align the casing with your own `alias_generator`.
+- **Endpoint configuration.** The generator writes `base_url_import` verbatim into the generated module. Set it to a global string, a configuration object, or a helper that returns the GraphQL endpoint.
 
 ## Runtime Highlights
-- `GQLClient` accepts ASGI `target_app` so you can reuse the runtime for production HTTP calls or in-process ASGI execution.
-- `GQLOperation.with_headers` clones the operation object, making per-call customization trivial.
-- `Upload` scalars map to `iron_gql.FileVar`; multipart upload per the [GraphQL multipart request spec](https://github.com/jaydenseric/graphql-multipart-request-spec) is triggered automatically when variables contain `FileVar` instances.
-- `serialize_var` converts variables to JSON-friendly structures via Pydantic's `TypeAdapter`, supporting custom scalar types alongside nested models, dicts, and lists.
+- `GQLClient` accepts an ASGI `target_app`. You can use the same runtime for production HTTP calls and for in-process ASGI execution.
+- `GQLOperation.with_headers` clones the operation object. The original does not change, so each call can have its own headers.
+- `Upload` scalars map to `iron_gql.FileVar`. When variables contain `FileVar` instances, the client automatically sends a multipart upload (see the [GraphQL multipart request spec](https://github.com/jaydenseric/graphql-multipart-request-spec)).
+- `serialize_var` converts variables to JSON-compatible structures with the Pydantic `TypeAdapter`. It supports custom scalar types, nested models, dicts, and lists.
 
 ## Example
 
-The [`example/`](example/) directory contains a complete working setup: a GraphQL schema with queries, mutations, enums, interfaces, unions, and fragments, plus the generation script and sample query definitions. See [`example/generate.py`](example/generate.py) for the codegen call and [`example/main.py`](example/main.py) for query usage.
+The [`example/`](example/) directory contains a complete working setup. It has a GraphQL schema with queries, mutations, enums, interfaces, unions, and fragments. It also has the generation script and sample query definitions. See [`example/generate.py`](example/generate.py) for the codegen call, and [`example/main.py`](example/main.py) for query usage.
 
 ## Testing
 
-Override the generated client via `monkeypatch` (or any other module attribute patching) to point queries at a test server or an ASGI app:
+In tests, replace the generated client to send queries to a test server or an ASGI app. Use `monkeypatch` or any other patch of the module attribute:
 
 ```python
 from iron_gql import runtime
@@ -193,9 +209,9 @@ async def test_get_user(monkeypatch):
     assert result.user.name == "Alice"
 ```
 
-The generated query classes resolve the client by module attribute name at call time, so replacing it is sufficient. The attribute is always named `{PACKAGE}_CLIENT` — for a package `myapp.gql.api` it is `API_CLIENT`.
+The generated query classes resolve the client by module attribute name at call time. As a result, the replacement is sufficient. The name of the attribute is always `{PACKAGE}_CLIENT`. For the package `myapp.gql.api`, the attribute is `API_CLIENT`.
 
 ## Validation and Troubleshooting
-- Errors identify the file and line where the problematic statement lives.
-- Duplicate operation names must share identical bodies; rename or consolidate to resolve the conflict.
-- Calling the generated helper with a statement it does not know raises `LookupError`: after adding or editing a statement, regenerate the package.
+- Error messages show the file and the line of the statement that caused the error.
+- Operations that share a name must have identical bodies. To remove the conflict, rename the operations or merge them.
+- The generated helper raises `LookupError` for a statement that it does not know. After you add or edit a statement, regenerate the package.
