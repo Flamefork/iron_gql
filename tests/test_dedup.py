@@ -32,7 +32,8 @@ def _build_ir(schema_sdl: str, query_sources: list[str]) -> CollectedPackageIR:
             queries=queries,
             scalars={"ID": ImportRef.parse("builtins:str")},
             to_snake_fn=alias_generators.to_snake,
-        )
+        ),
+        frozenset(),
     )
 
 

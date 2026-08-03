@@ -9,9 +9,12 @@ from iron_gql.codegen.ir import GraphQLGenerationError
 from iron_gql.codegen.ir import ImportRef
 from iron_gql.codegen.ir import StrTransform
 from iron_gql.codegen.naming import apply_rename
+from iron_gql.codegen.naming import validate_execute_signatures
+from iron_gql.codegen.naming import validate_module_names
 from iron_gql.codegen.parser import Statement
 from iron_gql.codegen.parser import parse_gql_queries
 from iron_gql.codegen.render import render_package
+from iron_gql.codegen.render import scaffold_claims
 from iron_gql.codegen.util import write_if_changed
 
 
@@ -101,14 +104,31 @@ def generate_gql_package(
     if parse_res.errors:
         raise GraphQLGenerationError(parse_res.errors)
 
+    scaffold = scaffold_claims(
+        package_name=package_name,
+        gql_fn_name=gql_fn_name,
+        base_url_ref=base_url_ref,
+        scalars=scalar_refs,
+        to_camel_ref=to_camel_ref,
+    )
     collected = apply_rename(
         collect_package_ir(
             schema=parse_res.schema,
             queries=parse_res.queries,
             scalars=scalar_refs,
             to_snake_fn=to_snake_fn,
-        )
+        ),
+        frozenset(scaffold),
     )
+    # Checked here rather than in the parser: these rules read the collected
+    # module — the python names it binds, which are only final once the rename
+    # pass has run.
+    ir_errors = [
+        *validate_module_names(collected, scaffold),
+        *validate_execute_signatures(collected),
+    ]
+    if ir_errors:
+        raise GraphQLGenerationError(ir_errors)
 
     # Statements the scan discovered but nothing typed: fragment definitions
     # spread into operations by name. Their call sites legitimately receive

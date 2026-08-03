@@ -19,6 +19,66 @@ from __future__ import annotations
 # ruff: noqa"""
 
 
+# The module-level names the scaffold binds, kept in one place because
+# `scaffold_claims` hands the same set to the collision rule and everything
+# below renders from these very names. Each tuple is already sorted: the import
+# blocks are emitted in this order.
+MODEL_BASE_NAME = "GQLModel"
+BASE_CLASS_NAMES = (MODEL_BASE_NAME,)
+STDLIB_MODULE_NAMES = ("datetime",)
+# Imported unconditionally and referenced by every model, so it is reserved
+# unconditionally too — deriving the claim from `to_camel_ref` instead would
+# drop it as soon as a package points that option somewhere other than pydantic.
+THIRD_PARTY_MODULE_NAMES = ("pydantic",)
+CONTEXTLIB_NAMES = ("AbstractAsyncContextManager",)
+ABC_NAMES = ("AsyncGenerator",)
+TYPING_NAMES = ("Annotated", "Literal", "overload")
+IRON_GQL_NAMES = ("runtime",)
+
+
+def scaffold_claims(
+    *,
+    package_name: str,
+    gql_fn_name: str,
+    base_url_ref: ImportRef,
+    scalars: dict[str, ImportRef],
+    to_camel_ref: ImportRef,
+) -> dict[str, tuple[str, ...]]:
+    # Names only imported when a package uses optional features are listed
+    # unconditionally: the reserved set must not depend on which of them a
+    # package happens to use today, or a new statement could rebind a name
+    # that generated fine a commit earlier.
+    #
+    # Each binding keeps its origin so the collision rule can tell two
+    # scaffold sources fighting over one name apart from one binding listed
+    # twice: identical origins (the same import statement reached from two
+    # configs, e.g. `import pydantic`) collapse into a single claim, while
+    # different origins for one name are a real collision.
+    pairs: list[tuple[str, str]] = [
+        *((name, "the generated model base class") for name in BASE_CLASS_NAMES),
+        *((module, f"import {module}") for module in STDLIB_MODULE_NAMES),
+        *((module, f"import {module}") for module in THIRD_PARTY_MODULE_NAMES),
+        *((name, f"from contextlib import {name}") for name in CONTEXTLIB_NAMES),
+        *((name, f"from collections.abc import {name}") for name in ABC_NAMES),
+        *((name, f"from typing import {name}") for name in TYPING_NAMES),
+        *((name, f"from iron_gql import {name}") for name in IRON_GQL_NAMES),
+        (gql_fn_name, "the generated gql function"),
+        (f"{package_name.upper()}_CLIENT", "the generated client binding"),
+        (f"_{package_name.upper()}_GQL_DISPATCH", "the generated dispatch dict"),
+        (
+            f"_{package_name.upper()}_GQL_PASSTHROUGH",
+            "the generated passthrough set",
+        ),
+        (base_url_ref.root_symbol, base_url_ref.import_statement()),
+        (to_camel_ref.root_module, f"import {to_camel_ref.root_module}"),
+        *((ref.root_module, f"import {ref.root_module}") for ref in scalars.values()),
+    ]
+    claims: dict[str, dict[str, None]] = {}
+    for name, origin in pairs:
+        claims.setdefault(name, {})[origin] = None
+    return {name: tuple(origins) for name, origins in claims.items()}
+
+
 def render_field(field: CollectedField) -> str:
     rendered_type = render_type_expr(field.rendered_type)
     default_expr = field.default_expr
@@ -48,17 +108,27 @@ def render_imports(
 ) -> str:
     import_modules = [ref.module for ref in scalars.values()]
     scalar_imports = "\n".join(f"import {module}" for module in import_modules)
+    stdlib_imports = "\n".join(f"import {module}" for module in STDLIB_MODULE_NAMES)
+    abc_imports = "\n".join(f"from collections.abc import {name}" for name in ABC_NAMES)
+    contextlib_imports = "\n".join(
+        f"from contextlib import {name}" for name in CONTEXTLIB_NAMES
+    )
+    typing_imports = "\n".join(f"from typing import {name}" for name in TYPING_NAMES)
+    third_party_imports = "\n".join(
+        f"import {module}" for module in THIRD_PARTY_MODULE_NAMES
+    )
+    iron_gql_imports = "\n".join(
+        f"from iron_gql import {name}" for name in IRON_GQL_NAMES
+    )
     return f"""\
-import datetime
-from collections.abc import AsyncGenerator
-from contextlib import AbstractAsyncContextManager
-from typing import Annotated
-from typing import Literal
-from typing import overload
+{stdlib_imports}
+{abc_imports}
+{contextlib_imports}
+{typing_imports}
 
-import pydantic
+{third_party_imports}
 
-from iron_gql import runtime
+{iron_gql_imports}
 
 import {to_camel_ref.module}
 
@@ -78,7 +148,7 @@ def render_client_init(
 )
 
 
-class GQLModel(pydantic.BaseModel):
+class {MODEL_BASE_NAME}(pydantic.BaseModel):
     model_config = pydantic.ConfigDict(
         populate_by_name=True,
         serialize_by_alias=True,

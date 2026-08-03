@@ -28,7 +28,7 @@ def test_single_form_promoted_to_graphql_type_name():
         graphql_type_name="Foo",
         fields=[_field("a", _scalar("str")), _field("b", _scalar("int"))],
     )
-    rename = build_rename_map([foo])
+    rename = build_rename_map([foo], frozenset())
     assert rename == {"Foo_1": "Foo", "FooWithAB": "Foo"}
 
 
@@ -39,7 +39,7 @@ def test_same_shape_deduplicates():
     second = CollectedModel(
         name="Foo_2", graphql_type_name="Foo", fields=list(shape_fields)
     )
-    rename = build_rename_map([first, second])
+    rename = build_rename_map([first, second], frozenset())
     # Both collapse to the graphql type name (single variant in type_variants).
     assert rename["Foo_1"] == "Foo"
     assert rename["Foo_2"] == "Foo"
@@ -58,7 +58,7 @@ def test_collision_on_two_forms_separated_by_named_tokens():
         graphql_type_name="Foo",
         fields=[_field("x", NamedRef(name="Beta"))],
     )
-    rename = build_rename_map([first, second])
+    rename = build_rename_map([first, second], frozenset())
     assert rename["Foo_1"] == "FooWithX_Alpha"
     assert rename["Foo_2"] == "FooWithX_Beta"
 
@@ -79,7 +79,7 @@ def test_three_forms_all_get_detailed_suffix():
         graphql_type_name="Foo",
         fields=[_field("x", NamedRef(name="Gamma"))],
     )
-    rename = build_rename_map([first, second, third])
+    rename = build_rename_map([first, second, third], frozenset())
     assert rename["Foo_1"] == "FooWithX_Alpha"
     assert rename["Foo_2"] == "FooWithX_Beta"
     assert rename["Foo_3"] == "FooWithX_Gamma"
@@ -94,7 +94,7 @@ def test_single_form_blocked_by_reserved_name_keeps_short_name():
         graphql_type_name="Foo",
         fields=[_field("a", _scalar("str"))],
     )
-    rename = build_rename_map([reserved, foo])
+    rename = build_rename_map([reserved, foo], frozenset())
     assert rename["Foo_1"] == "FooWithA"
     assert "Foo" not in rename.values()
 
@@ -110,7 +110,7 @@ def test_different_graphql_types_are_independent():
         graphql_type_name="Bar",
         fields=[_field("a", _scalar("str"))],
     )
-    rename = build_rename_map([foo, bar])
+    rename = build_rename_map([foo, bar], frozenset())
     assert rename["Foo_1"] == "Foo"
     assert rename["Bar_1"] == "Bar"
 
@@ -143,14 +143,17 @@ def test_apply_rename_collision_on_different_shapes_fails(
     ir = _pkg([first, second])
     bad_rename = {"Foo_1": "Foo", "Foo_2": "Foo"}
 
-    def bad_build_rename_map(_artifacts: list[CollectedArtifact]) -> dict[str, str]:
+    def bad_build_rename_map(
+        _artifacts: list[CollectedArtifact],
+        _reserved_names: frozenset[str],
+    ) -> dict[str, str]:
         return bad_rename
 
     monkeypatch.setattr(
         "iron_gql.codegen.naming.build_rename_map", bad_build_rename_map
     )
     with pytest.raises(AssertionError, match="differing shapes"):
-        apply_rename(ir)
+        apply_rename(ir, frozenset())
 
 
 def test_apply_rename_collapses_identical_shapes():
@@ -161,7 +164,7 @@ def test_apply_rename_collapses_identical_shapes():
     second = CollectedModel(name="Foo_2", graphql_type_name="Foo", fields=list(shape))
     ir = _pkg([first, second])
 
-    result = apply_rename(ir)
+    result = apply_rename(ir, frozenset())
 
     models = [a for a in result.result_artifacts if isinstance(a, CollectedModel)]
     assert [m.name for m in models] == ["Foo"]
@@ -180,6 +183,6 @@ def test_rename_map_is_order_independent_for_same_input_set():
         graphql_type_name="Foo",
         fields=[_field("x", NamedRef(name="Beta"))],
     )
-    first = build_rename_map([a, b])
-    second = build_rename_map([b, a])
+    first = build_rename_map([a, b], frozenset())
+    second = build_rename_map([b, a], frozenset())
     assert first == second

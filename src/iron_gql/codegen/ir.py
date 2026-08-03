@@ -44,9 +44,18 @@ class ImportRef:
     def dotted_path(self) -> str:
         return f"{self.module}.{self.symbol}"
 
+    @property
+    def root_symbol(self) -> str:
+        # The name `from {module} import ...` binds.
+        return self.symbol.split(".", maxsplit=1)[0]
+
+    @property
+    def root_module(self) -> str:
+        # The name a plain `import {module}` binds.
+        return self.module.split(".", maxsplit=1)[0]
+
     def import_statement(self) -> str:
-        root_symbol = self.symbol.split(".", maxsplit=1)[0]
-        return f"from {self.module} import {root_symbol}"
+        return f"from {self.module} import {self.root_symbol}"
 
 
 def field_name_to_pascal(name: str) -> str:

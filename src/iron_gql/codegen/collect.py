@@ -30,6 +30,7 @@ from iron_gql.codegen.ir import ScalarRef
 from iron_gql.codegen.ir import StrTransform
 from iron_gql.codegen.ir import TypeRef
 from iron_gql.codegen.ir import make_optional
+from iron_gql.codegen.names import validate_collected_names
 from iron_gql.codegen.parser import Query
 from iron_gql.codegen.parser import Statement
 from iron_gql.codegen.selection import ALWAYS
@@ -544,6 +545,16 @@ def collect_package_ir(
         collect_type=collector.collect_type,
     )
     operations = _collect_operations(collector, queries, all_locations, query_spellings)
+
+    # Validated before any name-keyed structure is derived: the rename pass
+    # resolves NamedRefs through these names.
+    name_errors = validate_collected_names(
+        result_artifacts=result_artifacts,
+        input_artifacts=input_artifacts,
+        enums=[collector.enums[name] for name in sorted(collector.enums)],
+    )
+    if name_errors:
+        raise GraphQLGenerationError(name_errors)
 
     return CollectedPackageIR(
         result_artifacts=result_artifacts,

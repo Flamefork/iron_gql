@@ -1,6 +1,8 @@
 import heapq
+import keyword
 from collections import defaultdict
 from collections.abc import Iterator
+from collections.abc import Mapping
 from graphlib import TopologicalSorter
 
 from iron_gql.codegen.ir import CollectedArtifact
@@ -8,6 +10,7 @@ from iron_gql.codegen.ir import CollectedField
 from iron_gql.codegen.ir import CollectedModel
 from iron_gql.codegen.ir import CollectedPackageIR
 from iron_gql.codegen.ir import CollectedUnionAlias
+from iron_gql.codegen.ir import GraphQLGenerationError
 from iron_gql.codegen.ir import ListRef
 from iron_gql.codegen.ir import NamedRef
 from iron_gql.codegen.ir import ScalarRef
@@ -51,7 +54,7 @@ def topological_sort(models: list[CollectedModel]) -> list[CollectedModel]:
     if not models:
         return models
     by_name, deps = _build_dependency_graph(models)
-    sorter = TopologicalSorter({name: sorted(refs) for name, refs in deps.items()})
+    sorter = TopologicalSorter(deps)
     sorter.prepare()
 
     # Heap breaks ties between simultaneously-ready nodes by name for determinism;
@@ -100,6 +103,7 @@ def _collapse_single_shape_slots(
     models: list[CollectedModel],
     shapes: dict[str, tuple[CollectedField, ...]],
     rename: dict[str, str],
+    occupied: frozenset[str],
 ) -> None:
     # (graphql_type_name, field_names_key) is rename-invariant; group on it and,
     # where only one distinct post-rename shape_key lives in a slot, rewrite to
@@ -121,29 +125,33 @@ def _collapse_single_shape_slots(
         if len(slot_shapes[slot]) != 1:
             continue
         short = f"{gql_type}With{_field_suffix(model.field_names_key)}"
+        # Both collapse phases yield to the same occupied set: a short name an
+        # operation or the scaffold already holds stays with its detailed
+        # Phase A name instead.
+        if short in occupied:
+            continue
         if model.name != short:
             rename[model.name] = short
 
 
 def _collapse_single_variant_types(
     rename: dict[str, str],
-    artifacts: list[CollectedArtifact],
+    renamable: list[CollectedModel],
+    occupied: frozenset[str],
 ) -> None:
     # When every model of a graphql_type ends up with the same name and the bare
     # graphql_type name is not reserved by another artifact, promote to bare.
+    # Only renamable models get a vote: a model whose name is fixed cannot be
+    # promoted, and counting it here would either block a promotion it has no
+    # stake in or — worse — rewrite the very name that was meant to stay put.
     type_variants: dict[str, set[str]] = defaultdict(set)
-    for artifact in artifacts:
-        if (
-            isinstance(artifact, CollectedModel)
-            and artifact.graphql_type_name is not None
-        ):
-            type_variants[artifact.graphql_type_name].add(
-                rename.get(artifact.name, artifact.name)
-            )
+    for model in renamable:
+        # Filtered by build_rename_map; narrow for the type checker.
+        if (gql_type := model.graphql_type_name) is None:
+            continue
+        type_variants[gql_type].add(rename.get(model.name, model.name))
 
-    reserved = {
-        artifact.name for artifact in artifacts if artifact.name not in rename
-    } | set(rename.values())
+    reserved = set(occupied) | set(rename.values())
 
     for gql_type, variants in sorted(type_variants.items()):
         if len(variants) != 1:
@@ -159,7 +167,10 @@ def _collapse_single_variant_types(
         reserved.add(gql_type)
 
 
-def build_rename_map(artifacts: list[CollectedArtifact]) -> dict[str, str]:
+def build_rename_map(
+    artifacts: list[CollectedArtifact],
+    reserved_names: frozenset[str],
+) -> dict[str, str]:
     typed_models = [
         artifact
         for artifact in artifacts
@@ -169,13 +180,44 @@ def build_rename_map(artifacts: list[CollectedArtifact]) -> dict[str, str]:
     models = topological_sort(typed_models)
 
     rename, shapes = _assign_detailed_names(models)
-    _collapse_single_shape_slots(models, shapes, rename)
-    _collapse_single_variant_types(rename, artifacts)
+    # Names no phase may take: fixed artifacts that will not move (not in the
+    # rename map) plus the module names and scaffold passed in. Computed once
+    # so both collapse phases yield to the same set.
+    occupied = frozenset(
+        {artifact.name for artifact in artifacts if artifact.name not in rename}
+        | reserved_names
+    )
+    _collapse_single_shape_slots(models, shapes, rename, occupied)
+    _collapse_single_variant_types(rename, models, occupied)
+    collisions = sorted(set(rename.values()) & occupied)
+    if collisions:
+        names = ", ".join(f"'{name}'" for name in collisions)
+        msg = (
+            f"Generated model name(s) {names} collide with a fixed name "
+            "(an operation or the scaffold); alias the colliding field"
+        )
+        raise GraphQLGenerationError([msg])
     return rename
 
 
-def apply_rename(ir: CollectedPackageIR) -> CollectedPackageIR:
-    rename = build_rename_map(ir.result_artifacts)
+def fixed_module_names(ir: CollectedPackageIR) -> frozenset[str]:
+    # The names this IR pins: an operation class is named after something the
+    # developer wrote, so it cannot move to resolve a clash. A model can,
+    # which is why these are fed to the rename pass as reserved and only the
+    # leftovers become errors. The module also binds the scaffold's own names
+    # — the client, the base model, the dispatch dicts and every import —
+    # which the IR knows nothing about; `render.scaffold_claims` supplies
+    # those and both sets are used together everywhere.
+    return frozenset({operation.class_name for operation in ir.operations})
+
+
+def apply_rename(
+    ir: CollectedPackageIR, scaffold_names: frozenset[str]
+) -> CollectedPackageIR:
+    rename = build_rename_map(
+        ir.result_artifacts,
+        fixed_module_names(ir) | scaffold_names,
+    )
     renamed_result_artifacts: list[CollectedArtifact] = []
     seen_models: dict[str, CollectedModel] = {}
     for artifact in ir.result_artifacts:
@@ -184,8 +226,11 @@ def apply_rename(ir: CollectedPackageIR) -> CollectedPackageIR:
                 renamed_model = artifact.renamed(rename)
                 existing = seen_models.get(renamed_model.name)
                 if existing is not None:
-                    # Collision is only valid when models share shape — same name
-                    # from two distinct shapes would be a rename-map bug.
+                    # Raw-name twins are rejected upfront by
+                    # `validate_collected_names`, so a collision here can only
+                    # come from the rename map converging two artifacts —
+                    # legal exactly for identical shapes, anything else is a
+                    # rename-map bug.
                     if existing.shape_key != renamed_model.shape_key:
                         msg = (
                             f"rename collision on {renamed_model.name!r}:"
@@ -203,3 +248,82 @@ def apply_rename(ir: CollectedPackageIR) -> CollectedPackageIR:
         operations=ir.operations,
         enums=ir.enums,
     )
+
+
+def _module_name_claims(
+    ir: CollectedPackageIR, scaffold: Mapping[str, tuple[str, ...]]
+) -> Iterator[tuple[str, str]]:
+    for name in sorted(scaffold):
+        for origin in scaffold[name]:
+            yield name, origin
+    for operation in ir.operations:
+        at = ", ".join(operation.locations)
+        yield operation.class_name, f"operation '{operation.class_name}' at {at}"
+    for artifact in (*ir.result_artifacts, *ir.input_artifacts):
+        yield artifact.name, f"model '{artifact.name}'"
+    for enum in ir.enums:
+        yield enum.name, f"enum '{enum.name}'"
+
+
+def validate_module_names(
+    ir: CollectedPackageIR, scaffold: Mapping[str, tuple[str, ...]]
+) -> list[str]:
+    # Operation classes, models, enums and the scaffold the module is built
+    # on (client, base model, dispatch dicts, imports) all land in one
+    # namespace, and Python binds the last one written. Every rebinding here
+    # breaks something silently — dispatch resolving to the wrong class, a
+    # base class replaced by a model — so any overlap is an error. Scaffold
+    # claims carry the origin of each binding, so two scaffold sources
+    # fighting over one name are an overlap like any other.
+    claims: dict[str, list[str]] = defaultdict(list)
+    for name, origin in _module_name_claims(ir, scaffold):
+        claims[name].append(origin)
+    errors: list[str] = []
+    for name, origins in sorted(claims.items()):
+        if len(origins) > 1:
+            message = f"Name '{name}' is claimed by {' and by '.join(origins)}"
+            errors.append(message)
+        # Every claim becomes a module-level binding, so it must survive
+        # `compile()` — a keyword or non-identifier would only surface as a
+        # SyntaxError when the generated module is imported.
+        if not name.isidentifier() or keyword.iskeyword(name):
+            errors.append(
+                f"Name '{name}' ({origins[0]}) is not a usable Python identifier"
+            )
+    return errors
+
+
+def validate_execute_signatures(ir: CollectedPackageIR) -> list[str]:
+    # Variables arrive in `execute`'s keyword namespace through
+    # `to_snake_fn` — so names that differ in GraphQL can still render the
+    # same parameter twice. That source passes `ast.parse` and only fails at
+    # `compile()`, which nothing downstream of codegen runs.
+    errors: list[str] = []
+    for operation in ir.operations:
+        claims: dict[str, list[str]] = defaultdict(list)
+        # `execute` takes its receiver positionally under a name that shares
+        # this namespace, so a variable snaking to `self` renders the
+        # parameter twice just as surely as two variables would.
+        claims["self"].append("the method receiver")
+        for variable in operation.variables:
+            claims[variable.python_name].append(f"variable ${variable.gql_name}")
+        at = ", ".join(operation.locations)
+        for name, sources in sorted(claims.items()):
+            # A parameter name must survive `compile()` of the generated
+            # `def execute(...)` — a Python keyword only fails at import.
+            if keyword.iskeyword(name):
+                message = (
+                    f"Execute parameter '{name}' of operation "
+                    f"'{operation.class_name}' at {at} is a Python keyword;"
+                    " rename the variable or alias the field"
+                )
+                errors.append(message)
+            if len(sources) == 1:
+                continue
+            claimed = " and by ".join(sources)
+            message = (
+                f"Execute parameter '{name}' of operation "
+                f"'{operation.class_name}' at {at} is claimed by {claimed}"
+            )
+            errors.append(message)
+    return errors
