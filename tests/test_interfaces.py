@@ -599,7 +599,7 @@ async def test_union_result_validation(
         return {
             "__typename": "Admin",
             "id": id,
-            "name": "Rick",
+            "name": "Alice",
             "permissions": ["portal"],
         }
 
@@ -848,6 +848,105 @@ def test_interface_fragment_requires_typename(test_project: ProjectBuilder):
     with pytest.raises(
         ValueError,
         match=r"Missing __typename in selection set for interface 'Node'",
+    ):
+        test_project.generate()
+
+
+def test_conditional_typename_on_polymorphic_selection_is_rejected(
+    test_project: ProjectBuilder,
+):
+    # __typename is the pydantic discriminator of the variant union; a
+    # conditional one would render an optional-Literal discriminator that
+    # pydantic rejects when the generated module is imported. The rejection
+    # has to come from the generator, with a diagnosis, not from the import.
+    schema = """
+        interface Node {
+            id: ID!
+        }
+
+        type User implements Node {
+            id: ID!
+            name: String
+        }
+
+        type Query {
+            node(id: ID!): Node
+        }
+    """
+
+    test_project.prepare(
+        schema=schema,
+        queries="""
+        from sample_app.gql.api import api_gql
+
+        get_node = api_gql(
+            '''
+            query GetNode($id: ID!, $x: Boolean!) {
+                node(id: $id) {
+                    __typename @include(if: $x)
+                    id
+                    ... on User {
+                        name
+                    }
+                }
+            }
+            '''
+        )
+        """,
+    )
+
+    with pytest.raises(
+        ValueError,
+        match=r"__typename .* must be selected unconditionally",
+    ):
+        test_project.generate()
+
+
+def test_typename_reached_only_through_a_conditional_fragment_is_rejected(
+    test_project: ProjectBuilder,
+):
+    # The same discriminator rule when the only __typename lives inside a
+    # conditional inline fragment: its condition is inherited, so it does not
+    # cover every state in which the variant payload exists.
+    schema = """
+        interface Node {
+            id: ID!
+        }
+
+        type User implements Node {
+            id: ID!
+            name: String
+        }
+
+        type Query {
+            node(id: ID!): Node
+        }
+    """
+
+    test_project.prepare(
+        schema=schema,
+        queries="""
+        from sample_app.gql.api import api_gql
+
+        get_node = api_gql(
+            '''
+            query GetNode($id: ID!, $x: Boolean!) {
+                node(id: $id) {
+                    ... @include(if: $x) { __typename }
+                    id
+                    ... on User {
+                        name
+                    }
+                }
+            }
+            '''
+        )
+        """,
+    )
+
+    with pytest.raises(
+        ValueError,
+        match=r"__typename .* must be selected unconditionally",
     ):
         test_project.generate()
 

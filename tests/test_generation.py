@@ -690,6 +690,38 @@ def test_duplicate_query_with_different_spelling_dispatches_both(
     assert isinstance(queries_module.second, api_module.Ping)  # pyright: ignore[reportAny]
 
 
+def test_statically_empty_selection_is_rejected(test_project: ProjectBuilder):
+    # A literal `@skip(if: true)` on every field leaves the model without
+    # fields, and a fieldless class renders with an empty body that the
+    # generated module cannot even import.
+    test_project.prepare(
+        schema="""
+        type Query {
+            user(id: ID!): User
+        }
+
+        type User {
+            id: ID!
+        }
+        """,
+        queries="""
+        from sample_app.gql.api import api_gql
+
+        get_user = api_gql(
+            '''
+            query GetUser($id: ID!) {
+                user(id: $id) {
+                    id @skip(if: true)
+                }
+            }
+            '''
+        )
+        """,
+    )
+    with pytest.raises(ValueError, match="statically empty"):
+        test_project.generate()
+
+
 def test_syntax_error_in_scanned_file(test_project: ProjectBuilder):
     test_project.prepare(
         schema="""
@@ -715,3 +747,43 @@ def test_syntax_error_in_scanned_file(test_project: ProjectBuilder):
 
     with pytest.raises(SyntaxError, match=r"Failed to parse.*broken\.py"):
         test_project.generate()
+
+
+async def test_defaulted_directive_variable_stays_conditional(
+    test_project: ProjectBuilder, httpserver: HTTPServer
+):
+    # A default on the variable does not make @include static: the caller can
+    # pass the other value at runtime, so the field is modeled optional and
+    # both states validate real responses.
+    async with test_project.server(
+        httpserver,
+        schema="""
+        type Query {
+            user: User
+        }
+
+        type User {
+            id: ID!
+            name: String
+        }
+        """,
+        queries='''
+        from sample_app.gql.api import api_gql
+
+        q = api_gql(
+            """
+            query Q($withName: Boolean! = false) {
+                user {
+                    id
+                    name @include(if: $withName)
+                }
+            }
+            """
+        )
+        ''',
+        resolvers={"Query": {"user": lambda *_: {"id": "u1", "name": "Alice"}}},
+    ) as (_api_module, queries_module):
+        on = await queries_module.q.execute(with_name=True)  # pyright: ignore[reportAny]
+        assert on.user.name == "Alice"  # pyright: ignore[reportAny]
+        off = await queries_module.q.execute(with_name=False)  # pyright: ignore[reportAny]
+        assert off.user.name is None  # pyright: ignore[reportAny]

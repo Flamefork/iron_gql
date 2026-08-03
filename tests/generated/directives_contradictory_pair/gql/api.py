@@ -20,7 +20,7 @@ import pydantic.alias_generators
 
 import builtins
 
-from tests.generated.directives_shared_variable.settings import GRAPHQL_URL
+from tests.generated.directives_contradictory_pair.settings import GRAPHQL_URL
 
 
 API_CLIENT = runtime.GQLClient(
@@ -43,8 +43,6 @@ class GQLModel(pydantic.BaseModel):
 
 class User(GQLModel):
     id: builtins.str
-    email: str | None = None
-    phone: str | None = None
 
 
 class GetUserResult(GQLModel):
@@ -56,20 +54,20 @@ class GetUser(runtime.GQLOperation):
     async def execute(self, *, flag: bool) -> GetUserResult:
         return await API_CLIENT.query(
             GetUserResult,
-            'query GetUser($flag: Boolean!) {\n  user {\n    id\n    email @include(if: $flag)\n    phone @skip(if: $flag)\n  }\n}',
+            'query GetUser($flag: Boolean!) {\n  user {\n    id\n    name @include(if: $flag) @skip(if: $flag)\n  }\n}',
             variables={"flag": flag},
             headers=self.headers,
         )
 
 
 @overload
-def api_gql(stmt: Literal['\n    query GetUser($flag: Boolean!) {\n        user {\n            id\n            email @include(if: $flag)\n            phone @skip(if: $flag)\n        }\n    }\n    ']) -> GetUser: ...
+def api_gql(stmt: Literal['\n    query GetUser($flag: Boolean!) {\n        user {\n            id\n            name @include(if: $flag) @skip(if: $flag)\n        }\n    }\n    ']) -> GetUser: ...
 @overload
 def api_gql(stmt: str) -> runtime.GQLOperation: ...
 
 
 _API_GQL_DISPATCH: dict[str, type[runtime.GQLOperation]] = {
-    '\n    query GetUser($flag: Boolean!) {\n        user {\n            id\n            email @include(if: $flag)\n            phone @skip(if: $flag)\n        }\n    }\n    ': GetUser,
+    '\n    query GetUser($flag: Boolean!) {\n        user {\n            id\n            name @include(if: $flag) @skip(if: $flag)\n        }\n    }\n    ': GetUser,
 }
 
 

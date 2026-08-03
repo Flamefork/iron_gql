@@ -1,23 +1,191 @@
-from collections.abc import Callable
-from collections.abc import Iterable
-from typing import Any
+import itertools
+from collections.abc import Sequence
+from dataclasses import dataclass
+from dataclasses import field
 from typing import cast
 
 import graphql
 
-from iron_gql.codegen.parser import GQLVar
+# A conjunction of @include/@skip literals: (variable name, required value)
+# pairs. The empty conjunction always holds; `_conjoin` returns None for a
+# contradiction, so every stored Cond is satisfiable.
+type Cond = frozenset[tuple[str, bool]]
+
+ALWAYS: Cond = frozenset()
+
+# The selection sets a model is collected from, each with the condition under
+# which its parent node is selected: a response key merged from several parent
+# nodes contributes each parent's subtree under that parent's own condition.
+type SelectionRoots = tuple[tuple[graphql.SelectionSetNode, Cond], ...]
 
 
-def merge_selection_sets(
-    field_nodes: list[graphql.FieldNode],
-) -> graphql.SelectionSetNode | None:
-    selections: list[graphql.SelectionNode] = []
-    for node in field_nodes:
-        if node.selection_set is not None:
-            selections.extend(node.selection_set.selections)
-    if not selections:
+@dataclass(frozen=True)
+class ConditionalNode:
+    node: graphql.FieldNode
+    cond: Cond
+
+
+def response_key(node: graphql.FieldNode) -> str:
+    return node.alias.value if node.alias else node.name.value
+
+
+def collect_conditional_fields(
+    *,
+    schema: graphql.GraphQLSchema,
+    fragments: dict[str, graphql.FragmentDefinitionNode],
+    runtime_type: graphql.GraphQLObjectType,
+    roots: SelectionRoots,
+) -> dict[str, list[ConditionalNode]]:
+    # A symbolic mirror of graphql-core's collect_fields: nodes are grouped by
+    # response key in document order, each with the exact condition under which
+    # it is selected — conjoined from every @include/@skip on the way, plus the
+    # root's own inherited condition. Sampled variable assignments cannot do
+    # this job: one assignment per pass is a point in the assignment space,
+    # and a node whose condition holds only between the sampled points is
+    # invisible to every pass.
+    walk = _FieldWalk(schema=schema, fragments=fragments, runtime_type=runtime_type)
+    for selection_set, cond in roots:
+        walk.selection_set(selection_set, cond)
+    return walk.grouped
+
+
+@dataclass(kw_only=True)
+class _FieldWalk:
+    schema: graphql.GraphQLSchema
+    fragments: dict[str, graphql.FragmentDefinitionNode]
+    runtime_type: graphql.GraphQLObjectType
+    grouped: dict[str, list[ConditionalNode]] = field(default_factory=dict)
+    _seen: set[tuple[int, Cond]] = field(default_factory=set)
+
+    def selection_set(
+        self, selection_set: graphql.SelectionSetNode, cond: Cond
+    ) -> None:
+        for selection in selection_set.selections:
+            match selection:
+                case graphql.FieldNode():
+                    self._field(selection, cond)
+                case graphql.InlineFragmentNode():
+                    type_condition = cast(
+                        "graphql.NamedTypeNode | None", selection.type_condition
+                    )
+                    self._nested(
+                        selection, selection.selection_set, type_condition, cond
+                    )
+                case graphql.FragmentSpreadNode():
+                    fragment = self.fragments[selection.name.value]
+                    self._nested(
+                        selection, fragment.selection_set, fragment.type_condition, cond
+                    )
+                case _:
+                    msg = f"Unsupported selection node: {selection}"
+                    raise TypeError(msg)
+
+    def _field(self, selection: graphql.FieldNode, cond: Cond) -> None:
+        node_cond = _selection_cond(selection, cond)
+        if node_cond is None or (id(selection), node_cond) in self._seen:
+            return
+        self._seen.add((id(selection), node_cond))
+        self.grouped.setdefault(response_key(selection), []).append(
+            ConditionalNode(node=selection, cond=node_cond)
+        )
+
+    def _nested(
+        self,
+        selection: graphql.InlineFragmentNode | graphql.FragmentSpreadNode,
+        selection_set: graphql.SelectionSetNode,
+        type_condition: graphql.NamedTypeNode | None,
+        cond: Cond,
+    ) -> None:
+        if not _type_condition_matches(self.schema, type_condition, self.runtime_type):
+            return
+        node_cond = _selection_cond(selection, cond)
+        if node_cond is not None:
+            self.selection_set(selection_set, node_cond)
+
+
+def uncovered_assignment(
+    base: Sequence[Cond], cover: Sequence[Cond]
+) -> dict[str, bool] | None:
+    # A witness assignment under which some `base` conjunction holds but no
+    # `cover` conjunction does; None when `cover` covers `base` everywhere.
+    # Enumeration is exact and exponential in the number of distinct
+    # variables conditioning a single response key — a handful in any real
+    # query; a document conditioning one key on dozens of variables would
+    # make this generation-time walk crawl, and that is an accepted bound.
+    names = sorted({name for cond in (*base, *cover) for name, _ in cond})
+    for values in itertools.product((False, True), repeat=len(names)):
+        assignment = dict(zip(names, values, strict=True))
+        if _holds(base, assignment) and not _holds(cover, assignment):
+            return assignment
+    return None
+
+
+def _holds(conds: Sequence[Cond], assignment: dict[str, bool]) -> bool:
+    return any(
+        all(assignment[name] is required for name, required in cond) for cond in conds
+    )
+
+
+def _selection_cond(
+    selection: graphql.FieldNode
+    | graphql.InlineFragmentNode
+    | graphql.FragmentSpreadNode,
+    base: Cond,
+) -> Cond | None:
+    literals = _directive_literals(selection)
+    if literals is None:
         return None
-    return graphql.SelectionSetNode(selections=selections)
+    return _conjoin(base, literals)
+
+
+def _directive_literals(
+    selection: graphql.FieldNode
+    | graphql.InlineFragmentNode
+    | graphql.FragmentSpreadNode,
+) -> list[tuple[str, bool]] | None:
+    # None: a literal boolean if-argument excludes the node statically. A
+    # variable argument becomes a literal of the conjunction; validation has
+    # already pinned the argument to a boolean variable or a boolean value.
+    literals: list[tuple[str, bool]] = []
+    for directive in selection.directives or ():
+        if directive.name.value not in {"include", "skip"}:
+            continue
+        required = directive.name.value == "include"
+        for argument in directive.arguments or ():
+            if argument.name.value != "if":
+                continue
+            value = argument.value
+            if isinstance(value, graphql.BooleanValueNode):
+                if value.value is not required:
+                    return None
+            elif isinstance(value, graphql.VariableNode):
+                literals.append((value.name.value, required))
+    return literals
+
+
+def _conjoin(cond: Cond, literals: list[tuple[str, bool]]) -> Cond | None:
+    merged = dict(cond)
+    for name, required in literals:
+        if merged.setdefault(name, required) is not required:
+            return None
+    return frozenset(merged.items())
+
+
+def _type_condition_matches(
+    schema: graphql.GraphQLSchema,
+    type_condition: graphql.NamedTypeNode | None,
+    runtime_type: graphql.GraphQLObjectType,
+) -> bool:
+    if type_condition is None:
+        return True
+    named = schema.get_type(type_condition.name.value)
+    if named is runtime_type:
+        return True
+    match named:
+        case graphql.GraphQLInterfaceType() | graphql.GraphQLUnionType():
+            return schema.is_sub_type(named, runtime_type)
+        case _:
+            return False
 
 
 def resolve_explicit_types(
@@ -118,73 +286,3 @@ def interface_has_base_typename(
                     msg = f"Unsupported selection node: {selection}"
                     raise TypeError(msg)
     return False
-
-
-class _DirectiveVarCollector(graphql.Visitor):
-    def __init__(
-        self,
-        desired: dict[str, bool],
-        targets: dict[str, bool],
-        merge: Callable[[bool, bool], bool],
-    ) -> None:
-        super().__init__()
-        self.desired = desired
-        self.targets = targets
-        self.merge = merge
-
-    def enter_directive(self, node: graphql.DirectiveNode, *_args: object) -> None:
-        target = self.targets.get(node.name.value)
-        if target is None:
-            return
-        for arg in node.arguments or []:
-            if arg.name.value != "if":
-                continue
-            if isinstance(arg.value, graphql.VariableNode):
-                var_name = arg.value.name.value
-                prev = self.desired.get(var_name)
-                self.desired[var_name] = (
-                    target if prev is None else self.merge(prev, target)
-                )
-
-
-def _collect_directive_variable_values(
-    doc: graphql.DocumentNode,
-    variables: Iterable[GQLVar],
-    *,
-    include_value: bool,
-    skip_value: bool,
-) -> dict[str, Any]:
-    values: dict[str, Any] = {
-        var.name: var.default_value
-        for var in variables
-        if var.default_value != graphql.Undefined
-    }
-    desired: dict[str, bool] = {}
-    collector = _DirectiveVarCollector(
-        desired=desired,
-        targets={"include": include_value, "skip": skip_value},
-        merge=max if include_value else min,
-    )
-    graphql.visit(doc, collector)
-    for name, value in desired.items():
-        if name not in values:
-            values[name] = value
-    return values
-
-
-def build_codegen_variable_values(
-    doc: graphql.DocumentNode,
-    variables: Iterable[GQLVar],
-) -> dict[str, Any]:
-    return _collect_directive_variable_values(
-        doc, variables, include_value=True, skip_value=False
-    )
-
-
-def build_excluded_variable_values(
-    doc: graphql.DocumentNode,
-    variables: Iterable[GQLVar],
-) -> dict[str, Any]:
-    return _collect_directive_variable_values(
-        doc, variables, include_value=False, skip_value=True
-    )

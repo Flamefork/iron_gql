@@ -20,7 +20,7 @@ import pydantic.alias_generators
 
 import builtins
 
-from tests.generated.directives_shared_variable.settings import GRAPHQL_URL
+from tests.generated.directives_complementary_conjunctions.settings import GRAPHQL_URL
 
 
 API_CLIENT = runtime.GQLClient(
@@ -43,8 +43,7 @@ class GQLModel(pydantic.BaseModel):
 
 class User(GQLModel):
     id: builtins.str
-    email: str | None = None
-    phone: str | None = None
+    name: str | None = None
 
 
 class GetUserResult(GQLModel):
@@ -53,23 +52,23 @@ class GetUserResult(GQLModel):
 
 class GetUser(runtime.GQLOperation):
     # See: queries.py:3
-    async def execute(self, *, flag: bool) -> GetUserResult:
+    async def execute(self, *, a: bool, b: bool) -> GetUserResult:
         return await API_CLIENT.query(
             GetUserResult,
-            'query GetUser($flag: Boolean!) {\n  user {\n    id\n    email @include(if: $flag)\n    phone @skip(if: $flag)\n  }\n}',
-            variables={"flag": flag},
+            'query GetUser($a: Boolean!, $b: Boolean!) {\n  user {\n    id\n    ... @include(if: $a) {\n      ... @include(if: $b) {\n        name\n      }\n    }\n    ... @skip(if: $a) {\n      ... @skip(if: $b) {\n        name\n      }\n    }\n  }\n}',
+            variables={"a": a, "b": b},
             headers=self.headers,
         )
 
 
 @overload
-def api_gql(stmt: Literal['\n    query GetUser($flag: Boolean!) {\n        user {\n            id\n            email @include(if: $flag)\n            phone @skip(if: $flag)\n        }\n    }\n    ']) -> GetUser: ...
+def api_gql(stmt: Literal['\n    query GetUser($a: Boolean!, $b: Boolean!) {\n        user {\n            id\n            ... @include(if: $a) { ... @include(if: $b) { name } }\n            ... @skip(if: $a) { ... @skip(if: $b) { name } }\n        }\n    }\n    ']) -> GetUser: ...
 @overload
 def api_gql(stmt: str) -> runtime.GQLOperation: ...
 
 
 _API_GQL_DISPATCH: dict[str, type[runtime.GQLOperation]] = {
-    '\n    query GetUser($flag: Boolean!) {\n        user {\n            id\n            email @include(if: $flag)\n            phone @skip(if: $flag)\n        }\n    }\n    ': GetUser,
+    '\n    query GetUser($a: Boolean!, $b: Boolean!) {\n        user {\n            id\n            ... @include(if: $a) { ... @include(if: $b) { name } }\n            ... @skip(if: $a) { ... @skip(if: $b) { name } }\n        }\n    }\n    ': GetUser,
 }
 
 

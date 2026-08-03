@@ -1,13 +1,11 @@
 from collections import defaultdict
 from dataclasses import dataclass
 from dataclasses import field
-from typing import Any
 from typing import Protocol
 from typing import cast
 from warnings import warn
 
 import graphql
-from graphql.execution.collect_fields import collect_fields
 from graphql.execution.execute import get_field_def
 
 from iron_gql.codegen.accessors import field_type
@@ -34,11 +32,13 @@ from iron_gql.codegen.ir import TypeRef
 from iron_gql.codegen.ir import make_optional
 from iron_gql.codegen.parser import Query
 from iron_gql.codegen.parser import Statement
-from iron_gql.codegen.selection import build_codegen_variable_values
-from iron_gql.codegen.selection import build_excluded_variable_values
+from iron_gql.codegen.selection import ALWAYS
+from iron_gql.codegen.selection import ConditionalNode
+from iron_gql.codegen.selection import SelectionRoots
+from iron_gql.codegen.selection import collect_conditional_fields
 from iron_gql.codegen.selection import interface_has_base_typename
-from iron_gql.codegen.selection import merge_selection_sets
 from iron_gql.codegen.selection import resolve_explicit_types
+from iron_gql.codegen.selection import uncovered_assignment
 from iron_gql.codegen.util import capitalize_first
 from iron_gql.codegen.warnings import GraphQLDeprecationWarning
 from iron_gql.codegen.warnings import UnknownGQLTypeWarning
@@ -48,9 +48,8 @@ from iron_gql.codegen.warnings import warn_deprecated_field
 @dataclass(kw_only=True, frozen=True)
 class CollectionContext:
     query_name: str
+    location: str
     fragments: dict[str, graphql.FragmentDefinitionNode]
-    variable_values: dict[str, Any]
-    excluded_variable_values: dict[str, Any]
 
 
 def python_field_name(
@@ -68,36 +67,6 @@ class PackageCollector:
     to_snake_fn: StrTransform
     schema: graphql.GraphQLSchema
     enums: dict[str, CollectedEnum] = field(default_factory=dict)
-
-    def _collect_selected_fields(
-        self,
-        runtime_type: graphql.GraphQLObjectType,
-        selection_set: graphql.SelectionSetNode,
-        ctx: CollectionContext,
-    ) -> tuple[
-        dict[str, list[graphql.FieldNode]],
-        dict[str, list[graphql.FieldNode]],
-        set[str],
-    ]:
-        included_fields = collect_fields(
-            self.schema,
-            ctx.fragments,
-            ctx.variable_values,
-            runtime_type,
-            selection_set,
-        )
-        excluded_fields = collect_fields(
-            self.schema,
-            ctx.fragments,
-            ctx.excluded_variable_values,
-            runtime_type,
-            selection_set,
-        )
-        fields_by_key = {**excluded_fields, **included_fields}
-        conditional_keys = fields_by_key.keys() - (
-            included_fields.keys() & excluded_fields.keys()
-        )
-        return included_fields, fields_by_key, conditional_keys
 
     def collect_type(
         self,
@@ -186,16 +155,13 @@ class PackageCollector:
     ) -> list[CollectedArtifact]:
         ctx = CollectionContext(
             query_name=query.name,
+            location=query.stmt.location,
             fragments=query.fragments,
-            variable_values=build_codegen_variable_values(query.doc, query.variables),
-            excluded_variable_values=build_excluded_variable_values(
-                query.doc, query.variables
-            ),
         )
         return self._collect_object_model(
             model_name_base=f"{capitalize_first(query.name)}Result",
             runtime_type=query.root_type,
-            selection_set=query.operation_def.selection_set,
+            roots=((query.operation_def.selection_set, ALWAYS),),
             ctx=ctx,
         )
 
@@ -204,37 +170,74 @@ class PackageCollector:
         *,
         model_name_base: str,
         runtime_type: graphql.GraphQLObjectType,
-        selection_set: graphql.SelectionSetNode,
+        roots: SelectionRoots,
         ctx: CollectionContext,
         typename_type: TypeRef | None = None,
         require_typename_for: str | None = None,
         graphql_type_name: str | None = None,
     ) -> list[CollectedArtifact]:
-        included_fields, fields_by_key, conditional_keys = (
-            self._collect_selected_fields(
-                runtime_type,
-                selection_set,
-                ctx,
-            )
+        grouped = collect_conditional_fields(
+            schema=self.schema,
+            fragments=ctx.fragments,
+            runtime_type=runtime_type,
+            roots=roots,
         )
-        if require_typename_for is not None and "__typename" not in included_fields:
-            msg = f"Missing __typename in selection set for '{require_typename_for}'"
-            raise ValueError(msg)
-
+        # This model only ever validates a payload delivered under one of the
+        # roots' conditions, so a key is required relative to those — a field
+        # inside `address @include(if: $x) { city }` is required, not optional:
+        # whenever the payload exists at all, so does the key.
+        presence = [cond for _, cond in roots]
+        if require_typename_for is not None:
+            # This model is a variant of a discriminated union, and __typename
+            # is its pydantic discriminator: a conditional one would render an
+            # optional-Literal discriminator that pydantic rejects at import.
+            typename_entries = grouped.get("__typename")
+            if typename_entries is None:
+                msg = (
+                    f"Missing __typename in selection set for '{require_typename_for}'"
+                )
+                raise GraphQLGenerationError([msg])
+            witness = uncovered_assignment(
+                presence, [entry.cond for entry in typename_entries]
+            )
+            if witness is not None:
+                msg = (
+                    f"__typename in selection set for '{require_typename_for}' "
+                    f"in '{ctx.query_name}' at {ctx.location} must be selected "
+                    "unconditionally: it is the discriminator of a polymorphic "
+                    "model"
+                )
+                raise GraphQLGenerationError([msg])
         child_models: list[CollectedArtifact] = []
         fields: list[CollectedField] = []
-        for response_key, field_nodes in fields_by_key.items():
+        for response_key, entries in grouped.items():
             field_child_models, collected_field = self._collect_field(
                 model_name_base=model_name_base,
                 runtime_type=runtime_type,
                 response_key=response_key,
-                field_nodes=field_nodes,
+                entries=entries,
                 ctx=ctx,
                 typename_type=typename_type,
-                is_conditional=response_key in conditional_keys,
+                is_conditional=uncovered_assignment(
+                    presence, [entry.cond for entry in entries]
+                )
+                is not None,
             )
             child_models.extend(field_child_models)
             fields.append(collected_field)
+
+        if not fields:
+            # A selection set is syntactically non-empty, so nothing left here
+            # means every field was dropped by @skip/@include conditions that
+            # can never hold — literal arguments or a contradictory variable
+            # pair. A fieldless class renders with an empty body that the
+            # generated module cannot even import.
+            msg = (
+                f"Selection for '{model_name_base}' in '{ctx.query_name}' at "
+                f"{ctx.location} is statically empty: every field is excluded "
+                "by @skip/@include"
+            )
+            raise GraphQLGenerationError([msg])
 
         return [
             *child_models,
@@ -251,7 +254,7 @@ class PackageCollector:
         model_name_base: str,
         runtime_type: graphql.GraphQLObjectType,
         response_key: str,
-        field_nodes: list[graphql.FieldNode],
+        entries: list[ConditionalNode],
         ctx: CollectionContext,
         typename_type: TypeRef | None,
         is_conditional: bool,
@@ -271,7 +274,7 @@ class PackageCollector:
                 ),
             )
 
-        representative = field_nodes[0]
+        representative = entries[0].node
         field_def = cast(
             graphql.GraphQLField | None,
             get_field_def(self.schema, runtime_type, representative),
@@ -287,7 +290,7 @@ class PackageCollector:
             model_name_base=model_name_base,
             response_key=response_key,
             gql_type=field_type(field_def),
-            field_nodes=field_nodes,
+            entries=entries,
             ctx=ctx,
         )
         return (
@@ -306,36 +309,70 @@ class PackageCollector:
         model_name_base: str,
         response_key: str,
         gql_type: graphql.GraphQLType,
-        field_nodes: list[graphql.FieldNode],
+        entries: list[ConditionalNode],
         ctx: CollectionContext,
     ) -> tuple[list[CollectedArtifact], TypeRef]:
-        selection_set = merge_selection_sets(field_nodes)
-        if selection_set is None:
+        # Each parent node contributes its subtree under its own condition:
+        # a child selected through only one of the merged parents is exactly
+        # as conditional as that parent.
+        roots: SelectionRoots = tuple(
+            (entry.node.selection_set, entry.cond)
+            for entry in entries
+            if entry.node.selection_set is not None
+        )
+        if not roots:
             return [], self.collect_type(gql_type)
 
-        named = graphql.get_named_type(gql_type)
         child_base = model_name_base + capitalize_first(response_key)
+        return (
+            self._collect_composite_model(
+                base_name=child_base,
+                named=graphql.get_named_type(gql_type),
+                roots=roots,
+                ctx=ctx,
+                origin=f"field {response_key}",
+            ),
+            self.collect_type(gql_type, child_model_name=child_base),
+        )
+
+    def _collect_composite_model(
+        self,
+        *,
+        base_name: str,
+        # Optional because a type condition is looked up by name; an unresolved
+        # one lands in the exhaustive branch below with the rest of the
+        # non-composite types.
+        named: graphql.GraphQLNamedType | None,
+        roots: SelectionRoots,
+        ctx: CollectionContext,
+        origin: str,
+    ) -> list[CollectedArtifact]:
+        # The flat merge below feeds the existence-based walks (explicit
+        # variants, base __typename), which do not read conditions.
+        merged_selections = graphql.SelectionSetNode(
+            selections=[
+                selection
+                for selection_set, _ in roots
+                for selection in selection_set.selections
+            ]
+        )
         match named:
             case graphql.GraphQLObjectType():
-                return (
-                    self._collect_object_model(
-                        model_name_base=child_base,
-                        runtime_type=named,
-                        selection_set=selection_set,
-                        ctx=ctx,
-                        graphql_type_name=named.name,
-                    ),
-                    self.collect_type(gql_type, child_model_name=child_base),
+                return self._collect_object_model(
+                    model_name_base=base_name,
+                    runtime_type=named,
+                    roots=roots,
+                    ctx=ctx,
+                    graphql_type_name=named.name,
                 )
             case graphql.GraphQLUnionType():
                 possible = sorted(union_types(named), key=lambda typ: typ.name)
                 return self._collect_polymorphic_models(
-                    base_name=child_base,
+                    base_name=base_name,
                     possible_types=possible,
                     explicit_types=set(possible),
-                    selection_set=selection_set,
+                    roots=roots,
                     ctx=ctx,
-                    field_gql_type=gql_type,
                     require_typename_for=named.name,
                 )
             case graphql.GraphQLInterfaceType():
@@ -348,30 +385,29 @@ class PackageCollector:
                     raise ValueError(msg)
                 explicit = resolve_explicit_types(
                     schema=self.schema,
-                    selection_set=selection_set,
+                    selection_set=merged_selections,
                     fragments=ctx.fragments,
                     interface_type=named,
                     possible_types=possible,
                 )
                 if explicit and not interface_has_base_typename(
-                    selection_set, ctx.fragments, named.name
+                    merged_selections, ctx.fragments, named.name
                 ):
                     msg = (
                         f"Missing __typename in selection set for interface"
                         f" '{named.name}'"
                     )
-                    raise ValueError(msg)
+                    raise GraphQLGenerationError([msg])
                 return self._collect_polymorphic_models(
-                    base_name=child_base,
+                    base_name=base_name,
                     possible_types=possible,
                     explicit_types=explicit,
-                    selection_set=selection_set,
+                    roots=roots,
                     ctx=ctx,
-                    field_gql_type=gql_type,
                     require_typename_for=named.name,
                 )
             case _:
-                msg = f"Unknown type {named} for field {response_key}"
+                msg = f"Unknown type {named} for {origin}"
                 raise ValueError(msg)
 
     def _collect_polymorphic_models(
@@ -380,23 +416,18 @@ class PackageCollector:
         base_name: str,
         possible_types: list[graphql.GraphQLObjectType],
         explicit_types: set[graphql.GraphQLObjectType],
-        selection_set: graphql.SelectionSetNode,
+        roots: SelectionRoots,
         ctx: CollectionContext,
-        field_gql_type: graphql.GraphQLType,
         require_typename_for: str,
-    ) -> tuple[list[CollectedArtifact], TypeRef]:
+    ) -> list[CollectedArtifact]:
         if not explicit_types:
-            child_models = self._collect_object_model(
+            return self._collect_object_model(
                 model_name_base=base_name,
                 runtime_type=possible_types[0],
-                selection_set=selection_set,
+                roots=roots,
                 ctx=ctx,
                 typename_type=ScalarRef(expr="str", name_hint="Str"),
                 graphql_type_name=require_typename_for,
-            )
-            return (
-                child_models,
-                self.collect_type(field_gql_type, child_model_name=base_name),
             )
 
         # possible_types is already sorted by name; preserve that order for
@@ -414,7 +445,7 @@ class PackageCollector:
                 self._collect_object_model(
                     model_name_base=model_name,
                     runtime_type=object_type,
-                    selection_set=selection_set,
+                    roots=roots,
                     ctx=ctx,
                     require_typename_for=require_typename_for,
                     graphql_type_name=object_type.name,
@@ -431,7 +462,7 @@ class PackageCollector:
                 self._collect_object_model(
                     model_name_base=fallback_name,
                     runtime_type=fallback_objects[0],
-                    selection_set=selection_set,
+                    roots=roots,
                     ctx=ctx,
                     typename_type=fallback_typename,
                     require_typename_for=require_typename_for,
@@ -440,17 +471,14 @@ class PackageCollector:
             )
             union_types.append(fallback_name)
 
-        return (
-            [
-                *child_models,
-                CollectedUnionAlias(
-                    name=base_name,
-                    variants=tuple(union_types),
-                    discriminator="typename__",
-                ),
-            ],
-            self.collect_type(field_gql_type, child_model_name=base_name),
-        )
+        return [
+            *child_models,
+            CollectedUnionAlias(
+                name=base_name,
+                variants=tuple(union_types),
+                discriminator="typename__",
+            ),
+        ]
 
 
 class _NamedStatement(Protocol):
