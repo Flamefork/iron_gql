@@ -1106,6 +1106,8 @@ async def test_subscribe_invalid_json_during_handshake():
 
 
 async def test_subscribe_validation_error():
+    # The same contract as GQLClient.query: result validation failures are
+    # pydantic.ValidationError with a response path on every transport.
     app = _make_ws_app([
         {"type": "next", "payload": {"data": {"counter": "not_an_int"}}},
     ])
@@ -1120,7 +1122,8 @@ async def test_subscribe_validation_error():
                 async for _ in stream:
                     pass
 
-        with pytest.raises(GraphQLResponseError, match="Invalid data in response"):
+        with pytest.raises(pydantic.ValidationError) as exc_info:
             await consume()
+        assert exc_info.value.errors()[0]["loc"] == ("counter",)
     finally:
         await client.close()

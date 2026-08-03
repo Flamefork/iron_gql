@@ -139,12 +139,10 @@ async def _ws_receive_messages[T: pydantic.BaseModel](  # noqa: C901, PLR0912
                     raise GraphQLResponseError(
                         payload.errors or [{"message": "No data in response"}]
                     )
-                try:
-                    yield result_type.model_validate(payload.data)
-                except pydantic.ValidationError as exc:
-                    raise GraphQLResponseError([
-                        {"message": f"Invalid data in response: {exc}"}
-                    ]) from exc
+                # Same contract as GQLClient.query: a payload that fails
+                # result validation surfaces as pydantic.ValidationError with
+                # a response path, identically across both transports.
+                yield result_type.model_validate(payload.data)
             case "error":
                 try:
                     error_payload = _ERROR_PAYLOAD.validate_python(message.payload)
