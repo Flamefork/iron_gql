@@ -4,10 +4,10 @@ from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from typing import Any
 
-import httpx
+import httpx2
 import pydantic
-from httpx_ws import AsyncWebSocketSession
-from httpx_ws import WebSocketDisconnect
+from httpx2.websockets import AsyncWebSocketSession
+from httpx2.websockets import WebSocketDisconnect
 
 from iron_gql.errors import GraphQLResponseError
 from iron_gql.slots import SlotFragments
@@ -94,7 +94,7 @@ async def _ws_handshake(ws: AsyncWebSocketSession) -> None:
     raise GraphQLResponseError([{"message": msg}])
 
 
-def ws_url(url: httpx.URL) -> httpx.URL:
+def ws_url(url: httpx2.URL) -> httpx2.URL:
     match url.scheme:
         case "https":
             return url.copy_with(scheme="wss")

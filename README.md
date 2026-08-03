@@ -10,14 +10,14 @@
 ## Installation
 
 ```bash
-pip install iron-gql            # runtime only (httpx + pydantic)
+pip install iron-gql            # runtime only (httpx2 + pydantic)
 pip install iron-gql[codegen]   # + graphql-core for code generation
 ```
 
 ## Key Features
 - **Query discovery.** `generate_gql_package` scans your codebase for calls of the form `<package>_gql("""...""")`. It validates each statement and writes a module with typed helpers.
 - **Typed inputs and results.** The generated Pydantic models match every selection set, enum, and input object that the discovered queries reference.
-- **Async runtime.** `runtime.GQLClient` sends requests to GraphQL endpoints through `httpx`. When you set an ASGI `target_app`, the client calls the app in-process and does not use the network.
+- **Async runtime.** `runtime.GQLClient` sends requests to GraphQL endpoints through `httpx2`. When you set an ASGI `target_app`, the client calls the app in-process and does not use the network.
 - **Deterministic validation.** `graphql-core` (a codegen dependency) validates every statement against the schema. It rejects operations that share a name but have different bodies.
 
 ## Package Layout

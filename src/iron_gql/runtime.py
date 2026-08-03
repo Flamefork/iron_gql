@@ -10,10 +10,10 @@ from typing import Any
 from typing import Self
 from typing import TypeIs
 
-import httpx
+import httpx2
 import pydantic
-from httpx_ws import aconnect_ws
-from httpx_ws.transport import ASGIWebSocketTransport
+from httpx2.websockets import ASGIWebSocketTransport
+from httpx2.websockets import AsyncWebSocketClient
 
 from iron_gql.errors import GraphQLResponseError
 from iron_gql.slots import SlotFragments
@@ -45,7 +45,7 @@ class FileVar:
         """Args:
         f: File-like object opened in binary mode, or raw bytes.
         filename: Name sent to the server; defaults to a numeric index.
-        content_type: MIME type; when omitted, httpx infers it.
+        content_type: MIME type; when omitted, httpx2 infers it.
         """
         self.f = f
         self.filename = filename
@@ -77,10 +77,10 @@ class GQLClient:
         headers: dict[str, str] | None = None,
         query_timeout: int = DEFAULT_QUERY_TIMEOUT,
     ):
-        self._endpoint_url = httpx.URL(base_url)
+        self._endpoint_url = httpx2.URL(base_url)
         self._target_app = target_app
-        transport = httpx.ASGITransport(app=target_app) if target_app else None
-        self._client = httpx.AsyncClient(
+        transport = httpx2.ASGITransport(app=target_app) if target_app else None
+        self._client = httpx2.AsyncClient(
             transport=transport,
             headers=headers or {},
             timeout=query_timeout,
@@ -104,13 +104,13 @@ class GQLClient:
         else:
             response = await self._post_normal_request(payload, headers)
 
-        if httpx.codes.is_redirect(response.status_code):
-            # httpx `Headers.get` is typed as Any
+        if httpx2.codes.is_redirect(response.status_code):
+            # httpx2 `Headers.get` is typed as Any
             location: str = response.headers.get("Location", "")  # pyright: ignore[reportAny]
             message = f"Unexpected 3xx response ({response.status_code})"
             if location:
                 message = f"{message} to {location}"
-            raise httpx.HTTPStatusError(
+            raise httpx2.HTTPStatusError(
                 message, request=response.request, response=response
             )
         response.raise_for_status()
@@ -132,7 +132,7 @@ class GQLClient:
         self,
         payload: dict[str, Any],
         headers: dict[str, str],
-    ) -> httpx.Response:
+    ) -> httpx2.Response:
         return await self._client.post(
             self._endpoint_url,
             json=payload,
@@ -144,7 +144,7 @@ class GQLClient:
         payload: dict[str, Any],
         files: dict[str, FileVar],
         headers: dict[str, str],
-    ) -> httpx.Response:
+    ) -> httpx2.Response:
         file_map: dict[str, list[str]] = {}
         file_streams: dict[str, tuple[str, Any] | tuple[str, Any, str]] = {}
 
@@ -187,23 +187,25 @@ class GQLClient:
         url = str(ws_url(self._endpoint_url))
         try:
             async with (
-                httpx.AsyncClient(
+                httpx2.AsyncClient(
                     transport=transport,
                     headers={
-                        **httpx.Headers(self._client.headers),
+                        **httpx2.Headers(self._client.headers),
                         **headers,
                     },
-                    cookies=httpx.Cookies(self._client.cookies),
+                    cookies=httpx2.Cookies(self._client.cookies),
                 ) as client,
-                aconnect_ws(url, client, subprotocols=["graphql-transport-ws"]) as ws,
+                AsyncWebSocketClient(client).connect(
+                    url, subprotocols=["graphql-transport-ws"]
+                ) as ws,
                 graphql_ws_subscribe(
                     ws, result_type, query, serialized_vars, slot_fragments
                 ) as stream,
             ):
                 yield stream
         except BaseExceptionGroup as eg:
-            # httpx-ws 0.9+ wraps exceptions in nested ExceptionGroups via task groups;
-            # unwrap so callers see plain exceptions (except* always re-wraps)
+            # httpx2.websockets wraps exceptions in nested ExceptionGroups via task
+            # groups; unwrap so callers see plain exceptions (except* always re-wraps)
             unwrapped = _unwrap_solo_exception_group(eg)
             if unwrapped is not eg:
                 raise unwrapped from None

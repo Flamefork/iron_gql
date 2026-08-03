@@ -7,7 +7,7 @@ readme = "README.md"
 authors = [{ name = "Ilia Ablamonov", email = "ilia@flamefork.ru" }]
 license = "MIT"
 license-files = ["LICENSE"]
-keywords = ["graphql", "gql", "client", "httpx", "pydantic", "codegen", "async"]
+keywords = ["graphql", "gql", "client", "httpx2", "pydantic", "codegen", "async"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
@@ -18,8 +18,7 @@ classifiers = [
 
 requires-python = ">=3.13"
 dependencies = [
-    "httpx>=0.28.1,<1",
-    "httpx-ws>=0.9,<1",
+    "httpx2[ws]>=2.7,<3",
     "pydantic>=2.12.3,<3",
 ]
 
