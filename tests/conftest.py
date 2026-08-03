@@ -166,11 +166,11 @@ class ProjectBuilder:
         self.write_file(self.root / f"{self.package}/queries.py", queries)
         importlib.invalidate_caches()
 
-    def generate(self) -> bool:
+    def generate(self, base_url_import: str | None = None) -> bool:
         return generate_gql_package(
             schema_path=self.root / "schema.graphql",
             package_full_name=self.gql_pkg,
-            base_url_import=f"{self.package}.settings:GRAPHQL_URL",
+            base_url_import=base_url_import or f"{self.package}.settings:GRAPHQL_URL",
             scalars={"ID": "builtins:str"},
             to_camel_fn_full_name="pydantic.alias_generators:to_camel",
             to_snake_fn=alias_generators.to_snake,
