@@ -2,6 +2,7 @@ from collections import defaultdict
 from dataclasses import dataclass
 from dataclasses import field
 from typing import Any
+from typing import Protocol
 from typing import cast
 from warnings import warn
 
@@ -23,6 +24,7 @@ from iron_gql.codegen.ir import CollectedOperation
 from iron_gql.codegen.ir import CollectedOperationVar
 from iron_gql.codegen.ir import CollectedPackageIR
 from iron_gql.codegen.ir import CollectedUnionAlias
+from iron_gql.codegen.ir import GraphQLGenerationError
 from iron_gql.codegen.ir import ImportRef
 from iron_gql.codegen.ir import ListRef
 from iron_gql.codegen.ir import NamedRef
@@ -31,6 +33,7 @@ from iron_gql.codegen.ir import StrTransform
 from iron_gql.codegen.ir import TypeRef
 from iron_gql.codegen.ir import make_optional
 from iron_gql.codegen.parser import Query
+from iron_gql.codegen.parser import Statement
 from iron_gql.codegen.selection import build_codegen_variable_values
 from iron_gql.codegen.selection import build_excluded_variable_values
 from iron_gql.codegen.selection import interface_has_base_typename
@@ -450,47 +453,57 @@ class PackageCollector:
         )
 
 
-def _get_unique_queries(
-    queries: list[Query],
-) -> tuple[list[Query], dict[str, list[str]]]:
+class _NamedStatement(Protocol):
+    @property
+    def name(self) -> str: ...
+
+    @property
+    def stmt(self) -> Statement: ...
+
+
+def _dedup_statements[T: _NamedStatement](
+    items: list[T], kind: str
+) -> tuple[list[T], dict[str, list[str]], dict[str, list[str]]]:
+    # Identical (dedented) text under one name is a harmless copy, differing
+    # text is ambiguous. Every distinct literal spelling is kept per name —
+    # the dispatch dict is keyed by the exact literal, so each spelling needs
+    # its own entry.
     all_locations: dict[str, list[str]] = defaultdict(list)
-    first_occurrence: dict[str, Query] = {}
-    for query in queries:
-        all_locations[query.name].append(query.stmt.location)
-        if query.name not in first_occurrence:
-            first_occurrence[query.name] = query
-        elif first_occurrence[query.name].stmt.hash_str != query.stmt.hash_str:
+    spellings: dict[str, dict[str, None]] = defaultdict(dict)
+    first_occurrence: dict[str, T] = {}
+    for item in items:
+        all_locations[item.name].append(item.stmt.location)
+        spellings[item.name][item.stmt.raw_text] = None
+        if item.name not in first_occurrence:
+            first_occurrence[item.name] = item
+        elif first_occurrence[item.name].stmt.hash_str != item.stmt.hash_str:
             msg = (
-                f"Cannot compile different GraphQL queries with same name {query.name}"
-                f" at {', '.join(all_locations[query.name])}"
+                f"Cannot compile different GraphQL {kind} with same name "
+                f"{item.name} at {', '.join(all_locations[item.name])}"
             )
-            raise ValueError(msg)
+            raise GraphQLGenerationError([msg])
     unique = sorted(
         first_occurrence.values(),
-        key=lambda query: (query.stmt.file, query.stmt.lineno),
+        key=lambda item: (item.stmt.file, item.stmt.lineno),
     )
-    return unique, dict(all_locations)
+    return (
+        unique,
+        dict(all_locations),
+        {name: list(texts) for name, texts in spellings.items()},
+    )
 
 
 def collect_package_ir(
     *,
+    schema: graphql.GraphQLSchema,
     queries: list[Query],
     scalars: dict[str, ImportRef],
     to_snake_fn: StrTransform,
 ) -> CollectedPackageIR:
-    queries, all_locations = _get_unique_queries(queries)
-    ordered_input_types = collect_input_type_closure(queries)
-
-    if not queries:
-        return CollectedPackageIR(
-            result_artifacts=[],
-            input_artifacts=[],
-            operations=[],
-            enums=[],
-        )
+    queries, all_locations, query_spellings = _dedup_statements(queries, "queries")
 
     collector = PackageCollector(
-        schema=queries[0].schema,
+        schema=schema,
         scalars=scalars,
         to_snake_fn=to_snake_fn,
     )
@@ -498,11 +511,11 @@ def collect_package_ir(
     for query in queries:
         result_artifacts.extend(collector.collect_operation_models(query))
     input_artifacts = collect_input_artifacts(
-        ordered_input_types,
+        collect_input_type_closure(queries),
         to_snake_fn=collector.to_snake_fn,
         collect_type=collector.collect_type,
     )
-    operations = _collect_operations(collector, queries, all_locations)
+    operations = _collect_operations(collector, queries, all_locations, query_spellings)
 
     return CollectedPackageIR(
         result_artifacts=result_artifacts,
@@ -516,6 +529,7 @@ def _collect_operations(
     collector: PackageCollector,
     queries: list[Query],
     all_locations: dict[str, list[str]],
+    spellings: dict[str, list[str]],
 ) -> list[CollectedOperation]:
     operations: list[CollectedOperation] = []
     for query in queries:
@@ -535,7 +549,7 @@ def _collect_operations(
         class_name = capitalize_first(query.name)
         operations.append(
             CollectedOperation(
-                stmt_text=query.stmt.raw_text,
+                stmt_texts=tuple(spellings[query.name]),
                 class_name=class_name,
                 result_type=f"{class_name}Result",
                 exec_source=query.exec_source,

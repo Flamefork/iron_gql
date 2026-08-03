@@ -1,3 +1,5 @@
+from itertools import starmap
+
 from iron_gql.codegen.ir import CollectedArtifact
 from iron_gql.codegen.ir import CollectedEnum
 from iron_gql.codegen.ir import CollectedField
@@ -93,36 +95,77 @@ def render_gql_fn(
     operations: list[CollectedOperation],
     package_name: str,
     gql_fn_name: str,
+    passthrough_texts: tuple[str, ...],
 ) -> str:
     dict_name = f"_{package_name.upper()}_GQL_DISPATCH"
+    passthrough_name = f"_{package_name.upper()}_GQL_PASSTHROUGH"
     entries = [
-        (repr(operation.stmt_text), operation.class_name) for operation in operations
+        (repr(text), operation.class_name)
+        for operation in operations
+        for text in operation.stmt_texts
     ]
 
-    overloads = "\n".join(
-        f"@overload\ndef {gql_fn_name}(stmt: Literal[{literal}]) -> {returned}: ..."
-        for literal, returned in entries
-    )
+    def overload_line(literal: str, returned: str) -> str:
+        signature = f"def {gql_fn_name}(stmt: Literal[{literal}]) -> {returned}: ..."
+        return f"@overload\n{signature}"
+
+    overloads = "\n".join([
+        *starmap(overload_line, entries),
+        # Passthrough statements return the plain runtime.GQLOperation the
+        # lookup actually builds for them, pinned by their own Literal
+        # overloads.
+        *(
+            overload_line(repr(text), "runtime.GQLOperation")
+            for text in passthrough_texts
+        ),
+        f"@overload\ndef {gql_fn_name}(stmt: str) -> runtime.GQLOperation: ...",
+    ])
     dict_entries = "\n".join(
         f"    {literal}: {returned}," for literal, returned in entries
     )
+    sections = [
+        overloads,
+        "\n".join([
+            f"{dict_name}: dict[str, type[runtime.GQLOperation]] = {{",
+            dict_entries,
+            "}",
+        ]),
+    ]
 
-    return f"""\
-{overloads}
-@overload
-def {gql_fn_name}(stmt: str) -> runtime.GQLOperation: ...
+    lookup_lines = [
+        f"    query_cls = {dict_name}.get(stmt)",
+        "    if query_cls is not None:",
+        "        return query_cls()",
+    ]
+    if passthrough_texts:
+        # Known statements nothing typed — fragment definitions spread into
+        # operations by name. Their call sites legitimately receive the
+        # untyped catch-all; only a statement the generator has never seen
+        # raises.
+        sections.append(
+            "\n".join([
+                f"{passthrough_name}: frozenset[str] = frozenset({{",
+                "\n".join(f"    {text!r}," for text in passthrough_texts),
+                "})",
+            ])
+        )
+        lookup_lines.extend([
+            f"    if stmt in {passthrough_name}:",
+            "        return runtime.GQLOperation()",
+        ])
 
-
-{dict_name}: dict[str, type[runtime.GQLOperation]] = {{
-{dict_entries}
-}}
-
-
-def {gql_fn_name}(stmt: str) -> runtime.GQLOperation:
-    query_cls = {dict_name}.get(stmt)
-    if query_cls is not None:
-        return query_cls()
-    return runtime.GQLOperation()"""
+    sections.append(
+        "\n".join([
+            f"def {gql_fn_name}(stmt: str) -> runtime.GQLOperation:",
+            *lookup_lines,
+            f'    msg = "unknown GraphQL statement passed to {gql_fn_name}; "',
+            '    msg += "the generator only discovers bare-name calls with a "',
+            '    msg += "single string literal - check the call site, then "',
+            '    msg += "regenerate the package"',
+            "    raise LookupError(msg)",
+        ])
+    )
+    return "\n\n\n".join(sections)
 
 
 def render_package(
@@ -132,6 +175,7 @@ def render_package(
     collected: CollectedPackageIR,
     scalars: dict[str, ImportRef],
     to_camel_ref: ImportRef,
+    passthrough_texts: tuple[str, ...] = (),
 ) -> str:
     sections = [
         HEADER,
@@ -145,7 +189,9 @@ def render_package(
         "\n\n\n".join(render_artifacts(collected.result_artifacts)),
         "\n\n\n".join(render_artifacts(collected.input_artifacts)),
         "\n\n\n".join(render_operations(collected.operations, package_name)),
-        render_gql_fn(collected.operations, package_name, gql_fn_name),
+        render_gql_fn(
+            collected.operations, package_name, gql_fn_name, passthrough_texts
+        ),
     ]
     return "\n\n\n".join(section for section in sections if section)
 

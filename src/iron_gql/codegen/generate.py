@@ -103,11 +103,26 @@ def generate_gql_package(
 
     collected = apply_rename(
         collect_package_ir(
+            schema=parse_res.schema,
             queries=parse_res.queries,
             scalars=scalar_refs,
             to_snake_fn=to_snake_fn,
         )
     )
+
+    # Statements the scan discovered but nothing typed: fragment definitions
+    # spread into operations by name. Their call sites legitimately receive
+    # the untyped catch-all — only a statement the generator has never seen is
+    # an error there.
+    typed_texts = {
+        text for operation in collected.operations for text in operation.stmt_texts
+    }
+    passthrough_texts = tuple(
+        dict.fromkeys(
+            stmt.raw_text for stmt in queries if stmt.raw_text not in typed_texts
+        )
+    )
+
     new_content = render_package(
         base_url_ref=base_url_ref,
         package_name=package_name,
@@ -115,5 +130,6 @@ def generate_gql_package(
         collected=collected,
         scalars=scalar_refs,
         to_camel_ref=to_camel_ref,
+        passthrough_texts=passthrough_texts,
     )
     return write_if_changed(target_package_path, new_content + "\n")

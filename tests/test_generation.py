@@ -664,6 +664,32 @@ def test_duplicate_identical_query_deduplication(test_project: ProjectBuilder):
     assert test_project.generate() is True
 
 
+def test_duplicate_query_with_different_spelling_dispatches_both(
+    test_project: ProjectBuilder,
+):
+    # Deduplication compares dedented text, so the same query indented
+    # differently at two call sites is one operation — but the dispatch dict is
+    # keyed by the exact literal, so every spelling must be present in it.
+    test_project.prepare(
+        schema="""
+        type Query {
+            ping: String
+        }
+        """,
+        queries="""
+        from sample_app.gql.api import api_gql
+
+        first = api_gql("query Ping { ping }")
+        second = api_gql('''
+            query Ping { ping }
+        ''')
+        """,
+    )
+    api_module, queries_module = test_project.generate_and_import()
+    assert isinstance(queries_module.first, api_module.Ping)  # pyright: ignore[reportAny]
+    assert isinstance(queries_module.second, api_module.Ping)  # pyright: ignore[reportAny]
+
+
 def test_syntax_error_in_scanned_file(test_project: ProjectBuilder):
     test_project.prepare(
         schema="""

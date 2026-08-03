@@ -8,7 +8,11 @@ from iron_gql.codegen.util import capitalize_first
 type StrTransform = Callable[[str], str]
 
 
-class GraphQLGenerationError(Exception):
+# A ValueError so call sites that predate the aggregated error keep working;
+# every diagnosed rejection of the GraphQL input flows through this one type
+# (malformed api_gql call sites are rejected earlier, as TypeError, before any
+# GraphQL is read).
+class GraphQLGenerationError(ValueError):
     def __init__(self, errors: list[str]) -> None:
         self.errors = errors
         super().__init__("\n".join(errors))
@@ -220,7 +224,10 @@ class CollectedOperationVar:
 
 @dataclass(kw_only=True, frozen=True)
 class CollectedOperation:
-    stmt_text: str
+    # Every distinct literal spelling the operation was discovered under:
+    # deduplication compares dedented text, but the dispatch dict is keyed by
+    # the exact literal, so each spelling needs its own entry.
+    stmt_texts: tuple[str, ...]
     class_name: str
     result_type: str
     exec_source: str

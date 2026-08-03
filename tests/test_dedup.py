@@ -28,6 +28,7 @@ def _build_ir(schema_sdl: str, query_sources: list[str]) -> CollectedPackageIR:
     queries: list[Query] = build_queries(schema, docs, fragments)
     return apply_rename(
         collect_package_ir(
+            schema=schema,
             queries=queries,
             scalars={"ID": ImportRef.parse("builtins:str")},
             to_snake_fn=alias_generators.to_snake,

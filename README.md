@@ -140,3 +140,4 @@ The generated query classes resolve the client by module attribute name at call 
 ## Validation and Troubleshooting
 - Errors identify the file and line where the problematic statement lives.
 - Duplicate operation names must share identical bodies; rename or consolidate to resolve the conflict.
+- Calling the generated helper with a statement it does not know raises `LookupError`: after adding or editing a statement, regenerate the package.

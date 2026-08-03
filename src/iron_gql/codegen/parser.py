@@ -101,6 +101,7 @@ class Query:
 
 @dataclass(kw_only=True, frozen=True)
 class ParseResult:
+    schema: graphql.GraphQLSchema
     queries: list[Query]
     errors: list[str]
 
@@ -285,7 +286,7 @@ def parse_gql_queries(
             queries=queries,
         )
 
-    return ParseResult(queries=queries, errors=errors)
+    return ParseResult(schema=schema, queries=queries, errors=errors)
 
 
 def dump_json(path: Path, obj: object) -> None:
