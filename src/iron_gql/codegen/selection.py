@@ -6,6 +6,8 @@ from typing import cast
 
 import graphql
 
+from iron_gql.codegen.slots import response_key
+
 # A conjunction of @include/@skip literals: (variable name, required value)
 # pairs. The empty conjunction always holds; `_conjoin` returns None for a
 # contradiction, so every stored Cond is satisfiable.
@@ -23,10 +25,6 @@ type SelectionRoots = tuple[tuple[graphql.SelectionSetNode, Cond], ...]
 class ConditionalNode:
     node: graphql.FieldNode
     cond: Cond
-
-
-def response_key(node: graphql.FieldNode) -> str:
-    return node.alias.value if node.alias else node.name.value
 
 
 def collect_conditional_fields(

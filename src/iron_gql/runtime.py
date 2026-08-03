@@ -16,6 +16,7 @@ from httpx_ws import aconnect_ws
 from httpx_ws.transport import ASGIWebSocketTransport
 
 from iron_gql.errors import GraphQLResponseError
+from iron_gql.slots import SlotFragments
 from iron_gql.websockets import graphql_ws_subscribe
 from iron_gql.websockets import ws_url
 
@@ -92,6 +93,7 @@ class GQLClient:
         *,
         variables: dict[str, Any],
         headers: dict[str, str],
+        slot_fragments: SlotFragments | None = None,
     ) -> T:
         payload: dict[str, Any] = {"query": query}
         serialized_vars, files = serialize_variables(variables)
@@ -124,7 +126,7 @@ class GQLClient:
         if body.data is None:
             raise GraphQLResponseError([{"message": "No data in response"}])
 
-        return result_type.model_validate(body.data)
+        return result_type.model_validate(body.data, context=slot_fragments)
 
     async def _post_normal_request(
         self,
@@ -173,6 +175,7 @@ class GQLClient:
         *,
         variables: dict[str, Any],
         headers: dict[str, str],
+        slot_fragments: SlotFragments | None = None,
     ) -> AsyncGenerator[AsyncGenerator[T]]:
         serialized_vars, files = serialize_variables(variables)
         if files:
@@ -193,7 +196,9 @@ class GQLClient:
                     cookies=httpx.Cookies(self._client.cookies),
                 ) as client,
                 aconnect_ws(url, client, subprotocols=["graphql-transport-ws"]) as ws,
-                graphql_ws_subscribe(ws, result_type, query, serialized_vars) as stream,
+                graphql_ws_subscribe(
+                    ws, result_type, query, serialized_vars, slot_fragments
+                ) as stream,
             ):
                 yield stream
         except BaseExceptionGroup as eg:

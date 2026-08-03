@@ -1,0 +1,32 @@
+type Query {
+    board(id: ID!): Board
+}
+
+type Board {
+    id: ID!
+    owner: Owner
+    cards: [Card!]!
+    activity: Activity
+    events: [Activity!]!
+}
+
+type Owner {
+    id: ID!
+    fullName: String!
+}
+
+type Card {
+    title: String!
+}
+
+union Activity = Comment | Move
+
+type Comment {
+    body: String!
+    author: Owner!
+}
+
+type Move {
+    fromColumn: String!
+    author: Owner!
+}

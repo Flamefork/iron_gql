@@ -102,6 +102,64 @@ generate_gql_package(
 
 Custom scalar types must be Pydantic-compatible — i.e. Pydantic should know how to parse them from JSON (deserialization) and serialize them to JSON. This works out of the box for standard library types (`datetime`, `Decimal`, `UUID`, `Enum`) and for any type that implements `__get_pydantic_core_schema__`. Unknown scalars fall back to `object` with a log warning.
 
+## Fragment Slots
+
+Shared infrastructure code often owns a GraphQL operation without knowing which fields its callers need on one of the operation's fields. Fragment slots let each caller supply its own fragment for that field at call time, instead of the operation naming every consumer's fragment up front.
+
+Mark a field with `@slot` in a query, mutation, or subscription (not inside a fragment definition), giving it a static selection that selects `__typename` at the top level of the field's own selection set: unaliased, with no directives on it, and not through an inline fragment or a fragment spread. The slot field itself cannot carry `@skip`/`@include` — a slot is always requested, and a caller that wants no fragment data passes an empty list.
+
+```python
+get_post_attachment = api_gql("""
+    query GetPostAttachment($id: ID!) {
+        post(id: $id) {
+            id
+            attachment @slot { __typename }
+        }
+    }
+""")
+```
+
+A statement holding exactly one fragment definition becomes a typed **handle** when some slot in the package can accept it — that is, when the fragment is spread-compatible with a slot field's type. The same fragment can still be spread by name into other operations as before. A single-fragment statement no slot accepts, and a statement bundling several fragment definitions without an operation, keep returning a plain `runtime.GQLOperation`: their fragments live on as name-spread building blocks and owe none of a handle's obligations (self-containedness, own `__typename` on polymorphic selections, non-empty selection). A statement containing an operation returns that operation's class exactly as it always has:
+
+```python
+IMAGE_URL = api_gql("""
+    fragment ImageUrl on ImageAttachment {
+        url
+    }
+""")
+```
+
+Pass a handle, or a sequence of handles, into `execute` using the snake_case form of the slot field's name (or alias) as the keyword argument — `mainAttachment @slot` becomes `main_attachment=` — then read each fragment's own typed model back out of the slot node with `handle.read(node)`:
+
+```python
+result = await get_post_attachment.execute(id="p-1", attachment=IMAGE_URL)
+if result.post is not None:
+    image = IMAGE_URL.read(result.post.attachment)
+    if image is not None:
+        print(image.url)
+```
+
+`read` returns `None` in exactly two situations: the node itself is `None` because the server sent `null`, or the node's runtime type is outside the fragment's own selection. Reading with a handle that was never passed to that slot raises instead of returning `None` — a wiring bug must not look like a legitimate mismatch. Fragments are isolated from each other: each one reads back exactly its own selection, never the fields another caller's fragment asked for. Slot data is reachable only through `read`: it is not part of the result model's fields, so `model_dump()` does not include it — and a dumped result does not round-trip: re-validating it demands a fragments context again (without one it fails loudly), and the fragments' data is gone either way. The generator emits one compatibility base per slot field type, named `{FieldType}Fragment`, so shared code can be generic over any fragment compatible with that field, without knowing its concrete shape:
+
+```python
+async def read_attachment[T: pydantic.BaseModel](
+    post_id: str, fragment: AttachmentFragment[T]
+) -> T | None:
+    result = await get_post_attachment.execute(id=post_id, attachment=fragment)
+    if result.post is None:
+        return None
+    return fragment.read(result.post.attachment)
+```
+
+Passing a fragment that isn't spread-compatible with the slot is a type error, so mismatches are caught before your code ships.
+
+Validation of every fragment passed into a slot happens eagerly — for queries and mutations inside `execute`, for subscriptions on every received message — so malformed data raises at the response boundary and never silently surfaces later from `read`.
+
+Three things to keep in mind:
+- A handle must be self-contained: it cannot spread other fragments and cannot reference variables (`$name`) — it travels to the server as its own text alone, next to an operation that declares nothing on its behalf. Fragments no slot accepts are untouched by both rules: they keep composing through name spreads and taking their variables from the operations that spread them.
+- An operation that declares a compatible slot cannot itself define or spread any fragment name a handle ships — the handle's own name or one of its transitive dependencies. The generator rejects the combination as soon as the handle exists, whether or not anyone passes it; rename one of the two. Operations without a compatible slot are outside the rule, and the same fragment works in both roles across different operations.
+- The slot keyword argument in `execute` is mandatory — there is no default, so sending no fragments means passing an empty list explicitly.
+
 ## Customization Hooks
 - **Naming conventions.** Supply `to_camel_fn_full_name` (module:path string) and a `to_snake_fn` callable to align casing with your own `alias_generator`.
 - **Endpoint configuration.** `base_url_import` is written verbatim into the generated module; point it at a global string, config object, or helper that returns the GraphQL endpoint.

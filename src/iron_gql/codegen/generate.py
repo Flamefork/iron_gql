@@ -15,6 +15,8 @@ from iron_gql.codegen.parser import Statement
 from iron_gql.codegen.parser import parse_gql_queries
 from iron_gql.codegen.render import render_package
 from iron_gql.codegen.render import scaffold_claims
+from iron_gql.codegen.slots import validate_no_nested_slots
+from iron_gql.codegen.slots import validate_slots_are_collected
 from iron_gql.codegen.util import write_if_changed
 
 
@@ -115,6 +117,7 @@ def generate_gql_package(
         collect_package_ir(
             schema=parse_res.schema,
             queries=parse_res.queries,
+            fragment_statements=parse_res.reachable_statements,
             scalars=scalar_refs,
             to_snake_fn=to_snake_fn,
         ),
@@ -122,21 +125,24 @@ def generate_gql_package(
     )
     # Checked here rather than in the parser: these rules read the collected
     # module — the python names it binds, which are only final once the rename
-    # pass has run.
+    # pass has run, and the model graph, which has already merged the field
+    # nodes a response key was assembled from.
     ir_errors = [
         *validate_module_names(collected, scaffold),
         *validate_execute_signatures(collected),
+        *validate_no_nested_slots(collected),
+        *validate_slots_are_collected(collected),
     ]
     if ir_errors:
         raise GraphQLGenerationError(ir_errors)
 
-    # Statements the scan discovered but nothing typed: fragment definitions
-    # spread into operations by name. Their call sites legitimately receive
-    # the untyped catch-all — only a statement the generator has never seen is
-    # an error there.
+    # Statements the scan discovered but nothing typed: fragment bundles and
+    # single fragments no slot accepts. Their fragments are spread statically
+    # by name, and the call site legitimately receives the untyped catch-all —
+    # only a statement the generator has never seen is an error there.
     typed_texts = {
         text for operation in collected.operations for text in operation.stmt_texts
-    }
+    } | {text for fragment in collected.fragments for text in fragment.stmt_texts}
     passthrough_texts = tuple(
         dict.fromkeys(
             stmt.raw_text for stmt in queries if stmt.raw_text not in typed_texts

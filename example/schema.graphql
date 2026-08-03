@@ -3,6 +3,7 @@ type Query {
   users(role: Role): [User!]!
   search(query: String!): [SearchItem!]!
   findUser(by: FindUserBy!): User
+  post(id: ID!): Post
 }
 
 input FindUserBy @oneOf {
@@ -41,6 +42,7 @@ type Post implements Node {
   title: String!
   body: String!
   author: User!
+  attachment: Attachment
 }
 
 union SearchItem = User | Post
@@ -49,4 +51,15 @@ input CreateUserInput {
   name: String!
   email: String!
   role: Role!
+}
+
+union Attachment = ImageAttachment | LinkAttachment
+
+type ImageAttachment {
+  url: String!
+  caption: String!
+}
+
+type LinkAttachment {
+  href: String!
 }

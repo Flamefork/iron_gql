@@ -4,10 +4,11 @@ import graphql
 
 # Typed accessors over graphql-core
 #
-# Two distinct stub holes in graphql-core 3.2, both localized here so the rest
-# of the codebase stays fully typed. A function boundary with a declared return
-# type is the only construct that stops the taint from spreading, hence the
-# helper shape. Naming scheme: <owner>_<attribute>.
+# Stub holes in graphql-core 3.2, all localized here so the rest of the
+# codebase stays fully typed. A function boundary with a declared return type
+# is the only construct that stops the taint from spreading, hence the helper
+# shape. Attribute accessors are named <owner>_<attribute>; `visit_document`
+# wraps a function, not an attribute, and keeps the function's name.
 #
 # Unknown from wrapping types: graphql-core parameterizes wrapping types via a
 # Self-bound TypeVar whose bound (`GraphQLNullableType`) itself transitively
@@ -24,6 +25,16 @@ import graphql
 # through a conditional import that pyright resolves to Any, so `.fields` and
 # `.types` on schema types are Any. The field/type accessors pin them back to
 # their documented types.
+#
+# Any from `graphql.visit`: its declared return type is a bare `Any` (it can
+# return any node, depending on what a visitor does), even though every call
+# site in this codebase knows the concrete type it put in and expects back.
+# `visit_document` pins that contract for the call sites that use the
+# return value; call sites that only rely on visitor side effects can keep
+# calling `graphql.visit` directly and discard the untyped result.
+#
+# Unknown from `TypeInfo.get_type`: the stub leaves the return unannotated, so
+# `type_info_type` pins it to the documented `GraphQLType | None`.
 #
 # On upgrade to graphql-core 3.3+, re-check which of these accessors can be
 # deleted in favor of direct attribute access.
@@ -58,3 +69,15 @@ def union_types(
     gql_type: graphql.GraphQLUnionType,
 ) -> tuple[graphql.GraphQLObjectType, ...]:
     return tuple(gql_type.types)  # pyright: ignore[reportAny]
+
+
+def type_info_type(
+    type_info: graphql.TypeInfo,
+) -> graphql.GraphQLType | None:
+    return type_info.get_type()  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+
+
+def visit_document(
+    doc: graphql.DocumentNode, visitor: graphql.Visitor
+) -> graphql.DocumentNode:
+    return graphql.visit(doc, visitor)  # pyright: ignore[reportAny]

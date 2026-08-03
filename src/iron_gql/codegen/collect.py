@@ -1,6 +1,7 @@
 from collections import defaultdict
 from dataclasses import dataclass
 from dataclasses import field
+from dataclasses import replace
 from typing import Protocol
 from typing import cast
 from warnings import warn
@@ -17,10 +18,12 @@ from iron_gql.codegen.ir import BUILTIN_SCALARS
 from iron_gql.codegen.ir import CollectedArtifact
 from iron_gql.codegen.ir import CollectedEnum
 from iron_gql.codegen.ir import CollectedField
+from iron_gql.codegen.ir import CollectedFragment
 from iron_gql.codegen.ir import CollectedModel
 from iron_gql.codegen.ir import CollectedOperation
 from iron_gql.codegen.ir import CollectedOperationVar
 from iron_gql.codegen.ir import CollectedPackageIR
+from iron_gql.codegen.ir import CollectedSlot
 from iron_gql.codegen.ir import CollectedUnionAlias
 from iron_gql.codegen.ir import GraphQLGenerationError
 from iron_gql.codegen.ir import ImportRef
@@ -30,7 +33,9 @@ from iron_gql.codegen.ir import ScalarRef
 from iron_gql.codegen.ir import StrTransform
 from iron_gql.codegen.ir import TypeRef
 from iron_gql.codegen.ir import make_optional
+from iron_gql.codegen.ir import slot_roots
 from iron_gql.codegen.names import validate_collected_names
+from iron_gql.codegen.parser import FragmentStatement
 from iron_gql.codegen.parser import Query
 from iron_gql.codegen.parser import Statement
 from iron_gql.codegen.selection import ALWAYS
@@ -40,6 +45,10 @@ from iron_gql.codegen.selection import collect_conditional_fields
 from iron_gql.codegen.selection import interface_has_base_typename
 from iron_gql.codegen.selection import resolve_explicit_types
 from iron_gql.codegen.selection import uncovered_assignment
+from iron_gql.codegen.slots import fragment_base_name
+from iron_gql.codegen.slots import has_slot_directive
+from iron_gql.codegen.slots import reachable_model_names
+from iron_gql.codegen.slots import spreads_into
 from iron_gql.codegen.util import capitalize_first
 from iron_gql.codegen.warnings import GraphQLDeprecationWarning
 from iron_gql.codegen.warnings import UnknownGQLTypeWarning
@@ -53,6 +62,13 @@ class CollectionContext:
     fragments: dict[str, graphql.FragmentDefinitionNode]
 
 
+def fragment_model_name(fragment_name: str) -> str:
+    # Named after the fragment and kept out of the rename pass: a caller writes
+    # this type in helper signatures, so it must not shift when unrelated
+    # operations join the package.
+    return f"{capitalize_first(fragment_name)}Data"
+
+
 def python_field_name(
     response_key: str,
     to_snake_fn: StrTransform,
@@ -60,6 +76,44 @@ def python_field_name(
     if response_key.startswith("__"):
         return to_snake_fn(f"{response_key[2:]}__")
     return to_snake_fn(response_key)
+
+
+def _reject_conditionally_merged_slot(
+    *,
+    response_key: str,
+    entries: list[ConditionalNode],
+    query_name: str,
+    location: str,
+) -> None:
+    # The invariant: the slot's fragment spreads are spliced into the sent
+    # query exactly where a @slot node selects the key, so no variable
+    # assignment may keep the key in the response while excluding every @slot
+    # node — the key would arrive without the fragments' fields. The slot
+    # field itself cannot carry @skip/@include, so its condition here is
+    # purely inherited from conditional parents the node is nested under;
+    # the check runs over the exact condition of every node merged into the
+    # key.
+    slot_conds = [entry.cond for entry in entries if has_slot_directive(entry.node)]
+    if not slot_conds:
+        return
+    plain_conds = [
+        entry.cond for entry in entries if not has_slot_directive(entry.node)
+    ]
+    witness = uncovered_assignment(plain_conds, slot_conds)
+    if witness is None:
+        return
+    at = ", ".join(
+        f"${name}={'true' if value else 'false'}"
+        for name, value in sorted(witness.items())
+    )
+    msg = (
+        f"Slot '{response_key}' in '{query_name}' at {location} is conditional "
+        f"while response key '{response_key}' is merged from selections "
+        f"without @slot: at {at} the server returns the key without the "
+        "slot's fragments. Merge the selections or move the slot out of the "
+        "conditional branch"
+    )
+    raise GraphQLGenerationError([msg])
 
 
 @dataclass(kw_only=True)
@@ -166,6 +220,23 @@ class PackageCollector:
             ctx=ctx,
         )
 
+    def collect_fragment_models(
+        self,
+        statement: FragmentStatement,
+    ) -> list[CollectedArtifact]:
+        ctx = CollectionContext(
+            query_name=statement.name,
+            location=statement.stmt.location,
+            fragments=statement.fragments,
+        )
+        return self._collect_composite_model(
+            base_name=fragment_model_name(statement.name),
+            named=self.schema.get_type(statement.type_condition),
+            roots=((statement.definition.selection_set, ALWAYS),),
+            ctx=ctx,
+            origin=f"fragment {statement.name}",
+        )
+
     def _collect_object_model(
         self,
         *,
@@ -176,6 +247,8 @@ class PackageCollector:
         typename_type: TypeRef | None = None,
         require_typename_for: str | None = None,
         graphql_type_name: str | None = None,
+        slot_name: str | None = None,
+        covered_typenames: tuple[str, ...] = (),
     ) -> list[CollectedArtifact]:
         grouped = collect_conditional_fields(
             schema=self.schema,
@@ -212,6 +285,12 @@ class PackageCollector:
         child_models: list[CollectedArtifact] = []
         fields: list[CollectedField] = []
         for response_key, entries in grouped.items():
+            _reject_conditionally_merged_slot(
+                response_key=response_key,
+                entries=entries,
+                query_name=ctx.query_name,
+                location=ctx.location,
+            )
             field_child_models, collected_field = self._collect_field(
                 model_name_base=model_name_base,
                 runtime_type=runtime_type,
@@ -246,6 +325,8 @@ class PackageCollector:
                 name=model_name_base,
                 fields=fields,
                 graphql_type_name=graphql_type_name,
+                slot_name=slot_name,
+                covered_typenames=covered_typenames,
             ),
         ]
 
@@ -293,6 +374,13 @@ class PackageCollector:
             gql_type=field_type(field_def),
             entries=entries,
             ctx=ctx,
+            # Any node of the response key, not just the representative: slot
+            # collection and exec-source stripping both fire on any node with
+            # the directive, and a response key merged from several nodes may
+            # carry it on any of them.
+            slot_name=response_key
+            if any(has_slot_directive(entry.node) for entry in entries)
+            else None,
         )
         return (
             child_models,
@@ -312,6 +400,7 @@ class PackageCollector:
         gql_type: graphql.GraphQLType,
         entries: list[ConditionalNode],
         ctx: CollectionContext,
+        slot_name: str | None,
     ) -> tuple[list[CollectedArtifact], TypeRef]:
         # Each parent node contributes its subtree under its own condition:
         # a child selected through only one of the merged parents is exactly
@@ -325,6 +414,10 @@ class PackageCollector:
             return [], self.collect_type(gql_type)
 
         child_base = model_name_base + capitalize_first(response_key)
+        if slot_name is not None:
+            # Slot models are kept out of the rename pass, so this generated
+            # name is the final one; the suffix marks the slot subtree's root.
+            child_base += "Slot"
         return (
             self._collect_composite_model(
                 base_name=child_base,
@@ -332,6 +425,7 @@ class PackageCollector:
                 roots=roots,
                 ctx=ctx,
                 origin=f"field {response_key}",
+                slot_name=slot_name,
             ),
             self.collect_type(gql_type, child_model_name=child_base),
         )
@@ -347,9 +441,13 @@ class PackageCollector:
         roots: SelectionRoots,
         ctx: CollectionContext,
         origin: str,
+        slot_name: str | None = None,
     ) -> list[CollectedArtifact]:
-        # The flat merge below feeds the existence-based walks (explicit
-        # variants, base __typename), which do not read conditions.
+        # Shared by a composite field selection and by a fragment root: both
+        # start from a named composite type plus selection roots, and both must
+        # produce the same shape of models for it. The flat merge below feeds
+        # the existence-based walks (explicit variants, base __typename), which
+        # do not read conditions.
         merged_selections = graphql.SelectionSetNode(
             selections=[
                 selection
@@ -365,6 +463,8 @@ class PackageCollector:
                     roots=roots,
                     ctx=ctx,
                     graphql_type_name=named.name,
+                    slot_name=slot_name,
+                    covered_typenames=(named.name,),
                 )
             case graphql.GraphQLUnionType():
                 possible = sorted(union_types(named), key=lambda typ: typ.name)
@@ -375,6 +475,7 @@ class PackageCollector:
                     roots=roots,
                     ctx=ctx,
                     require_typename_for=named.name,
+                    slot_name=slot_name,
                 )
             case graphql.GraphQLInterfaceType():
                 possible = sorted(
@@ -406,6 +507,7 @@ class PackageCollector:
                     roots=roots,
                     ctx=ctx,
                     require_typename_for=named.name,
+                    slot_name=slot_name,
                 )
             case _:
                 msg = f"Unknown type {named} for {origin}"
@@ -420,15 +522,31 @@ class PackageCollector:
         roots: SelectionRoots,
         ctx: CollectionContext,
         require_typename_for: str,
+        slot_name: str | None,
     ) -> list[CollectedArtifact]:
         if not explicit_types:
+            if slot_name is None:
+                typename_type: TypeRef = ScalarRef(expr="str", name_hint="Str")
+            else:
+                # A slot node's typename is closed to the schema snapshot: an
+                # implementation the snapshot does not know must fail loudly —
+                # the union slot already does via its discriminated Literal,
+                # and an open `str` here would let the same drift pass through
+                # and silently drop data the server sent. This is also what
+                # makes a covered_typenames__ miss on the slot root a plain
+                # mismatch: drift fails here first (pinned by
+                # test_schema_drift_typename_fails_loudly_on_interface_slot).
+                names = ", ".join(repr(typ.name) for typ in possible_types)
+                typename_type = ScalarRef(expr=f"Literal[{names}]")
             return self._collect_object_model(
                 model_name_base=base_name,
                 runtime_type=possible_types[0],
                 roots=roots,
                 ctx=ctx,
-                typename_type=ScalarRef(expr="str", name_hint="Str"),
+                typename_type=typename_type,
                 graphql_type_name=require_typename_for,
+                slot_name=slot_name,
+                covered_typenames=tuple(typ.name for typ in possible_types),
             )
 
         # possible_types is already sorted by name; preserve that order for
@@ -450,6 +568,8 @@ class PackageCollector:
                     ctx=ctx,
                     require_typename_for=require_typename_for,
                     graphql_type_name=object_type.name,
+                    slot_name=slot_name,
+                    covered_typenames=(object_type.name,),
                 )
             )
             union_types.append(model_name)
@@ -468,6 +588,8 @@ class PackageCollector:
                     typename_type=fallback_typename,
                     require_typename_for=require_typename_for,
                     graphql_type_name=require_typename_for,
+                    slot_name=slot_name,
+                    covered_typenames=tuple(obj.name for obj in fallback_objects),
                 )
             )
             union_types.append(fallback_name)
@@ -493,10 +615,10 @@ class _NamedStatement(Protocol):
 def _dedup_statements[T: _NamedStatement](
     items: list[T], kind: str
 ) -> tuple[list[T], dict[str, list[str]], dict[str, list[str]]]:
-    # Identical (dedented) text under one name is a harmless copy, differing
-    # text is ambiguous. Every distinct literal spelling is kept per name —
-    # the dispatch dict is keyed by the exact literal, so each spelling needs
-    # its own entry.
+    # Shared by operations and fragment statements: identical (dedented) text
+    # under one name is a harmless copy, differing text is ambiguous. Every
+    # distinct literal spelling is kept per name — the dispatch dict is keyed
+    # by the exact literal, so each spelling needs its own entry.
     all_locations: dict[str, list[str]] = defaultdict(list)
     spellings: dict[str, dict[str, None]] = defaultdict(dict)
     first_occurrence: dict[str, T] = {}
@@ -526,10 +648,21 @@ def collect_package_ir(
     *,
     schema: graphql.GraphQLSchema,
     queries: list[Query],
+    fragment_statements: list[FragmentStatement],
     scalars: dict[str, ImportRef],
     to_snake_fn: StrTransform,
 ) -> CollectedPackageIR:
     queries, all_locations, query_spellings = _dedup_statements(queries, "queries")
+    # Every type a slot field resolves to gets a compatibility base; the
+    # statements arriving here are already exactly the ones some slot can
+    # accept — `ParseResult.reachable_statements`, the single place that
+    # predicate lives.
+    slot_types = tuple(
+        sorted({slot.type_name for query in queries for slot in query.slots})
+    )
+    fragment_statements, _, fragment_spellings = _dedup_statements(
+        fragment_statements, "fragments"
+    )
 
     collector = PackageCollector(
         schema=schema,
@@ -539,29 +672,128 @@ def collect_package_ir(
     result_artifacts: list[CollectedArtifact] = []
     for query in queries:
         result_artifacts.extend(collector.collect_operation_models(query))
+    for statement in fragment_statements:
+        result_artifacts.extend(collector.collect_fragment_models(statement))
     input_artifacts = collect_input_artifacts(
         collect_input_type_closure(queries),
         to_snake_fn=collector.to_snake_fn,
         collect_type=collector.collect_type,
     )
     operations = _collect_operations(collector, queries, all_locations, query_spellings)
+    fragments = _collect_fragments(
+        collector, fragment_statements, slot_types, fragment_spellings
+    )
 
-    # Validated before any name-keyed structure is derived: the rename pass
-    # resolves NamedRefs through these names.
+    # Validated before any name-keyed structure is derived: the subtree walk
+    # below and the rename pass both resolve NamedRefs through these names.
     name_errors = validate_collected_names(
         result_artifacts=result_artifacts,
         input_artifacts=input_artifacts,
+        fragments=fragments,
         enums=[collector.enums[name] for name in sorted(collector.enums)],
     )
     if name_errors:
         raise GraphQLGenerationError(name_errors)
 
+    open_model_names, fragments = _resolve_subtrees(result_artifacts, fragments)
     return CollectedPackageIR(
         result_artifacts=result_artifacts,
         input_artifacts=input_artifacts,
         operations=operations,
+        fragments=fragments,
+        slot_types=slot_types,
         enums=[collector.enums[name] for name in sorted(collector.enums)],
+        open_model_names=open_model_names,
     )
+
+
+def _covered_typenames(
+    root: str, artifacts: dict[str, CollectedArtifact]
+) -> frozenset[str]:
+    # The runtime typenames a fragment's selection covers. A uniform model
+    # covers several typenames with one selection; an alias contributes each
+    # of its variants' own.
+    match artifacts[root]:
+        case CollectedModel() as model:
+            if not model.covered_typenames:
+                # Internal invariant: every model this walk reaches covers at
+                # least one runtime typename — an empty cover would turn every
+                # read of the handle into a silent None.
+                msg = f"fragment model {root!r} covers no runtime typenames"
+                raise AssertionError(msg)
+            return frozenset(model.covered_typenames)
+        case CollectedUnionAlias() as alias:
+            covered: frozenset[str] = frozenset()
+            for variant in alias.variants:
+                covered |= _covered_typenames(variant, artifacts)
+            return covered
+
+
+def _resolve_subtrees(
+    result_artifacts: list[CollectedArtifact],
+    fragments: list[CollectedFragment],
+) -> tuple[frozenset[str], list[CollectedFragment]]:
+    # A slot payload carries every passed fragment's fields next to the static
+    # selection, and every fragment validates that same payload — so each
+    # model inside a slot or fragment subtree tolerates the keys other readers
+    # asked for (the open base) while its typed fields keep isolation intact.
+    # Each handle also snapshots the typenames its root covers.
+    artifacts_by_name = {artifact.name: artifact for artifact in result_artifacts}
+    open_names: set[str] = set()
+    for model, _ in slot_roots(result_artifacts):
+        open_names.add(model.name)
+        open_names |= reachable_model_names(model.name, artifacts_by_name)
+    for fragment in fragments:
+        open_names.add(fragment.model_name)
+        open_names |= reachable_model_names(fragment.model_name, artifacts_by_name)
+    fragments = [
+        replace(
+            fragment,
+            covered_typenames=_covered_typenames(
+                fragment.model_name, artifacts_by_name
+            ),
+        )
+        for fragment in fragments
+    ]
+    return frozenset(open_names), fragments
+
+
+def compatible_base_names(
+    schema: graphql.GraphQLSchema, fragment_type: str, slot_types: tuple[str, ...]
+) -> tuple[str, ...]:
+    # One base per slot type the fragment can spread into, per the canonical
+    # rule in `spreads_into`.
+    return tuple(
+        fragment_base_name(slot_type)
+        for slot_type in slot_types
+        if spreads_into(schema, fragment_type, slot_type)
+    )
+
+
+def _collect_fragments(
+    collector: PackageCollector,
+    statements: list[FragmentStatement],
+    slot_types: tuple[str, ...],
+    spellings: dict[str, list[str]],
+) -> list[CollectedFragment]:
+    return [
+        CollectedFragment(
+            stmt_texts=tuple(spellings[statement.name]),
+            location=statement.stmt.location,
+            class_name=capitalize_first(statement.name),
+            singleton_name=collector.to_snake_fn(statement.name).upper(),
+            fragment_name=statement.name,
+            model_name=fragment_model_name(statement.name),
+            definition_text=statement.definition_text,
+            # A handle compatible with no slot in the package derives the
+            # runtime class directly, and is then rejected at every slot kwarg.
+            base_names=compatible_base_names(
+                collector.schema, statement.type_condition, slot_types
+            )
+            or ("slots.GQLFragment",),
+        )
+        for statement in statements
+    ]
 
 
 def _collect_operations(
@@ -585,14 +817,24 @@ def _collect_operations(
             )
             for variable in query.variables
         )
+        slots = tuple(
+            CollectedSlot(
+                name=slot.name,
+                python_name=collector.to_snake_fn(slot.name),
+                base_name=fragment_base_name(slot.type_name),
+            )
+            for slot in query.slots
+        )
         class_name = capitalize_first(query.name)
         operations.append(
             CollectedOperation(
                 stmt_texts=tuple(spellings[query.name]),
                 class_name=class_name,
                 result_type=f"{class_name}Result",
-                exec_source=query.exec_source,
+                exec_head=query.exec_head,
+                exec_splices=query.exec_splices,
                 variables=variables,
+                slots=slots,
                 is_subscription=(
                     query.operation_def.operation == graphql.OperationType.SUBSCRIPTION
                 ),

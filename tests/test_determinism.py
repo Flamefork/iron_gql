@@ -85,6 +85,23 @@ def test_regeneration_is_byte_stable(test_project: ProjectBuilder):
                 }
             }
         ''')
+
+        get_card = api_gql('''
+            query GetCard($id: ID!) {
+                node(id: $id) @slot { __typename }
+            }
+        ''')
+
+        user_name = api_gql('''
+            fragment UserName on User { name }
+        ''')
+
+        user_card = api_gql('''
+            fragment UserCard on User {
+                id
+                name
+            }
+        ''')
         """,
     )
 

@@ -1,11 +1,38 @@
 import asyncio
 
+import pydantic
+
+from example.gql.api import AttachmentFragment
 from example.gql.api import CreateUserInput
 from example.gql.api import FindUserByEmail
 from example.gql.api import FindUserById
 from example.gql.api import PostWithAuthorIdTitleTypename
 from example.gql.api import UserWithIdNameRoleTypename
 from example.gql.api import api_gql
+
+# A caller-side fragment: `read_attachment` below owns the operation without
+# knowing this selection; the caller passes it in through the slot.
+IMAGE_URL = api_gql("""
+    fragment ImageUrl on ImageAttachment {
+        url
+    }
+""")
+
+
+async def read_attachment[T: pydantic.BaseModel](
+    post_id: str, fragment: AttachmentFragment[T]
+) -> T | None:
+    result = await api_gql("""
+        query GetPostAttachment($id: ID!) {
+            post(id: $id) {
+                id
+                attachment @slot { __typename }
+            }
+        }
+    """).execute(id=post_id, attachment=fragment)
+    if result.post is None:
+        return None
+    return fragment.read(result.post.attachment)
 
 
 async def main():
@@ -109,6 +136,10 @@ async def main():
     """).execute(by=FindUserByEmail(email="alice@example.com"))
     if found.find_user:
         print(f"Found by email: {found.find_user.name}")
+
+    image = await read_attachment("1", IMAGE_URL)
+    if image is not None:
+        print(f"Attachment image: {image.url}")
 
     subscription = api_gql("""
         subscription PostAdded($userId: ID!) {

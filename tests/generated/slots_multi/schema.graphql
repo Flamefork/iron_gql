@@ -1,0 +1,47 @@
+type Query {
+    posts: [Post!]!
+}
+
+type Post {
+    id: ID!
+    attachment: Attachment
+    preview: Previewable
+    owner: Owner!
+}
+
+union Attachment = ImageAttachment | LinkAttachment
+
+# Intersects Attachment on ImageAttachment without being equal to it, so a
+# fragment on ImageAttachment is spread-compatible with both slot types at once.
+interface Previewable {
+    url: String!
+}
+
+type ImageAttachment implements Previewable {
+    url: String!
+    album: Album!
+}
+
+type LinkAttachment {
+    href: String!
+}
+
+type Album {
+    id: ID!
+    title: String!
+    cover: String!
+}
+
+interface Owner {
+    id: ID!
+}
+
+type UserOwner implements Owner {
+    id: ID!
+    email: String!
+}
+
+type TeamOwner implements Owner {
+    id: ID!
+    memberCount: Int!
+}

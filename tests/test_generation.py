@@ -725,7 +725,7 @@ def test_statically_empty_selection_is_rejected(test_project: ProjectBuilder):
 def test_enum_sharing_a_model_raw_name_is_rejected(test_project: ProjectBuilder):
     # `q { child ... }` generates a model raw-named QResultChild; an enum with
     # the same schema name makes every NamedRef('QResultChild') ambiguous —
-    # mask building recurses through the model where the enum was meant.
+    # the subtree walks recurse through the model where the enum was meant.
     test_project.prepare(
         schema="""
         type Query {

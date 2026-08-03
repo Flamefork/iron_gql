@@ -13,6 +13,7 @@ from iron_gql.codegen.naming import apply_rename
 from iron_gql.codegen.parser import Query
 from iron_gql.codegen.parser import Statement
 from iron_gql.codegen.parser import build_queries
+from iron_gql.codegen.parser import collect_fragment_statements
 from iron_gql.codegen.parser import collect_fragments
 from iron_gql.codegen.parser import parse_documents
 
@@ -30,6 +31,7 @@ def _build_ir(schema_sdl: str, query_sources: list[str]) -> CollectedPackageIR:
         collect_package_ir(
             schema=schema,
             queries=queries,
+            fragment_statements=collect_fragment_statements(schema, docs, fragments),
             scalars={"ID": ImportRef.parse("builtins:str")},
             to_snake_fn=alias_generators.to_snake,
         ),

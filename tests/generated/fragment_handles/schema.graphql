@@ -1,0 +1,18 @@
+type Query {
+    node(id: ID!): Node
+    viewer: User!
+}
+
+interface Node {
+    id: ID!
+}
+
+type User implements Node {
+    id: ID!
+    name: String!
+}
+
+type Admin implements Node {
+    id: ID!
+    permissions: [String!]!
+}
