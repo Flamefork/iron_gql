@@ -40,7 +40,7 @@ def resolve_explicit_types(
         if isinstance(typ, graphql.GraphQLObjectType):
             explicit_objects.add(typ)
             continue
-        if isinstance(typ, graphql.GraphQLInterfaceType):
+        if isinstance(typ, graphql.GraphQLInterfaceType | graphql.GraphQLUnionType):
             possible_set = set(possible_types)
             explicit_objects.update(set(schema.get_possible_types(typ)) & possible_set)
             continue

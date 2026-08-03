@@ -852,6 +852,58 @@ def test_interface_fragment_requires_typename(test_project: ProjectBuilder):
         test_project.generate()
 
 
+def test_union_type_condition_inside_interface_selection_generates(
+    test_project: ProjectBuilder,
+):
+    # `... on Media` where Media is a union overlapping the interface: a valid
+    # spread (possible types intersect), so the members of the union become
+    # explicit variants instead of crashing the explicit-type resolution.
+    schema = """
+        interface Node {
+            id: ID!
+        }
+
+        type Photo implements Node {
+            id: ID!
+            url: String!
+        }
+
+        type Post implements Node {
+            id: ID!
+            title: String!
+        }
+
+        union Media = Photo
+
+        type Query {
+            node(id: ID!): Node
+        }
+    """
+
+    test_project.prepare(
+        schema=schema,
+        queries="""
+        from sample_app.gql.api import api_gql
+
+        get_node = api_gql(
+            '''
+            query GetNode($id: ID!) {
+                node(id: $id) {
+                    __typename
+                    id
+                    ... on Media {
+                        ... on Photo { url }
+                    }
+                }
+            }
+            '''
+        )
+        """,
+    )
+
+    assert test_project.generate() is True
+
+
 def test_invalid_interface_fragment_reports_error(test_project: ProjectBuilder):
     schema = """
         interface Node {
