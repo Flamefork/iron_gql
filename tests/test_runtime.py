@@ -17,7 +17,7 @@ from iron_gql import GraphQLResponseError
 from iron_gql.runtime import serialize_variables
 from tests.conftest import generated_package
 from tests.conftest import gql_server
-from tests.conftest import use_client
+from tests.conftest import use_package_client
 
 generated_package(
     "runtime_crud",
@@ -431,9 +431,7 @@ OPERATIONS_ADAPTER = TypeAdapter(UploadOperations)
 MAP_ADAPTER = TypeAdapter(dict[str, list[str]])
 
 
-async def test_generate_and_execute_queries(
-    httpserver: HTTPServer, monkeypatch: pytest.MonkeyPatch
-):
+async def test_generate_and_execute_queries(httpserver: HTTPServer):
     state = {"user-1": "Graph"}
 
     def resolve_user(
@@ -453,7 +451,6 @@ async def test_generate_and_execute_queries(
 
     async with gql_server(
         httpserver,
-        monkeypatch,
         "runtime_crud",
         {
             "Query": {"user": resolve_user},
@@ -476,9 +473,7 @@ async def test_generate_and_execute_queries(
         assert refreshed.user.name == "Bob"
 
 
-async def test_list_allows_null_elements(
-    httpserver: HTTPServer, monkeypatch: pytest.MonkeyPatch
-):
+async def test_list_allows_null_elements(httpserver: HTTPServer):
     call_count = 0
 
     def resolve_numbers1(_root: None, _info: GraphQLResolveInfo) -> list[int | None]:
@@ -496,7 +491,6 @@ async def test_list_allows_null_elements(
 
     async with gql_server(
         httpserver,
-        monkeypatch,
         "runtime_null_elements",
         {"Query": {"numbers1": resolve_numbers1, "numbers2": resolve_numbers2}},
     ):
@@ -508,16 +502,14 @@ async def test_list_allows_null_elements(
             await null_elements_queries.numbers.execute()
 
 
-async def test_variable_defaults_optional(
-    httpserver: HTTPServer, monkeypatch: pytest.MonkeyPatch
-):
+async def test_variable_defaults_optional(httpserver: HTTPServer):
     def resolve_posts(
         _root: None, _info: GraphQLResolveInfo, *, limit: int = 5
     ) -> list[int]:
         return list(range(limit))
 
     async with gql_server(
-        httpserver, monkeypatch, "runtime_defaults", {"Query": {"posts": resolve_posts}}
+        httpserver, "runtime_defaults", {"Query": {"posts": resolve_posts}}
     ):
         default_result = await defaults_queries.get_posts.execute()
         assert default_result.posts == [0, 1, 2, 3, 4]
@@ -570,12 +562,12 @@ def test_prepare_variables_detects_file_uploads():
     assert "variables.file" in files
 
 
-async def test_close(httpserver: HTTPServer, monkeypatch: pytest.MonkeyPatch):
+async def test_close(httpserver: HTTPServer):
     def resolve_ping(_root: None, _info: GraphQLResolveInfo) -> str:
         return "pong"
 
     async with gql_server(
-        httpserver, monkeypatch, "runtime_close", {"Query": {"ping": resolve_ping}}
+        httpserver, "runtime_close", {"Query": {"ping": resolve_ping}}
     ):
         await close_queries.ping.execute()
 
@@ -625,9 +617,7 @@ def test_prepare_variables_no_files():
     assert files == {}
 
 
-async def test_graphql_response_error(
-    httpserver: HTTPServer, monkeypatch: pytest.MonkeyPatch
-):
+async def test_graphql_response_error(httpserver: HTTPServer):
     def graphql_error_handler(_request: Request) -> Response:
         return Response(
             json.dumps({"data": None, "errors": [{"message": "boom"}]}),
@@ -638,16 +628,14 @@ async def test_graphql_response_error(
     httpserver.expect_request("/graphql/", method="POST").respond_with_handler(
         graphql_error_handler
     )
-    async with use_client(
-        monkeypatch, "runtime_graphql_error", httpserver.url_for("/graphql/")
+    async with use_package_client(
+        "runtime_graphql_error", httpserver.url_for("/graphql/")
     ):
         with pytest.raises(GraphQLResponseError, match="boom"):
             await graphql_error_queries.fail.execute()
 
 
-async def test_partial_errors_raise(
-    httpserver: HTTPServer, monkeypatch: pytest.MonkeyPatch
-):
+async def test_partial_errors_raise(httpserver: HTTPServer):
     def partial_error_handler(_request: Request) -> Response:
         return Response(
             json.dumps({
@@ -661,16 +649,14 @@ async def test_partial_errors_raise(
     httpserver.expect_request("/graphql/", method="POST").respond_with_handler(
         partial_error_handler
     )
-    async with use_client(
-        monkeypatch, "runtime_partial_errors", httpserver.url_for("/graphql/")
+    async with use_package_client(
+        "runtime_partial_errors", httpserver.url_for("/graphql/")
     ):
         with pytest.raises(GraphQLResponseError, match="partial failure"):
             await partial_errors_queries.ok.execute()
 
 
-async def test_file_upload_multipart(
-    httpserver: HTTPServer, monkeypatch: pytest.MonkeyPatch
-):
+async def test_file_upload_multipart(httpserver: HTTPServer):
     captures: list[UploadCapture] = []
 
     def upload_handler(request: Request) -> Response:
@@ -690,9 +676,7 @@ async def test_file_upload_multipart(
     httpserver.expect_request("/graphql/", method="POST").respond_with_handler(
         upload_handler
     )
-    async with use_client(
-        monkeypatch, "runtime_upload", httpserver.url_for("/graphql/")
-    ):
+    async with use_package_client("runtime_upload", httpserver.url_for("/graphql/")):
         file_data = io.BytesIO(b"hello world")
         result = await upload_queries.upload_file.execute(
             file=FileVar(file_data, filename="test.txt"), label="my-label"
@@ -707,9 +691,7 @@ async def test_file_upload_multipart(
         assert received["file_name"] == "test.txt"
 
 
-async def test_custom_scalar_in_variables_and_response(
-    httpserver: HTTPServer, monkeypatch: pytest.MonkeyPatch
-):
+async def test_custom_scalar_in_variables_and_response(httpserver: HTTPServer):
     def resolve_events(
         _root: None, _info: GraphQLResolveInfo, *, since: str
     ) -> list[dict[str, str]]:
@@ -717,7 +699,6 @@ async def test_custom_scalar_in_variables_and_response(
 
     async with gql_server(
         httpserver,
-        monkeypatch,
         "runtime_custom_scalar",
         {"Query": {"events": resolve_events}},
     ):
@@ -728,7 +709,7 @@ async def test_custom_scalar_in_variables_and_response(
 
 
 async def test_base_url_without_trailing_slash_calls_exact_endpoint(
-    httpserver: HTTPServer, monkeypatch: pytest.MonkeyPatch
+    httpserver: HTTPServer,
 ):
     def ping_handler(_request: Request) -> Response:
         return Response(
@@ -740,15 +721,13 @@ async def test_base_url_without_trailing_slash_calls_exact_endpoint(
     httpserver.expect_request("/graphql", method="POST").respond_with_handler(
         ping_handler
     )
-    async with use_client(
-        monkeypatch, "runtime_no_slash", httpserver.url_for("/graphql")
-    ):
+    async with use_package_client("runtime_no_slash", httpserver.url_for("/graphql")):
         result = await no_slash_queries.ping.execute()
         assert result.ping == "pong"
 
 
 async def test_file_upload_multipart_base_url_without_trailing_slash(
-    httpserver: HTTPServer, monkeypatch: pytest.MonkeyPatch
+    httpserver: HTTPServer,
 ):
     captures: list[UploadCapture] = []
 
@@ -769,8 +748,8 @@ async def test_file_upload_multipart_base_url_without_trailing_slash(
     httpserver.expect_request("/graphql", method="POST").respond_with_handler(
         upload_handler
     )
-    async with use_client(
-        monkeypatch, "runtime_upload_no_slash", httpserver.url_for("/graphql")
+    async with use_package_client(
+        "runtime_upload_no_slash", httpserver.url_for("/graphql")
     ):
         file_data = io.BytesIO(b"hello world")
         result = await upload_no_slash_queries.upload_file.execute(
@@ -786,9 +765,7 @@ async def test_file_upload_multipart_base_url_without_trailing_slash(
         assert received["file_name"] == "test.txt"
 
 
-async def test_redirect_response_raises_http_status_error(
-    httpserver: HTTPServer, monkeypatch: pytest.MonkeyPatch
-):
+async def test_redirect_response_raises_http_status_error(httpserver: HTTPServer):
     def redirect_handler(_request: Request) -> Response:
         return Response(
             "moved",
@@ -800,9 +777,7 @@ async def test_redirect_response_raises_http_status_error(
     httpserver.expect_request("/graphql", method="POST").respond_with_handler(
         redirect_handler
     )
-    async with use_client(
-        monkeypatch, "runtime_redirect", httpserver.url_for("/graphql")
-    ):
+    async with use_package_client("runtime_redirect", httpserver.url_for("/graphql")):
         with pytest.raises(
             httpx2.HTTPStatusError,
             match=r"Unexpected 3xx response \(307\) to /graphql/",
@@ -810,17 +785,15 @@ async def test_redirect_response_raises_http_status_error(
             await redirect_queries.ping.execute()
 
 
-async def test_redirect_without_location_header(
-    httpserver: HTTPServer, monkeypatch: pytest.MonkeyPatch
-):
+async def test_redirect_without_location_header(httpserver: HTTPServer):
     def redirect_handler(_request: Request) -> Response:
         return Response("moved", status=302, mimetype="text/plain")
 
     httpserver.expect_request("/graphql", method="POST").respond_with_handler(
         redirect_handler
     )
-    async with use_client(
-        monkeypatch, "runtime_redirect_no_location", httpserver.url_for("/graphql")
+    async with use_package_client(
+        "runtime_redirect_no_location", httpserver.url_for("/graphql")
     ):
         with pytest.raises(
             httpx2.HTTPStatusError,
@@ -829,9 +802,7 @@ async def test_redirect_without_location_header(
             await redirect_no_location_queries.ping.execute()
 
 
-async def test_no_data_in_response(
-    httpserver: HTTPServer, monkeypatch: pytest.MonkeyPatch
-):
+async def test_no_data_in_response(httpserver: HTTPServer):
     def no_data_handler(_request: Request) -> Response:
         return Response(
             json.dumps({"extensions": {"tracing": True}}),
@@ -842,16 +813,12 @@ async def test_no_data_in_response(
     httpserver.expect_request("/graphql/", method="POST").respond_with_handler(
         no_data_handler
     )
-    async with use_client(
-        monkeypatch, "runtime_no_data", httpserver.url_for("/graphql/")
-    ):
+    async with use_package_client("runtime_no_data", httpserver.url_for("/graphql/")):
         with pytest.raises(GraphQLResponseError, match="No data in response"):
             await no_data_queries.ping.execute()
 
 
-async def test_malformed_response_body(
-    httpserver: HTTPServer, monkeypatch: pytest.MonkeyPatch
-):
+async def test_malformed_response_body(httpserver: HTTPServer):
     def array_body_handler(_request: Request) -> Response:
         return Response(
             json.dumps([1, 2, 3]),
@@ -862,16 +829,12 @@ async def test_malformed_response_body(
     httpserver.expect_request("/graphql/", method="POST").respond_with_handler(
         array_body_handler
     )
-    async with use_client(
-        monkeypatch, "runtime_malformed", httpserver.url_for("/graphql/")
-    ):
+    async with use_package_client("runtime_malformed", httpserver.url_for("/graphql/")):
         with pytest.raises(GraphQLResponseError, match="Malformed response body"):
             await malformed_queries.ping.execute()
 
 
-async def test_one_of_input_runtime(
-    httpserver: HTTPServer, monkeypatch: pytest.MonkeyPatch
-):
+async def test_one_of_input_runtime(httpserver: HTTPServer):
     def resolve_search(
         _root: None, _info: GraphQLResolveInfo, *, criteria: dict[str, str]
     ) -> str:
@@ -882,7 +845,7 @@ async def test_one_of_input_runtime(
         return "not found"
 
     async with gql_server(
-        httpserver, monkeypatch, "runtime_oneof", {"Query": {"search": resolve_search}}
+        httpserver, "runtime_oneof", {"Query": {"search": resolve_search}}
     ):
         by_name = SearchCriteriaName(name="Alice")
         result = await oneof_queries.search.execute(criteria=by_name)
@@ -893,9 +856,7 @@ async def test_one_of_input_runtime(
         assert result.search == "found by email: bob@example.com"
 
 
-async def test_file_upload_with_content_type(
-    httpserver: HTTPServer, monkeypatch: pytest.MonkeyPatch
-):
+async def test_file_upload_with_content_type(httpserver: HTTPServer):
     captures: list[ContentTypeCapture] = []
 
     def upload_handler(request: Request) -> Response:
@@ -914,8 +875,8 @@ async def test_file_upload_with_content_type(
     httpserver.expect_request("/graphql/", method="POST").respond_with_handler(
         upload_handler
     )
-    async with use_client(
-        monkeypatch, "runtime_upload_content_type", httpserver.url_for("/graphql/")
+    async with use_package_client(
+        "runtime_upload_content_type", httpserver.url_for("/graphql/")
     ):
         file_data = io.BytesIO(b"image data")
         result = await upload_content_type_queries.upload.execute(

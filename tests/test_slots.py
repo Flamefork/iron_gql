@@ -1,9 +1,6 @@
 import inspect
 import json
 import weakref
-from collections.abc import Awaitable
-from collections.abc import Callable
-from collections.abc import MutableMapping
 from pathlib import Path
 
 import pydantic
@@ -15,10 +12,14 @@ from werkzeug import Response
 
 from iron_gql.codegen import GraphQLGenerationError
 from iron_gql.runtime import ASGIApp
+from iron_gql.runtime import ASGIReceive
+from iron_gql.runtime import ASGIScope
+from iron_gql.runtime import ASGISend
+from iron_gql.testing import accept_graphql_ws
 from tests.conftest import ProjectBuilder
 from tests.conftest import generated_package
 from tests.conftest import gql_server
-from tests.conftest import use_client
+from tests.conftest import use_package_client
 
 SCHEMA = """
 type Query {
@@ -1776,12 +1777,9 @@ IMAGE_PAYLOAD: dict[str, object] = {
 }
 
 
-async def test_execute_reads_fragment_through_slot(
-    httpserver: HTTPServer, monkeypatch: pytest.MonkeyPatch
-):
+async def test_execute_reads_fragment_through_slot(httpserver: HTTPServer):
     async with gql_server(
         httpserver,
-        monkeypatch,
         "slots_execute",
         {"Query": {"post": _resolve_post(IMAGE_PAYLOAD)}},
     ):
@@ -1794,12 +1792,9 @@ async def test_execute_reads_fragment_through_slot(
         assert image.url == "https://cdn.example/pic.png"
 
 
-async def test_several_fragments_share_one_slot(
-    httpserver: HTTPServer, monkeypatch: pytest.MonkeyPatch
-):
+async def test_several_fragments_share_one_slot(httpserver: HTTPServer):
     async with gql_server(
         httpserver,
-        monkeypatch,
         "slots_execute",
         {"Query": {"post": _resolve_post(IMAGE_PAYLOAD)}},
     ):
@@ -1820,16 +1815,13 @@ async def test_several_fragments_share_one_slot(
         assert caption.caption == "A picture"
 
 
-async def test_foreign_typename_reads_as_none(
-    httpserver: HTTPServer, monkeypatch: pytest.MonkeyPatch
-):
+async def test_foreign_typename_reads_as_none(httpserver: HTTPServer):
     attachment: dict[str, object] = {
         "__typename": "LinkAttachment",
         "href": "https://example.com/post",
     }
     async with gql_server(
         httpserver,
-        monkeypatch,
         "slots_execute",
         {"Query": {"post": _resolve_post(attachment)}},
     ):
@@ -1848,12 +1840,9 @@ async def test_foreign_typename_reads_as_none(
         assert link.href == "https://example.com/post"
 
 
-async def test_null_slot_node_reads_as_none(
-    httpserver: HTTPServer, monkeypatch: pytest.MonkeyPatch
-):
+async def test_null_slot_node_reads_as_none(httpserver: HTTPServer):
     async with gql_server(
         httpserver,
-        monkeypatch,
         "slots_execute",
         {"Query": {"post": _resolve_post(None)}},
     ):
@@ -1876,9 +1865,7 @@ def _resolve_attachment_by_id(
     return {"id": id, "attachment": {"img": IMAGE_PAYLOAD, "link": LINK_PAYLOAD}[id]}
 
 
-async def test_union_fragment_reads_the_matching_variant(
-    httpserver: HTTPServer, monkeypatch: pytest.MonkeyPatch
-):
+async def test_union_fragment_reads_the_matching_variant(httpserver: HTTPServer):
     # A fragment whose type condition is the union itself, the counterpart of
     # the interface fragment `owner_identity` in slots_multi: its model is a
     # discriminated union of the variants it names, and `read` gives back the
@@ -1886,7 +1873,6 @@ async def test_union_fragment_reads_the_matching_variant(
     # handle, so a model that resolved to a fixed variant fails on one of them.
     async with gql_server(
         httpserver,
-        monkeypatch,
         "slots_execute",
         {"Query": {"post": _resolve_attachment_by_id}},
     ):
@@ -1970,12 +1956,9 @@ def _not_none[T](value: T | None) -> T:
     return value
 
 
-async def test_every_list_element_gets_its_own_slot_data(
-    httpserver: HTTPServer, monkeypatch: pytest.MonkeyPatch
-):
+async def test_every_list_element_gets_its_own_slot_data(httpserver: HTTPServer):
     async with gql_server(
         httpserver,
-        monkeypatch,
         "slots_multi",
         {"Query": {"posts": _resolve_rows}},
     ):
@@ -1991,12 +1974,9 @@ async def test_every_list_element_gets_its_own_slot_data(
         assert titles == ["First", "Second"]
 
 
-async def test_overlapping_nested_selections_stay_isolated(
-    httpserver: HTTPServer, monkeypatch: pytest.MonkeyPatch
-):
+async def test_overlapping_nested_selections_stay_isolated(httpserver: HTTPServer):
     async with gql_server(
         httpserver,
-        monkeypatch,
         "slots_multi",
         {"Query": {"posts": _resolve_rows}},
     ):
@@ -2012,12 +1992,9 @@ async def test_overlapping_nested_selections_stay_isolated(
         assert _not_none(multi_queries.album_cover.read(node)).album.cover == "cover-1"
 
 
-async def test_two_slots_are_read_independently(
-    httpserver: HTTPServer, monkeypatch: pytest.MonkeyPatch
-):
+async def test_two_slots_are_read_independently(httpserver: HTTPServer):
     async with gql_server(
         httpserver,
-        monkeypatch,
         "slots_multi",
         {"Query": {"posts": _resolve_rows}},
     ):
@@ -2042,9 +2019,7 @@ async def test_two_slots_are_read_independently(
             multi_queries.owner_identity.read(result.posts[0].attachment)
 
 
-async def test_slot_data_is_keyed_by_handle_identity(
-    httpserver: HTTPServer, monkeypatch: pytest.MonkeyPatch
-):
+async def test_slot_data_is_keyed_by_handle_identity(httpserver: HTTPServer):
     # Handle constructors are public, so the passed handle need not be the
     # module singleton — and a fresh instance of the same class is a different
     # handle whose read must fail as "was not passed", never alias the passed
@@ -2053,7 +2028,6 @@ async def test_slot_data_is_keyed_by_handle_identity(
     # be recycled into a stored key.
     async with gql_server(
         httpserver,
-        monkeypatch,
         "slots_multi",
         {"Query": {"posts": _resolve_rows}},
     ):
@@ -2072,14 +2046,11 @@ async def test_slot_data_is_keyed_by_handle_identity(
             fresh.read(node)
 
 
-async def test_one_handle_serves_two_slots_of_different_types(
-    httpserver: HTTPServer, monkeypatch: pytest.MonkeyPatch
-):
+async def test_one_handle_serves_two_slots_of_different_types(httpserver: HTTPServer):
     # AlbumTitle inherits both PreviewableFragment and AttachmentFragment,
     # so the same handle is accepted at both kwargs and reads back from both nodes.
     async with gql_server(
         httpserver,
-        monkeypatch,
         "slots_multi",
         {"Query": {"posts": _resolve_rows}},
     ):
@@ -2096,13 +2067,12 @@ async def test_one_handle_serves_two_slots_of_different_types(
 
 
 async def test_slot_without_fragments_sends_only_its_static_selection(
-    httpserver: HTTPServer, monkeypatch: pytest.MonkeyPatch
+    httpserver: HTTPServer,
 ):
     # The one "no fragments" shape the feature can send: an explicit empty set
     # leaves the marker replaced by nothing and contributes no definitions.
     async with gql_server(
         httpserver,
-        monkeypatch,
         "slots_multi",
         {"Query": {"posts": _resolve_rows}},
     ):
@@ -2171,12 +2141,9 @@ async def test_marker_like_text_in_the_operation_survives_splicing(
     assert received == ["__slot__item"]
 
 
-async def test_assembled_source_carries_spreads_and_definitions(
-    httpserver: HTTPServer, monkeypatch: pytest.MonkeyPatch
-):
+async def test_assembled_source_carries_spreads_and_definitions(httpserver: HTTPServer):
     async with gql_server(
         httpserver,
-        monkeypatch,
         "slots_multi",
         {"Query": {"posts": _resolve_rows}},
     ):
@@ -2204,9 +2171,7 @@ async def test_assembled_source_carries_spreads_and_definitions(
     assert sent.count("fragment OwnerIdentity on Owner") == 1
 
 
-async def test_broken_slot_data_fails_execute(
-    httpserver: HTTPServer, monkeypatch: pytest.MonkeyPatch
-):
+async def test_broken_slot_data_fails_execute(httpserver: HTTPServer):
     # A real server never returns a node without a requested non-null field, so
     # the broken payload is served as raw JSON — the same way
     # test_malformed_response_body does it in tests/test_runtime.py.
@@ -2224,9 +2189,7 @@ async def test_broken_slot_data_fails_execute(
     httpserver.expect_request("/graphql/", method="POST").respond_with_handler(
         missing_field_handler
     )
-    async with use_client(
-        monkeypatch, "slots_execute", httpserver.url_for("/graphql/")
-    ):
+    async with use_package_client("slots_execute", httpserver.url_for("/graphql/")):
         with pytest.raises(pydantic.ValidationError) as exc_info:
             _ = await execute_queries.get_attachment.execute(
                 id="p-1", attachment=execute_queries.image_url
@@ -2239,49 +2202,13 @@ async def test_broken_slot_data_fails_execute(
     )
 
 
-type _WSEvent = MutableMapping[str, object]
-type _WSReceive = Callable[[], Awaitable[_WSEvent]]
-type _WSSend = Callable[[_WSEvent], Awaitable[None]]
-
-_JSON_OBJECT = pydantic.TypeAdapter(dict[str, object])
-
-
-async def _receive_json(receive: _WSReceive) -> dict[str, object]:
-    text = (await receive())["text"]
-    assert isinstance(text, str)
-    return _JSON_OBJECT.validate_json(text)
-
-
 def _make_subscription_app(messages: list[dict[str, object]]) -> ASGIApp:
-    async def app(
-        scope: MutableMapping[str, object], receive: _WSReceive, send: _WSSend
-    ) -> None:
-        assert scope["type"] == "websocket"
-        subprotocols = scope["subprotocols"]
-        assert isinstance(subprotocols, list)
-        connect_event = await receive()
-        assert connect_event["type"] == "websocket.connect"
-        await send({
-            "type": "websocket.accept",
-            "subprotocol": "graphql-transport-ws"
-            if "graphql-transport-ws" in subprotocols
-            else None,
-        })
-        init_msg = await _receive_json(receive)
-        assert init_msg["type"] == "connection_init"
-        await send({
-            "type": "websocket.send",
-            "text": json.dumps({"type": "connection_ack"}),
-        })
-        subscribe_msg = await _receive_json(receive)
-        assert subscribe_msg["type"] == "subscribe"
-        sub_id = subscribe_msg["id"]
+    async def app(scope: ASGIScope, receive: ASGIReceive, send: ASGISend) -> None:
+        connection = await accept_graphql_ws(scope, receive, send)
+        subscription = await connection.ack()
         for msg in messages:
-            await send({
-                "type": "websocket.send",
-                "text": json.dumps({"id": sub_id, **msg}),
-            })
-        await receive()
+            await subscription.send_message(msg)
+        await connection.drain()
 
     return app
 
@@ -2297,9 +2224,7 @@ SECOND_SUBSCRIPTION_ATTACHMENT: dict[str, object] = {
 }
 
 
-async def test_subscription_validates_slot_on_every_message(
-    monkeypatch: pytest.MonkeyPatch,
-):
+async def test_subscription_validates_slot_on_every_message():
     # Eager validation runs per streamed message, so a test reading only the
     # first message would pass even if the slot context were dropped for every
     # message after it. Reading two consecutive messages with different
@@ -2332,8 +2257,8 @@ async def test_subscription_validates_slot_on_every_message(
     ]
     app = _make_subscription_app(messages)
 
-    async with use_client(
-        monkeypatch, "slots_subscription", "http://testserver/graphql", target_app=app
+    async with use_package_client(
+        "slots_subscription", "http://testserver/graphql", target_app=app
     ):
         events: list[str] = []
         async with subscription_queries.watch_attachment.execute(
@@ -2652,9 +2577,7 @@ def test_same_fragment_serves_both_roles_across_operations(
     test_project.import_api()
 
 
-async def test_subscription_surfaces_broken_data_in_a_later_message(
-    monkeypatch: pytest.MonkeyPatch,
-):
+async def test_subscription_surfaces_broken_data_in_a_later_message():
     # Validation of streamed messages is per-message: a first valid event must
     # come through and the second, broken one must raise from the stream — not
     # pass silently and not poison the first. The error class is the same
@@ -2686,8 +2609,8 @@ async def test_subscription_surfaces_broken_data_in_a_later_message(
     ]
     app = _make_subscription_app(messages)
 
-    async with use_client(
-        monkeypatch, "slots_subscription", "http://testserver/graphql", target_app=app
+    async with use_package_client(
+        "slots_subscription", "http://testserver/graphql", target_app=app
     ):
         events: list[str] = []
 
@@ -2841,15 +2764,12 @@ def _resolve_isolation_board(*_args: object, **_kwargs: object) -> dict[str, obj
     }
 
 
-async def test_aliased_slot_executes_end_to_end(
-    httpserver: HTTPServer, monkeypatch: pytest.MonkeyPatch
-):
+async def test_aliased_slot_executes_end_to_end(httpserver: HTTPServer):
     # `main: board @slot` — the kwarg is the alias, the wire key is the alias,
     # and the response validates through the node; previously pinned only by
     # the generated module's text.
     async with gql_server(
         httpserver,
-        monkeypatch,
         "slots_isolation",
         {"Query": {"board": _resolve_isolation_board}},
     ):
@@ -2858,12 +2778,9 @@ async def test_aliased_slot_executes_end_to_end(
         assert result.main.typename__ == "Board"
 
 
-async def test_merged_key_slot_executes_end_to_end(
-    httpserver: HTTPServer, monkeypatch: pytest.MonkeyPatch
-):
+async def test_merged_key_slot_executes_end_to_end(httpserver: HTTPServer):
     async with gql_server(
         httpserver,
-        monkeypatch,
         "slots_isolation",
         {"Query": {"board": _resolve_isolation_board}},
     ):
@@ -2885,7 +2802,7 @@ def _resolve_lists_board(*_args: object, **_kwargs: object) -> dict[str, object]
 
 
 async def test_list_of_union_projects_each_element_through_its_variant(
-    httpserver: HTTPServer, monkeypatch: pytest.MonkeyPatch
+    httpserver: HTTPServer,
 ):
     # `events: [Activity!]!` puts a discriminated union under a list: every
     # element picks its own variant branch, so a Comment element validates as
@@ -2893,7 +2810,6 @@ async def test_list_of_union_projects_each_element_through_its_variant(
     # response.
     async with gql_server(
         httpserver,
-        monkeypatch,
         "slots_lists",
         {"Query": {"board": _resolve_lists_board}},
     ):
@@ -2911,13 +2827,12 @@ async def test_list_of_union_projects_each_element_through_its_variant(
 
 
 async def test_slot_on_a_list_field_gives_each_element_its_own_node(
-    httpserver: HTTPServer, monkeypatch: pytest.MonkeyPatch
+    httpserver: HTTPServer,
 ):
     # `cards @slot` sits directly on a list field: every element is its own
     # slot node carrying its own data entry for the handle.
     async with gql_server(
         httpserver,
-        monkeypatch,
         "slots_lists",
         {"Query": {"board": _resolve_lists_board}},
     ):

@@ -1,8 +1,5 @@
 import asyncio
 import json
-from collections.abc import Awaitable
-from collections.abc import Callable
-from collections.abc import MutableMapping
 from dataclasses import dataclass
 from dataclasses import field
 from urllib.parse import parse_qs
@@ -14,12 +11,17 @@ from iron_gql import FileVar
 from iron_gql import GraphQLResponseError
 from iron_gql import websockets
 from iron_gql.runtime import ASGIApp
+from iron_gql.runtime import ASGIReceive
+from iron_gql.runtime import ASGIScope
+from iron_gql.runtime import ASGISend
 from iron_gql.runtime import AsyncGQLClient
 from iron_gql.runtime import GQLClient
 from iron_gql.runtime import GQLOperation
+from iron_gql.testing import WSTestConnection
+from iron_gql.testing import accept_graphql_ws
+from iron_gql.testing.server import live_asgi_server
 from tests.conftest import generated_package
-from tests.conftest import live_asgi_server
-from tests.conftest import use_client
+from tests.conftest import use_package_client
 
 generated_package(
     "websockets_codegen",
@@ -55,21 +57,10 @@ generated_package(
 
 from tests.generated.websockets_codegen import queries as codegen_queries
 
-type _Event = MutableMapping[str, object]
-type _Receive = Callable[[], Awaitable[_Event]]
-type _Send = Callable[[_Event], Awaitable[None]]
-
-_JSON_OBJECT = pydantic.TypeAdapter(dict[str, object])
 _HEADER_PAIRS = pydantic.TypeAdapter(list[tuple[bytes, bytes]])
 
 
-async def _receive_json(receive: _Receive) -> dict[str, object]:
-    text = (await receive())["text"]
-    assert isinstance(text, str)
-    return _JSON_OBJECT.validate_json(text)
-
-
-def _decode_headers(scope: MutableMapping[str, object]) -> list[tuple[str, str]]:
+def _decode_headers(scope: ASGIScope) -> list[tuple[str, str]]:
     return [
         (key.decode(), value.decode())
         for key, value in _HEADER_PAIRS.validate_python(scope["headers"])
@@ -85,96 +76,54 @@ class _Captured:
     client_responses: list[dict[str, object]] = field(default_factory=list)
 
 
-def _make_ws_app(  # noqa: C901
+def _make_ws_app(
     messages: list[dict[str, object]],
     *,
     pre_ack_messages: list[dict[str, object]] | None = None,
-    ack_response: dict[str, str] | None = None,
     captured: _Captured | None = None,
 ) -> ASGIApp:
-    async def app(  # noqa: C901
-        scope: MutableMapping[str, object],
-        receive: _Receive,
-        send: _Send,
-    ) -> None:
-        if scope["type"] == "http":
-            await send({
-                "type": "http.response.start",
-                "status": 200,
-                "headers": [[b"content-type", b"text/plain"]],
-            })
-            await send({"type": "http.response.body", "body": b"ok"})
-            return
-
-        assert scope["type"] == "websocket"
+    async def app(scope: ASGIScope, receive: ASGIReceive, send: ASGISend) -> None:
+        connection = await accept_graphql_ws(scope, receive, send)
         if captured is not None:
-            scope_headers = _decode_headers(scope)
-            captured.scope_raw_headers = scope_headers
-            captured.scope_headers = dict(scope_headers)
-            query_string = scope["query_string"]
-            assert isinstance(query_string, bytes)
-            captured.scope_query_string = query_string.decode()
-        subprotocols = scope["subprotocols"]
-        assert isinstance(subprotocols, list)
-        connect_event = await receive()
-        assert connect_event["type"] == "websocket.connect"
-        await send({
-            "type": "websocket.accept",
-            "subprotocol": "graphql-transport-ws"
-            if "graphql-transport-ws" in subprotocols
-            else None,
-        })
-
-        init_msg = await _receive_json(receive)
-        assert init_msg["type"] == "connection_init"
-        for msg in pre_ack_messages or []:
-            await send({
-                "type": "websocket.send",
-                "text": json.dumps(msg),
-            })
-            if msg.get("type") == "ping":
-                pong_msg = await _receive_json(receive)
-                if captured is not None:
-                    captured.client_responses.append(pong_msg)
-        ack = ack_response or {"type": "connection_ack"}
-        await send({
-            "type": "websocket.send",
-            "text": json.dumps(ack),
-        })
-
-        if ack["type"] != "connection_ack":
-            await receive()
-            return
-
-        subscribe_msg = await _receive_json(receive)
-        assert subscribe_msg["type"] == "subscribe"
-        sub_id = subscribe_msg["id"]
+            _capture_scope(connection.scope, captured)
+        for message in pre_ack_messages or []:
+            await _send_out_of_band(connection, message, captured)
+        subscription = await connection.ack()
         if captured is not None:
-            captured.subscribe = subscribe_msg
-
-        for msg in messages:
-            if msg.get("type") == "ping":
-                await send({
-                    "type": "websocket.send",
-                    "text": json.dumps(msg),
-                })
-                pong_msg = await _receive_json(receive)
-                if captured is not None:
-                    captured.client_responses.append(pong_msg)
-            elif msg.get("type") == "pong":
-                await send({
-                    "type": "websocket.send",
-                    "text": json.dumps(msg),
-                })
+            captured.subscribe = subscription.payload
+        for message in messages:
+            if message.get("type") in {"ping", "pong"}:
+                await _send_out_of_band(connection, message, captured)
             else:
-                await send({
-                    "type": "websocket.send",
-                    "text": json.dumps({"id": sub_id, **msg}),
-                })
-
-        await receive()
+                await subscription.send_message(message)
+        await connection.drain()
 
     return app
+
+
+def _capture_scope(scope: ASGIScope, captured: _Captured) -> None:
+    scope_headers = _decode_headers(scope)
+    captured.scope_raw_headers = scope_headers
+    captured.scope_headers = dict(scope_headers)
+    query_string = scope["query_string"]
+    assert isinstance(query_string, bytes)
+    captured.scope_query_string = query_string.decode()
+
+
+# `ping` and `pong` belong to the connection, not to a subscription, so they
+# carry no id. A `ping` obliges the client to answer, and that answer is part
+# of what a test asserts on.
+async def _send_out_of_band(
+    connection: WSTestConnection,
+    message: dict[str, object],
+    captured: _Captured | None,
+) -> None:
+    await connection.send_message(message)
+    if message.get("type") != "ping":
+        return
+    pong = await connection.expect_pong()
+    if captured is not None:
+        captured.client_responses.append(pong)
 
 
 def _make_ws_disconnect_app(
@@ -182,52 +131,12 @@ def _make_ws_disconnect_app(
     close_code: int,
     close_reason: str = "",
 ) -> ASGIApp:
-    async def app(
-        scope: MutableMapping[str, object],
-        receive: _Receive,
-        send: _Send,
-    ) -> None:
-        if scope["type"] == "http":
-            await send({
-                "type": "http.response.start",
-                "status": 200,
-                "headers": [[b"content-type", b"text/plain"]],
-            })
-            await send({"type": "http.response.body", "body": b"ok"})
-            return
-
-        assert scope["type"] == "websocket"
-        subprotocols = scope["subprotocols"]
-        assert isinstance(subprotocols, list)
-        connect_event = await receive()
-        assert connect_event["type"] == "websocket.connect"
-        await send({
-            "type": "websocket.accept",
-            "subprotocol": "graphql-transport-ws"
-            if "graphql-transport-ws" in subprotocols
-            else None,
-        })
-        init_msg = await _receive_json(receive)
-        assert init_msg["type"] == "connection_init"
-        await send({
-            "type": "websocket.send",
-            "text": json.dumps({"type": "connection_ack"}),
-        })
-        subscribe_msg = await _receive_json(receive)
-        assert subscribe_msg["type"] == "subscribe"
-        sub_id = subscribe_msg["id"]
-
-        for msg in messages_before_close:
-            await send({
-                "type": "websocket.send",
-                "text": json.dumps({"id": sub_id, **msg}),
-            })
-
-        await send({
-            "type": "websocket.close",
-            "code": close_code,
-            "reason": close_reason,
-        })
+    async def app(scope: ASGIScope, receive: ASGIReceive, send: ASGISend) -> None:
+        connection = await accept_graphql_ws(scope, receive, send)
+        subscription = await connection.ack()
+        for message in messages_before_close:
+            await subscription.send_message(message)
+        await connection.close(close_code, close_reason)
 
     return app
 
@@ -260,10 +169,12 @@ async def test_subscribe_asgi():
 
 
 async def test_subscribe_error():
-    app = _make_ws_app([
-        {"type": "next", "payload": {"data": {"counter": 1}}},
-        {"type": "error", "payload": [{"message": "boom"}]},
-    ])
+    async def app(scope: ASGIScope, receive: ASGIReceive, send: ASGISend) -> None:
+        connection = await accept_graphql_ws(scope, receive, send)
+        subscription = await connection.ack()
+        await subscription.next({"counter": 1})
+        await subscription.error([{"message": "boom"}])
+        await connection.drain()
 
     client = AsyncGQLClient(base_url="http://testserver/graphql", target_app=app)
     try:
@@ -317,7 +228,7 @@ def test_gql_operation_with_headers():
     assert op.headers == {}
 
 
-async def test_subscribe_codegen_asgi(monkeypatch: pytest.MonkeyPatch):
+async def test_subscribe_codegen_asgi():
     messages: list[dict[str, object]] = [
         {
             "type": "next",
@@ -333,8 +244,7 @@ async def test_subscribe_codegen_asgi(monkeypatch: pytest.MonkeyPatch):
     captured = _Captured()
     app = _make_ws_app(messages, captured=captured)
 
-    async with use_client(
-        monkeypatch,
+    async with use_package_client(
         "websockets_codegen",
         "http://testserver/graphql",
         target_app=app,
@@ -349,9 +259,11 @@ async def test_subscribe_codegen_asgi(monkeypatch: pytest.MonkeyPatch):
 
 
 async def test_subscribe_connection_rejected():
-    app = _make_ws_app(
-        [],
-        ack_response={"type": "connection_error", "payload": "Unauthorized"},
+    app = _make_ws_raw_app(
+        pre_ack_texts=(
+            json.dumps({"type": "connection_error", "payload": "Unauthorized"}),
+        ),
+        ack=False,
     )
 
     client = AsyncGQLClient(base_url="http://testserver/graphql", target_app=app)
@@ -518,11 +430,7 @@ async def test_subscribe_with_headers_override_case_insensitive():
 async def test_subscribe_carries_http_cookies():
     captured = _Captured()
 
-    async def app(
-        scope: MutableMapping[str, object],
-        receive: _Receive,
-        send: _Send,
-    ) -> None:
+    async def app(scope: ASGIScope, receive: ASGIReceive, send: ASGISend) -> None:
         if scope["type"] == "http":
             request = await receive()
             assert request["type"] == "http.request"
@@ -540,31 +448,11 @@ async def test_subscribe_carries_http_cookies():
             })
             return
 
-        assert scope["type"] == "websocket"
-        captured.scope_headers = dict(_decode_headers(scope))
-        subprotocols = scope["subprotocols"]
-        assert isinstance(subprotocols, list)
-        connect_event = await receive()
-        assert connect_event["type"] == "websocket.connect"
-        await send({
-            "type": "websocket.accept",
-            "subprotocol": "graphql-transport-ws"
-            if "graphql-transport-ws" in subprotocols
-            else None,
-        })
-        init_msg = await _receive_json(receive)
-        assert init_msg["type"] == "connection_init"
-        await send({
-            "type": "websocket.send",
-            "text": json.dumps({"type": "connection_ack"}),
-        })
-        subscribe_msg = await _receive_json(receive)
-        assert subscribe_msg["type"] == "subscribe"
-        await send({
-            "type": "websocket.send",
-            "text": json.dumps({"id": subscribe_msg["id"], "type": "complete"}),
-        })
-        await receive()
+        connection = await accept_graphql_ws(scope, receive, send)
+        captured.scope_headers = dict(_decode_headers(connection.scope))
+        subscription = await connection.ack()
+        await subscription.complete()
+        await connection.drain()
 
     client = AsyncGQLClient(base_url="http://testserver/graphql", target_app=app)
     try:
@@ -585,34 +473,9 @@ async def test_subscribe_carries_http_cookies():
 
 
 async def test_subscribe_disconnect_before_connection_ack():
-    async def app(
-        scope: MutableMapping[str, object],
-        receive: _Receive,
-        send: _Send,
-    ) -> None:
-        if scope["type"] == "http":
-            await send({
-                "type": "http.response.start",
-                "status": 200,
-                "headers": [[b"content-type", b"text/plain"]],
-            })
-            await send({"type": "http.response.body", "body": b"ok"})
-            return
-
-        assert scope["type"] == "websocket"
-        subprotocols = scope["subprotocols"]
-        assert isinstance(subprotocols, list)
-        connect_event = await receive()
-        assert connect_event["type"] == "websocket.connect"
-        await send({
-            "type": "websocket.accept",
-            "subprotocol": "graphql-transport-ws"
-            if "graphql-transport-ws" in subprotocols
-            else None,
-        })
-        init_msg = await _receive_json(receive)
-        assert init_msg["type"] == "connection_init"
-        await send({"type": "websocket.close", "code": 4401, "reason": "Unauthorized"})
+    async def app(scope: ASGIScope, receive: ASGIReceive, send: ASGISend) -> None:
+        connection = await accept_graphql_ws(scope, receive, send)
+        await connection.close(4401, "Unauthorized")
 
     client = AsyncGQLClient(base_url="http://testserver/graphql", target_app=app)
     try:
@@ -635,33 +498,8 @@ async def test_subscribe_disconnect_before_connection_ack():
 async def test_subscribe_connection_ack_timeout(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(websockets, "_WS_CONNECTION_ACK_TIMEOUT_SECONDS", 0.01)
 
-    async def app(
-        scope: MutableMapping[str, object],
-        receive: _Receive,
-        send: _Send,
-    ) -> None:
-        if scope["type"] == "http":
-            await send({
-                "type": "http.response.start",
-                "status": 200,
-                "headers": [[b"content-type", b"text/plain"]],
-            })
-            await send({"type": "http.response.body", "body": b"ok"})
-            return
-
-        assert scope["type"] == "websocket"
-        subprotocols = scope["subprotocols"]
-        assert isinstance(subprotocols, list)
-        connect_event = await receive()
-        assert connect_event["type"] == "websocket.connect"
-        await send({
-            "type": "websocket.accept",
-            "subprotocol": "graphql-transport-ws"
-            if "graphql-transport-ws" in subprotocols
-            else None,
-        })
-        init_msg = await _receive_json(receive)
-        assert init_msg["type"] == "connection_init"
+    async def app(scope: ASGIScope, receive: ASGIReceive, send: ASGISend) -> None:
+        await accept_graphql_ws(scope, receive, send)
         await asyncio.sleep(0.1)
 
     client = AsyncGQLClient(base_url="http://testserver/graphql", target_app=app)
@@ -948,38 +786,9 @@ async def test_subscribe_abnormal_disconnect_during_messages():
 
 
 async def test_subscribe_disconnect_before_ack_with_reason():
-    async def app(
-        scope: MutableMapping[str, object],
-        receive: _Receive,
-        send: _Send,
-    ) -> None:
-        if scope["type"] == "http":
-            await send({
-                "type": "http.response.start",
-                "status": 200,
-                "headers": [[b"content-type", b"text/plain"]],
-            })
-            await send({"type": "http.response.body", "body": b"ok"})
-            return
-
-        assert scope["type"] == "websocket"
-        subprotocols = scope["subprotocols"]
-        assert isinstance(subprotocols, list)
-        connect_event = await receive()
-        assert connect_event["type"] == "websocket.connect"
-        await send({
-            "type": "websocket.accept",
-            "subprotocol": "graphql-transport-ws"
-            if "graphql-transport-ws" in subprotocols
-            else None,
-        })
-        init_msg = await _receive_json(receive)
-        assert init_msg["type"] == "connection_init"
-        await send({
-            "type": "websocket.close",
-            "code": 4401,
-            "reason": "Unauthorized",
-        })
+    async def app(scope: ASGIScope, receive: ASGIReceive, send: ASGISend) -> None:
+        connection = await accept_graphql_ws(scope, receive, send)
+        await connection.close(4401, "Unauthorized")
 
     client = AsyncGQLClient(base_url="http://testserver/graphql", target_app=app)
     try:
@@ -1001,45 +810,7 @@ async def test_subscribe_disconnect_before_ack_with_reason():
 
 
 async def test_subscribe_invalid_json_during_messages():
-    async def app(
-        scope: MutableMapping[str, object],
-        receive: _Receive,
-        send: _Send,
-    ) -> None:
-        if scope["type"] == "http":
-            await send({
-                "type": "http.response.start",
-                "status": 200,
-                "headers": [[b"content-type", b"text/plain"]],
-            })
-            await send({"type": "http.response.body", "body": b"ok"})
-            return
-
-        assert scope["type"] == "websocket"
-        subprotocols = scope["subprotocols"]
-        assert isinstance(subprotocols, list)
-        connect_event = await receive()
-        assert connect_event["type"] == "websocket.connect"
-        await send({
-            "type": "websocket.accept",
-            "subprotocol": "graphql-transport-ws"
-            if "graphql-transport-ws" in subprotocols
-            else None,
-        })
-        init_msg = await _receive_json(receive)
-        assert init_msg["type"] == "connection_init"
-        await send({
-            "type": "websocket.send",
-            "text": json.dumps({"type": "connection_ack"}),
-        })
-        subscribe_msg = await _receive_json(receive)
-        assert subscribe_msg["type"] == "subscribe"
-        await send({
-            "type": "websocket.send",
-            "text": "not valid json{{{",
-        })
-        await receive()
-
+    app = _make_ws_raw_app(post_subscribe_texts=("not valid json{{{",))
     client = AsyncGQLClient(base_url="http://testserver/graphql", target_app=app)
     try:
 
@@ -1057,39 +828,7 @@ async def test_subscribe_invalid_json_during_messages():
 
 
 async def test_subscribe_invalid_json_during_handshake():
-    async def app(
-        scope: MutableMapping[str, object],
-        receive: _Receive,
-        send: _Send,
-    ) -> None:
-        if scope["type"] == "http":
-            await send({
-                "type": "http.response.start",
-                "status": 200,
-                "headers": [[b"content-type", b"text/plain"]],
-            })
-            await send({"type": "http.response.body", "body": b"ok"})
-            return
-
-        assert scope["type"] == "websocket"
-        subprotocols = scope["subprotocols"]
-        assert isinstance(subprotocols, list)
-        connect_event = await receive()
-        assert connect_event["type"] == "websocket.connect"
-        await send({
-            "type": "websocket.accept",
-            "subprotocol": "graphql-transport-ws"
-            if "graphql-transport-ws" in subprotocols
-            else None,
-        })
-        init_msg = await _receive_json(receive)
-        assert init_msg["type"] == "connection_init"
-        await send({
-            "type": "websocket.send",
-            "text": "<<<broken>>>",
-        })
-        await receive()
-
+    app = _make_ws_raw_app(pre_ack_texts=("<<<broken>>>",), ack=False)
     client = AsyncGQLClient(base_url="http://testserver/graphql", target_app=app)
     try:
 
@@ -1224,38 +963,22 @@ def _make_ws_raw_app(
     post_subscribe_texts: tuple[str, ...] = (),
     close_after_init: tuple[int, str] | None = None,
 ) -> ASGIApp:
-    async def app(
-        scope: MutableMapping[str, object],
-        receive: _Receive,
-        send: _Send,
-    ) -> None:
-        assert scope["type"] == "websocket"
-        connect_event = await receive()
-        assert connect_event["type"] == "websocket.connect"
-        await send({
-            "type": "websocket.accept",
-            "subprotocol": "graphql-transport-ws",
-        })
-        init_msg = await _receive_json(receive)
-        assert init_msg["type"] == "connection_init"
+    async def app(scope: ASGIScope, receive: ASGIReceive, send: ASGISend) -> None:
+        # Everything legal goes through the protocol helpers; the raw `send`
+        # calls are the deviations this fake exists to produce.
+        connection = await accept_graphql_ws(scope, receive, send)
         if close_after_init is not None:
-            code, reason = close_after_init
-            await send({"type": "websocket.close", "code": code, "reason": reason})
+            await connection.close(*close_after_init)
             return
         for text in pre_ack_texts:
             await send({"type": "websocket.send", "text": text})
         if not ack:
-            await receive()
+            await connection.drain()
             return
-        await send({
-            "type": "websocket.send",
-            "text": json.dumps({"type": "connection_ack"}),
-        })
-        subscribe_msg = await _receive_json(receive)
-        assert subscribe_msg["type"] == "subscribe"
+        await connection.ack()
         for text in post_subscribe_texts:
             await send({"type": "websocket.send", "text": text})
-        await receive()
+        await connection.drain()
 
     return app
 

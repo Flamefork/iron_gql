@@ -1,19 +1,17 @@
-import json
-from collections.abc import Awaitable
-from collections.abc import Callable
-from collections.abc import MutableMapping
-
-import pydantic
 import pytest
 from graphql import GraphQLResolveInfo
 from pytest_httpserver import HTTPServer
 
 from iron_gql import GraphQLResponseError
 from iron_gql.runtime import ASGIApp
+from iron_gql.runtime import ASGIReceive
+from iron_gql.runtime import ASGIScope
+from iron_gql.runtime import ASGISend
+from iron_gql.testing import accept_graphql_ws
+from iron_gql.testing.server import live_asgi_server
 from tests.conftest import generated_package
-from tests.conftest import live_asgi_server
 from tests.conftest import sync_gql_server
-from tests.conftest import use_sync_client
+from tests.conftest import use_sync_package_client
 
 generated_package(
     "sync_package",
@@ -76,22 +74,8 @@ generated_package(
 
 from tests.generated.sync_package import queries as sync_queries
 
-type _Event = MutableMapping[str, object]
-type _Receive = Callable[[], Awaitable[_Event]]
-type _Send = Callable[[_Event], Awaitable[None]]
 
-_JSON_OBJECT = pydantic.TypeAdapter(dict[str, object])
-
-
-async def _receive_json(receive: _Receive) -> dict[str, object]:
-    text = (await receive())["text"]
-    assert isinstance(text, str)
-    return _JSON_OBJECT.validate_json(text)
-
-
-def test_sync_package_runs_query_and_mutation(
-    httpserver: HTTPServer, monkeypatch: pytest.MonkeyPatch
-):
+def test_sync_package_runs_query_and_mutation(httpserver: HTTPServer):
     state = {"user-1": "Graph"}
 
     def resolve_user(
@@ -110,7 +94,6 @@ def test_sync_package_runs_query_and_mutation(
 
     with sync_gql_server(
         httpserver,
-        monkeypatch,
         "sync_package",
         {
             "Query": {"user": resolve_user},
@@ -130,70 +113,38 @@ def test_sync_package_runs_query_and_mutation(
         assert missing.user is None
 
 
-def test_sync_package_raises_graphql_errors(
-    httpserver: HTTPServer, monkeypatch: pytest.MonkeyPatch
-):
+def test_sync_package_raises_graphql_errors(httpserver: HTTPServer):
     def resolve_user(_root: None, _info: GraphQLResolveInfo, *, id: str) -> None:
         msg = f"no such user: {id}"
         raise RuntimeError(msg)
 
     with (
-        sync_gql_server(
-            httpserver, monkeypatch, "sync_package", {"Query": {"user": resolve_user}}
-        ),
+        sync_gql_server(httpserver, "sync_package", {"Query": {"user": resolve_user}}),
         pytest.raises(GraphQLResponseError, match="no such user"),
     ):
         sync_queries.get_user.execute(id="user-1")
 
 
 def _renamed_ws_app(payloads: list[dict[str, object]]) -> ASGIApp:
-    async def app(
-        scope: MutableMapping[str, object],
-        receive: _Receive,
-        send: _Send,
-    ) -> None:
-        assert scope["type"] == "websocket"
-        connect_event = await receive()
-        assert connect_event["type"] == "websocket.connect"
-        await send({
-            "type": "websocket.accept",
-            "subprotocol": "graphql-transport-ws",
-        })
-        init_message = await _receive_json(receive)
-        assert init_message["type"] == "connection_init"
-        await send({
-            "type": "websocket.send",
-            "text": json.dumps({"type": "connection_ack"}),
-        })
-        subscribe = await _receive_json(receive)
-        assert subscribe["type"] == "subscribe"
-        sub_id = subscribe["id"]
+    async def app(scope: ASGIScope, receive: ASGIReceive, send: ASGISend) -> None:
+        connection = await accept_graphql_ws(scope, receive, send)
+        subscription = await connection.ack()
         for payload in payloads:
-            await send({
-                "type": "websocket.send",
-                "text": json.dumps({
-                    "id": sub_id,
-                    "type": "next",
-                    "payload": {"data": payload},
-                }),
-            })
-        await send({
-            "type": "websocket.send",
-            "text": json.dumps({"id": sub_id, "type": "complete"}),
-        })
-        await receive()
+            await subscription.next(payload)
+        await subscription.complete()
+        await connection.drain()
 
     return app
 
 
-def test_sync_package_streams_subscription(monkeypatch: pytest.MonkeyPatch):
+def test_sync_package_streams_subscription():
     app = _renamed_ws_app([
         {"userRenamed": {"id": "user-1", "name": "Bob"}},
         {"userRenamed": {"id": "user-1", "name": "Carol"}},
     ])
     with (
         live_asgi_server(app) as base_url,
-        use_sync_client(monkeypatch, "sync_package", base_url),
+        use_sync_package_client("sync_package", base_url),
         sync_queries.user_renamed.execute(id="user-1") as stream,
     ):
         names = [event.user_renamed.name for event in stream]

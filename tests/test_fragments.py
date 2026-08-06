@@ -311,15 +311,12 @@ from tests.generated.fragments_scoped import queries as scoped_queries
 from tests.generated.fragments_transitive import queries as transitive_queries
 
 
-async def test_inline_fragment_without_type_condition(
-    httpserver: HTTPServer, monkeypatch: pytest.MonkeyPatch
-):
+async def test_inline_fragment_without_type_condition(httpserver: HTTPServer):
     def resolve_viewer(_root: None, _info: GraphQLResolveInfo) -> dict[str, str]:
         return {"id": "user-1", "name": "Bob", "email": "bob@example.com"}
 
     async with gql_server(
         httpserver,
-        monkeypatch,
         "fragments_inline",
         {"Query": {"viewer": resolve_viewer}},
     ):
@@ -329,7 +326,7 @@ async def test_inline_fragment_without_type_condition(
         assert result.viewer.email == "bob@example.com"
 
 
-async def test_named_fragments(httpserver: HTTPServer, monkeypatch: pytest.MonkeyPatch):
+async def test_named_fragments(httpserver: HTTPServer):
     def resolve_user(
         _root: None, _info: GraphQLResolveInfo, *, id: str
     ) -> dict[str, str]:
@@ -337,7 +334,6 @@ async def test_named_fragments(httpserver: HTTPServer, monkeypatch: pytest.Monke
 
     async with gql_server(
         httpserver,
-        monkeypatch,
         "fragments_named",
         {"Query": {"user": resolve_user}},
     ):
@@ -348,9 +344,7 @@ async def test_named_fragments(httpserver: HTTPServer, monkeypatch: pytest.Monke
         assert result.user.email == "bob@example.com"
 
 
-async def test_duplicate_fragment_names_use_local_definition(
-    httpserver: HTTPServer, monkeypatch: pytest.MonkeyPatch
-):
+async def test_duplicate_fragment_names_use_local_definition(httpserver: HTTPServer):
     def resolve_user(
         _root: None, _info: GraphQLResolveInfo, *, id: str
     ) -> dict[str, str]:
@@ -358,7 +352,6 @@ async def test_duplicate_fragment_names_use_local_definition(
 
     async with gql_server(
         httpserver,
-        monkeypatch,
         "fragments_dup_names",
         {"Query": {"user": resolve_user}},
     ):
@@ -368,9 +361,7 @@ async def test_duplicate_fragment_names_use_local_definition(
         assert result.user.name == "Bob"
 
 
-async def test_fragment_validation_scoped_to_query(
-    httpserver: HTTPServer, monkeypatch: pytest.MonkeyPatch
-):
+async def test_fragment_validation_scoped_to_query(httpserver: HTTPServer):
     def resolve_user(
         _root: None, _info: GraphQLResolveInfo, *, id: str
     ) -> dict[str, str]:
@@ -383,7 +374,6 @@ async def test_fragment_validation_scoped_to_query(
 
     async with gql_server(
         httpserver,
-        monkeypatch,
         "fragments_scoped",
         {"Query": {"user": resolve_user, "post": resolve_post}},
     ):
@@ -398,9 +388,7 @@ async def test_fragment_validation_scoped_to_query(
         assert post_result.post.title == "GraphQL 101"
 
 
-async def test_inline_fragment_definitions_not_duplicated(
-    httpserver: HTTPServer, monkeypatch: pytest.MonkeyPatch
-):
+async def test_inline_fragment_definitions_not_duplicated(httpserver: HTTPServer):
     def resolve_user(
         _root: None, _info: GraphQLResolveInfo, *, id: str
     ) -> dict[str, str]:
@@ -408,7 +396,6 @@ async def test_inline_fragment_definitions_not_duplicated(
 
     async with gql_server(
         httpserver,
-        monkeypatch,
         "fragments_no_dup",
         {"Query": {"user": resolve_user}},
     ):
@@ -418,9 +405,7 @@ async def test_inline_fragment_definitions_not_duplicated(
         assert result.user.name == "Bob"
 
 
-async def test_transitive_fragments(
-    httpserver: HTTPServer, monkeypatch: pytest.MonkeyPatch
-):
+async def test_transitive_fragments(httpserver: HTTPServer):
     """Test that nested fragment deps (A → B → C) are resolved correctly."""
 
     def resolve_user(
@@ -435,7 +420,6 @@ async def test_transitive_fragments(
 
     async with gql_server(
         httpserver,
-        monkeypatch,
         "fragments_transitive",
         {"Query": {"user": resolve_user}},
     ):
@@ -447,9 +431,7 @@ async def test_transitive_fragments(
         assert result.user.role == "admin"
 
 
-async def test_exec_source_contains_expanded_fragments(
-    httpserver: HTTPServer, monkeypatch: pytest.MonkeyPatch
-):
+async def test_exec_source_contains_expanded_fragments(httpserver: HTTPServer):
     """Verify that the request string contains expanded fragment definitions."""
 
     def resolve_user(
@@ -459,7 +441,6 @@ async def test_exec_source_contains_expanded_fragments(
 
     async with gql_server(
         httpserver,
-        monkeypatch,
         "fragments_exec_source",
         {"Query": {"user": resolve_user}},
     ):

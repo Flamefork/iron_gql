@@ -26,14 +26,14 @@ from iron_gql.websockets import ws_url
 
 DEFAULT_QUERY_TIMEOUT = 10
 
-ASGIApp = Callable[
-    [
-        MutableMapping[str, Any],
-        Callable[[], Awaitable[MutableMapping[str, Any]]],
-        Callable[[MutableMapping[str, Any]], Awaitable[None]],
-    ],
-    Awaitable[None],
-]
+# ASGI carries heterogeneous values, so `object` rather than `Any`: a fake that
+# reads a scope key has to narrow it, and the type checker keeps that honest.
+type ASGIScope = MutableMapping[str, object]
+type ASGIEvent = MutableMapping[str, object]
+type ASGIReceive = Callable[[], Awaitable[ASGIEvent]]
+type ASGISend = Callable[[ASGIEvent], Awaitable[None]]
+
+ASGIApp = Callable[[ASGIScope, ASGIReceive, ASGISend], Awaitable[None]]
 
 
 class FileVar:

@@ -15,6 +15,7 @@ from iron_gql.codegen.ir import render_type_expr
 from iron_gql.codegen.ir import slot_roots
 from iron_gql.codegen.slots import fragment_base_name
 from iron_gql.codegen.util import indent_block
+from iron_gql.naming import client_binding_name
 
 
 def render_header(*, unsafe_multiple_inheritance: bool) -> str:
@@ -125,7 +126,7 @@ def scaffold_claims(
         *((name, f"from typing import {name}") for name in TYPING_NAMES),
         *((name, f"from iron_gql import {name}") for name in IRON_GQL_NAMES),
         (gql_fn_name, "the generated gql function"),
-        (f"{package_name.upper()}_CLIENT", "the generated client binding"),
+        (client_binding_name(package_name), "the generated client binding"),
         (f"_{package_name.upper()}_GQL_DISPATCH", "the generated dispatch dict"),
         (f"_{package_name.upper()}_GQL_FRAGMENTS", "the generated fragments dict"),
         (
@@ -243,7 +244,7 @@ def render_client_init(
     mode: ModeConfig,
 ) -> str:
     return f"""\
-{package_name.upper()}_CLIENT = runtime.{mode.client_class}(
+{client_binding_name(package_name)} = runtime.{mode.client_class}(
     base_url={base_url_ref.symbol},
 )
 
@@ -524,7 +525,7 @@ def render_operations(
                 f"{operation.exec_splices!r}, slot_fragments)"
             )
             call_kwargs.append("slot_fragments=slot_fragments")
-        client_call = f"{package_name.upper()}_CLIENT.{operation.client_method}"
+        client_call = f"{client_binding_name(package_name)}.{operation.client_method}"
         body = "\n".join([
             *prelude,
             f"return {await_kw}{client_call}(",

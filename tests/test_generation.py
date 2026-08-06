@@ -364,15 +364,12 @@ def test_input_enums_and_defaults(test_project: ProjectBuilder):
     assert serialized == {"status": "ACTIVE"}
 
 
-async def test_operation_variable_enum_variable_executes(
-    httpserver: HTTPServer, monkeypatch: pytest.MonkeyPatch
-):
+async def test_operation_variable_enum_variable_executes(httpserver: HTTPServer):
     def resolve_search(_root: None, _info: GraphQLResolveInfo, *, status: str) -> bool:
         return status == "ACTIVE"
 
     async with gql_server(
         httpserver,
-        monkeypatch,
         "generation_enum_variable",
         {"Query": {"search": resolve_search}},
     ):
@@ -522,15 +519,12 @@ def test_default_scalars_and_nested_list_input(test_project: ProjectBuilder):
     assert files == {}
 
 
-async def test_anonymous_query_generation(
-    httpserver: HTTPServer, monkeypatch: pytest.MonkeyPatch
-):
+async def test_anonymous_query_generation(httpserver: HTTPServer):
     def resolve_ping(_root: None, _info: GraphQLResolveInfo) -> str:
         return "pong"
 
     async with gql_server(
         httpserver,
-        monkeypatch,
         "generation_anonymous",
         {"Query": {"ping": resolve_ping}},
     ):

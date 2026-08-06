@@ -1,10 +1,7 @@
 import importlib
 import json
-import socket
 import sys
 import textwrap
-import threading
-import time
 from collections.abc import AsyncIterator
 from collections.abc import Callable
 from collections.abc import Iterator
@@ -19,7 +16,6 @@ from types import ModuleType
 import graphql
 import pydantic
 import pytest
-import uvicorn
 from pydantic import alias_generators
 from pytest_httpserver import HTTPServer
 from werkzeug import Request
@@ -31,9 +27,11 @@ from iron_gql.codegen.accessors import object_fields
 from iron_gql.runtime import ASGIApp
 from iron_gql.runtime import AsyncGQLClient
 from iron_gql.runtime import GQLClient
+from iron_gql.testing import use_async_client
+from iron_gql.testing import use_sync_client
 
-Resolver = Callable[..., object]
-Resolvers = Mapping[str, Mapping[str, Resolver]]
+type Resolver = Callable[..., object]
+type Resolvers = Mapping[str, Mapping[str, Resolver]]
 
 
 class _GraphQLRequest(pydantic.BaseModel):
@@ -41,6 +39,16 @@ class _GraphQLRequest(pydantic.BaseModel):
     query: str = ""
     variables: dict[str, object] | None = None
     operation_name: str | None = pydantic.Field(default=None, alias="operationName")
+
+
+def build_schema(sdl: str, resolvers: Resolvers) -> graphql.GraphQLSchema:
+    schema = graphql.build_schema(sdl)
+    for type_name, fields in resolvers.items():
+        gql_type = schema.get_type(type_name)
+        assert isinstance(gql_type, graphql.GraphQLObjectType)  # noqa: S101
+        for field_name, resolver in fields.items():
+            object_fields(gql_type)[field_name].resolve = resolver
+    return schema
 
 
 def _write_text(path: Path, content: str) -> None:
@@ -76,135 +84,66 @@ def generated_package(
     _write_text(root / "gql" / "__init__.py", "")
 
 
+def _generated_api_module(package: str) -> ModuleType:
+    return importlib.import_module(f"tests.generated.{package}.gql.api")
+
+
+def _package_schema(package: str) -> Path:
+    return Path(__file__).parent / "generated" / package / "schema.graphql"
+
+
 @asynccontextmanager
-async def use_client(
-    monkeypatch: pytest.MonkeyPatch,
-    package: str,
-    base_url: str,
-    target_app: ASGIApp | None = None,
+async def use_package_client(
+    package: str, base_url: str, target_app: ASGIApp | None = None
 ) -> AsyncIterator[None]:
-    """Point the committed generated package's API_CLIENT at base_url."""
+    """Point the committed generated package's client at base_url."""
     client = AsyncGQLClient(base_url=base_url, target_app=target_app)
-    api_module = importlib.import_module(f"tests.generated.{package}.gql.api")
-    monkeypatch.setattr(api_module, "API_CLIENT", client)
-    try:
+    async with use_async_client(_generated_api_module(package), client):
         yield
-    finally:
-        await client.close()
 
 
-# `socket.getsockname` is typed as Any; validate the pair we know it returns
-# for an IPv4 socket instead of casting.
-_SOCKET_ADDRESS = pydantic.TypeAdapter(tuple[str, int])
-
-
-def _free_port() -> int:
-    with socket.socket() as probe:
-        probe.bind(("127.0.0.1", 0))
-        _host, port = _SOCKET_ADDRESS.validate_python(probe.getsockname())
-        return port
-
-
-# Serves an ASGI app on a loopback port and yields its GraphQL base URL. The
-# synchronous client has no in-process transport: httpx2's ASGITransport is
-# async-only and WSGI cannot carry websockets. Sync tests therefore drive the
-# same kind of fake app the async tests use, over a real socket.
 @contextmanager
-def live_asgi_server(app: ASGIApp) -> Iterator[str]:
-    port = _free_port()
-    config = uvicorn.Config(
-        app, host="127.0.0.1", port=port, log_level="warning", lifespan="off"
-    )
-    server = uvicorn.Server(config)
-    thread = threading.Thread(target=server.run, daemon=True)
-    thread.start()
-    try:
-        deadline = time.monotonic() + 10
-        while not server.started:
-            if time.monotonic() > deadline:
-                msg = "uvicorn did not start within 10 seconds"
-                raise RuntimeError(msg)
-            time.sleep(0.01)
-        yield f"http://127.0.0.1:{port}/graphql"
-    finally:
-        server.should_exit = True
-        thread.join(timeout=5)
-
-
-# The sync counterpart of `use_client`; the sync client takes no target_app,
-# so its base_url always points at a real server.
-@contextmanager
-def use_sync_client(
-    monkeypatch: pytest.MonkeyPatch, package: str, base_url: str
-) -> Iterator[None]:
+def use_sync_package_client(package: str, base_url: str) -> Iterator[None]:
+    """The sync counterpart of `use_package_client`; the sync client takes no
+    target_app, so its base_url always points at a real server."""
     client = GQLClient(base_url=base_url)
-    api_module = importlib.import_module(f"tests.generated.{package}.gql.api")
-    monkeypatch.setattr(api_module, "API_CLIENT", client)
-    try:
+    with use_sync_client(_generated_api_module(package), client):
         yield
-    finally:
-        client.close()
 
 
 @contextmanager
 def sync_gql_server(
-    httpserver: HTTPServer,
-    monkeypatch: pytest.MonkeyPatch,
-    package: str,
-    resolvers: Resolvers,
+    httpserver: HTTPServer, package: str, resolvers: Resolvers
 ) -> Iterator[None]:
-    root = Path(__file__).parent / "generated" / package
-    schema_obj = build_schema((root / "schema.graphql").read_text(), resolvers)
-    base_url = setup_httpserver(httpserver, schema_obj)
-    with use_sync_client(monkeypatch, package, base_url):
+    schema = build_schema(_package_schema(package).read_text(), resolvers)
+    with use_sync_package_client(package, setup_httpserver(httpserver, schema)):
         yield
 
 
 @asynccontextmanager
 async def gql_server(
-    httpserver: HTTPServer,
-    monkeypatch: pytest.MonkeyPatch,
-    package: str,
-    resolvers: Resolvers,
+    httpserver: HTTPServer, package: str, resolvers: Resolvers
 ) -> AsyncIterator[None]:
     """Serve the schema of a committed generated package with the given
-    resolvers and point the package's API_CLIENT at the test server."""
-    root = Path(__file__).parent / "generated" / package
-    schema_obj = build_schema((root / "schema.graphql").read_text(), resolvers)
-    base_url = setup_httpserver(httpserver, schema_obj)
-    async with use_client(monkeypatch, package, base_url):
+    resolvers and point the package's client at the test server."""
+    schema = build_schema(_package_schema(package).read_text(), resolvers)
+    async with use_package_client(package, setup_httpserver(httpserver, schema)):
         yield
 
 
-def build_schema(
-    schema: str, resolvers: Resolvers | None = None
-) -> graphql.GraphQLSchema:
-    schema_obj = graphql.build_schema(schema)
-    if not resolvers:
-        return schema_obj
-    for type_name, fields in resolvers.items():
-        gql_type = schema_obj.get_type(type_name)
-        assert isinstance(gql_type, graphql.GraphQLObjectType)  # noqa: S101
-        for field_name, resolver in fields.items():
-            object_fields(gql_type)[field_name].resolve = resolver
-    return schema_obj
-
-
-def setup_httpserver(httpserver: HTTPServer, schema_obj: graphql.GraphQLSchema) -> str:
+def setup_httpserver(httpserver: HTTPServer, schema: graphql.GraphQLSchema) -> str:
     def graphql_handler(request: Request) -> Response:
         payload = _GraphQLRequest.model_validate(request.get_json(silent=True) or {})
         # graphql-core types `middleware` via unparameterized Tuple/List, so the
         # function type itself is partially unknown; its return type is fine.
         result = graphql.graphql_sync(  # pyright: ignore[reportUnknownMemberType]
-            schema_obj,
+            schema,
             payload.query,
             variable_values=payload.variables,
             operation_name=payload.operation_name,
         )
         return Response(
-            json.dumps(result.formatted),
-            status=200,
-            mimetype="application/json",
+            json.dumps(result.formatted), status=200, mimetype="application/json"
         )
 
     httpserver.expect_request("/graphql/", method="POST").respond_with_handler(
@@ -290,8 +229,7 @@ class ProjectBuilder:
         queries: str,
         resolvers: Resolvers,
     ) -> AsyncIterator[tuple[ModuleType, ModuleType]]:
-        schema_obj = build_schema(schema, resolvers)
-        base_url = setup_httpserver(httpserver, schema_obj)
+        base_url = setup_httpserver(httpserver, build_schema(schema, resolvers))
         self.prepare(schema=schema, queries=queries, base_url=base_url)
         api_module, queries_module = self.generate_and_import()
         try:

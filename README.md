@@ -12,19 +12,21 @@
 ```bash
 pip install iron-gql            # runtime only (httpx2 + pydantic)
 pip install iron-gql[codegen]   # + graphql-core for code generation
+pip install iron-gql[testing]   # + uvicorn for the loopback test server
 ```
 
 ## Key Features
 - **Query discovery.** `generate_gql_package` scans your codebase for calls of the form `<package>_gql("""...""")`. It validates each statement and writes a module with typed helpers.
 - **Typed inputs and results.** The generated Pydantic models match every selection set, enum, and input object that the discovered queries reference.
 - **Sync or async runtime.** Pick the mode per package with `mode="sync"` or `mode="async"`. The generated module targets `runtime.GQLClient` or `runtime.AsyncGQLClient`, both of which send requests through `httpx2`. One project can hold packages of both kinds.
-- **ASGI in-process calls.** `AsyncGQLClient` accepts an ASGI `target_app` and then calls the app in-process without using the network. The sync client has no such transport: the ASGI transport of `httpx2` is async-only, and WSGI cannot carry websockets. Test synchronous packages against a real server on a loopback port.
+- **ASGI in-process calls.** `AsyncGQLClient` accepts an ASGI `target_app` and then calls the app in-process without using the network. The sync client has no such transport: the ASGI transport of `httpx2` is async-only, and WSGI cannot carry websockets. Test synchronous packages against a real server on a loopback port, which [`iron_gql.testing`](#testing) starts for you.
 - **Deterministic validation.** `graphql-core` (a codegen dependency) validates every statement against the schema. It rejects operations that share a name but have different bodies.
 
 ## Package Layout
 - `runtime.py` contains `GQLClient` and `AsyncGQLClient`, the reusable `GQLOperation` base class, and the value serialization helpers.
 - `codegen/generate.py` runs query discovery, validation, and module rendering.
 - `codegen/parser.py` converts the GraphQL AST into typed helper structures for the renderer.
+- `testing/` holds the test helpers: the client swap, the `graphql-transport-ws` server primitives, and the loopback server.
 
 ## Getting Started
 1. **Describe your schema.** Write the schema in an SDL file (`schema.graphql`). Include the root types that you use (query, mutation, subscription).
@@ -204,37 +206,98 @@ The [`example/`](example/) directory contains a complete working setup. It has a
 
 ## Testing
 
-In tests, replace the generated client to send queries to a test server or an ASGI app. Use `monkeypatch` or any other patch of the module attribute:
+`iron_gql.testing` holds the helpers that a service needs to test its own use of a generated package.
+
+Which transport a test needs follows from the client:
+
+| client | queries and mutations | subscriptions |
+|---|---|---|
+| `AsyncGQLClient` | `target_app`, no socket | `target_app`, no socket |
+| `GQLClient` | server on a loopback port | server on a loopback port |
+
+`AsyncGQLClient` takes an ASGI `target_app` and calls it in process, websockets included, so an async package never needs a socket. `GQLClient` has no such transport: the ASGI transport of `httpx2` is async-only, and WSGI cannot carry websockets. A synchronous package is therefore tested against a real server, which `live_asgi_server` starts for you.
+
+Only `live_asgi_server` has a dependency of its own — `uvicorn`, from `pip install iron-gql[testing]`. Everything else here needs nothing beyond the runtime, so a project that only replaces clients installs plain `iron-gql`.
+
+You supply the fake yourself. The library takes no position on how you answer a query: run your own schema library, return canned JSON, or serve the app you are testing.
+
+### Replace the client
+
+`use_async_client` and `use_sync_client` bind your own client into a generated package. On exit each one restores the previous client and closes the client that you passed in:
 
 ```python
-from iron_gql import runtime
+from iron_gql.runtime import AsyncGQLClient
+from iron_gql.testing import use_async_client
 from myapp.gql import api
 
-async def test_get_user(monkeypatch):
-    test_client = runtime.AsyncGQLClient(
-        base_url="http://testserver",
-        target_app=my_asgi_app,
-    )
-    monkeypatch.setattr(api, "API_CLIENT", test_client)
-
-    result = await get_user.execute(id="1")
-    assert result.user.name == "Alice"
+async def test_get_user():
+    client = AsyncGQLClient(base_url="http://testserver", target_app=my_asgi_app)
+    async with use_async_client(api, client):
+        result = await get_user.execute(id="1")
+        assert result.user.name == "Alice"
 ```
 
-A synchronous package needs a real endpoint, because `GQLClient` has no ASGI transport:
+The generated query classes resolve the client by module attribute name at call time, so this replacement is sufficient. The helpers derive that name from the name of the module, exactly as the generator derives it. For the package `myapp.gql.api`, the attribute is `API_CLIENT`.
+
+### Serve an app on a loopback port
+
+`live_asgi_server` serves an ASGI app with `uvicorn` on a port that the operating system picks, and it yields the URL of that server:
 
 ```python
-def test_get_user_sync(monkeypatch, live_server_url):
-    test_client = runtime.GQLClient(base_url=live_server_url)
-    monkeypatch.setattr(api, "API_CLIENT", test_client)
+from iron_gql.runtime import GQLClient
+from iron_gql.testing import use_sync_client
+from iron_gql.testing.server import live_asgi_server
 
-    result = get_user.execute(id="1")
-    assert result.user.name == "Alice"
+def test_get_user_sync():
+    with (
+        live_asgi_server(my_asgi_app) as base_url,
+        use_sync_client(api, GQLClient(base_url=base_url)),
+    ):
+        result = get_user.execute(id="1")
+        assert result.user.name == "Alice"
 ```
 
-The `live_asgi_server` helper in this repository's `tests/conftest.py` shows one way to serve an ASGI app on a loopback port for such a test.
+The URL ends with `/graphql`. Pass `path="/other"` for a different one. The path is only a part of the URL: a fake app usually answers on every path, so the helper does not route.
 
-The generated query classes resolve the client by module attribute name at call time. As a result, the replacement is sufficient. The name of the attribute is always `{PACKAGE}_CLIENT`. For the package `myapp.gql.api`, the attribute is `API_CLIENT`.
+### Script a subscription fake
+
+Subscriptions speak `graphql-transport-ws`, and a fake has to hold up the server end of it. `accept_graphql_ws` performs the handshake and hands you the connection; each step then asserts that the client kept to the protocol, and reports what arrived instead when it did not.
+
+```python
+from iron_gql.runtime import ASGIReceive
+from iron_gql.runtime import ASGIScope
+from iron_gql.runtime import ASGISend
+from iron_gql.testing import accept_graphql_ws
+
+async def events_app(scope: ASGIScope, receive: ASGIReceive, send: ASGISend) -> None:
+    connection = await accept_graphql_ws(scope, receive, send)
+    subscription = await connection.ack()
+    assert subscription.payload["variables"] == {"channel": "test"}
+
+    await subscription.next({"events": {"id": "1", "message": "hello"}})
+    await subscription.complete()
+    await connection.drain()
+```
+
+`accept_graphql_ws` accepts the socket, echoes the subprotocol when the client offered it, and consumes `connection_init`. On the connection you then call:
+
+- `ack()` — sends `connection_ack` and waits for the client's `subscribe`. The subscription it returns exposes the received message as `payload` and stamps its `id` on everything it sends.
+- `send_message(message)` and `expect_pong()` — for `ping` and other connection-level traffic.
+- `close(code, reason)` — closes the socket, for testing how the client reacts.
+- `drain()` — waits for the client to hang up. Return before that and you tear the connection down under it.
+
+On the subscription: `next(data)`, `error(errors)`, `complete()`, and `send_message(message)` for anything else.
+
+Control flow stays in your fake, so state lives in ordinary Python around these calls — a connection counter, a drop on the N-th connect, a failure of the first few messages.
+
+### Keep the generated code current
+
+`generate_gql_package` returns `True` when it wrote a change. Committing generated modules and asserting the generator has nothing left to write catches a schema or a query that moved ahead of the committed code:
+
+```python
+def test_generated_package_is_current():
+    assert generate_gql_package(...) is False
+```
 
 ## Validation and Troubleshooting
 - Error messages show the file and the line of the statement that caused the error.

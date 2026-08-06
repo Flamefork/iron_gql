@@ -24,6 +24,7 @@ dependencies = [
 
 [project.optional-dependencies]
 codegen = ["graphql-core>=3.2.6,<4"]
+testing = ["uvicorn>=0.34"]
 
 [project.urls]
 Homepage = "https://github.com/Flamefork/iron_gql"
@@ -36,7 +37,7 @@ build-backend = "uv_build"
 
 [dependency-groups]
 dev = [
-    "iron-gql[codegen]",
+    "iron-gql[codegen,testing]",
     "basedpyright>=1.31.7",
     "pytest>=8.4.2",
     "pytest-asyncio>=1.2.0",
@@ -44,7 +45,6 @@ dev = [
     "pytest-httpserver>=1.1.3",
     "pytest-randomly>=4.0.1",
     "ruff>=0.14.1",
-    "uvicorn>=0.34",
 ]
 
 [tool.basedpyright]
@@ -111,7 +111,7 @@ asyncio_default_fixture_loop_scope = "function"
 
 [tool.coverage.run]
 branch = true
-omit = ["tests/*.py", "api.py"]
+omit = ["tests/*.py", "*/gql/*.py"]
 data_file = ".coverage/db.sqlite"
 
 [tool.coverage.html]

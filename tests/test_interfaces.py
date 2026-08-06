@@ -588,9 +588,7 @@ from tests.generated.interfaces_with_fragments import queries as with_fragments_
 from tests.generated.interfaces_with_fragments.gql.api import User as WithFragmentsUser
 
 
-async def test_union_result_validation(
-    httpserver: HTTPServer, monkeypatch: pytest.MonkeyPatch
-):
+async def test_union_result_validation(httpserver: HTTPServer):
     def resolve_node(
         _root: None, _info: GraphQLResolveInfo, *, id: str
     ) -> dict[str, object]:
@@ -608,7 +606,6 @@ async def test_union_result_validation(
 
     async with gql_server(
         httpserver,
-        monkeypatch,
         "interfaces_union_result",
         {"Query": {"node": resolve_node, "count": resolve_count}},
     ):
@@ -617,9 +614,7 @@ async def test_union_result_validation(
         assert result.count == 3
 
 
-async def test_union_with_interface_fragment(
-    httpserver: HTTPServer, monkeypatch: pytest.MonkeyPatch
-):
+async def test_union_with_interface_fragment(httpserver: HTTPServer):
     def resolve_actor(
         _root: None, _info: GraphQLResolveInfo, *, id: str
     ) -> dict[str, object]:
@@ -629,7 +624,6 @@ async def test_union_with_interface_fragment(
 
     async with gql_server(
         httpserver,
-        monkeypatch,
         "interfaces_union_iface_fragment",
         {"Query": {"actor": resolve_actor}},
     ):
@@ -654,9 +648,7 @@ async def test_union_with_interface_fragment(
         }
 
 
-async def test_interface_without_fragments(
-    httpserver: HTTPServer, monkeypatch: pytest.MonkeyPatch
-):
+async def test_interface_without_fragments(httpserver: HTTPServer):
     def resolve_node(
         _root: None, _info: GraphQLResolveInfo, *, id: str
     ) -> dict[str, str]:
@@ -666,7 +658,6 @@ async def test_interface_without_fragments(
 
     async with gql_server(
         httpserver,
-        monkeypatch,
         "interfaces_no_fragments",
         {"Query": {"node": resolve_node}},
     ):
@@ -675,9 +666,7 @@ async def test_interface_without_fragments(
         assert result.node.id == "user-1"
 
 
-async def test_interface_with_fragments(
-    httpserver: HTTPServer, monkeypatch: pytest.MonkeyPatch
-):
+async def test_interface_with_fragments(httpserver: HTTPServer):
     def resolve_node(
         _root: None, _info: GraphQLResolveInfo, *, id: str
     ) -> dict[str, str]:
@@ -689,7 +678,6 @@ async def test_interface_with_fragments(
 
     async with gql_server(
         httpserver,
-        monkeypatch,
         "interfaces_with_fragments",
         {"Query": {"node": resolve_node}},
     ):
@@ -711,9 +699,7 @@ async def test_interface_with_fragments(
         }
 
 
-async def test_nested_interface(
-    httpserver: HTTPServer, monkeypatch: pytest.MonkeyPatch
-):
+async def test_nested_interface(httpserver: HTTPServer):
     def resolve_node(
         _root: None, _info: GraphQLResolveInfo, *, id: str
     ) -> dict[str, object]:
@@ -725,7 +711,6 @@ async def test_nested_interface(
 
     async with gql_server(
         httpserver,
-        monkeypatch,
         "interfaces_nested",
         {"Query": {"node": resolve_node}},
     ):
@@ -735,9 +720,7 @@ async def test_nested_interface(
         assert result.node.child.id == "child-1"
 
 
-async def test_interface_hierarchy(
-    httpserver: HTTPServer, monkeypatch: pytest.MonkeyPatch
-):
+async def test_interface_hierarchy(httpserver: HTTPServer):
     def resolve_node(
         _root: None, _info: GraphQLResolveInfo, *, id: str
     ) -> dict[str, str]:
@@ -752,7 +735,6 @@ async def test_interface_hierarchy(
 
     async with gql_server(
         httpserver,
-        monkeypatch,
         "interfaces_hierarchy",
         {"Query": {"node": resolve_node}},
     ):
@@ -774,9 +756,7 @@ async def test_interface_hierarchy(
         }
 
 
-async def test_interface_fragment_on_overlapping_interface(
-    httpserver: HTTPServer, monkeypatch: pytest.MonkeyPatch
-):
+async def test_interface_fragment_on_overlapping_interface(httpserver: HTTPServer):
     def resolve_node(
         _root: None, _info: GraphQLResolveInfo, *, id: str
     ) -> dict[str, str]:
@@ -786,7 +766,6 @@ async def test_interface_fragment_on_overlapping_interface(
 
     async with gql_server(
         httpserver,
-        monkeypatch,
         "interfaces_overlapping",
         {"Query": {"node": resolve_node}},
     ):
@@ -1148,9 +1127,7 @@ def test_union_fragment_typename_in_variants(test_project: ProjectBuilder):
     assert changed is True
 
 
-async def test_nullable_union_result_validation(
-    httpserver: HTTPServer, monkeypatch: pytest.MonkeyPatch
-):
+async def test_nullable_union_result_validation(httpserver: HTTPServer):
     def resolve_node(
         _root: None, _info: GraphQLResolveInfo, *, id: str
     ) -> dict[str, object] | None:
@@ -1162,7 +1139,6 @@ async def test_nullable_union_result_validation(
 
     async with gql_server(
         httpserver,
-        monkeypatch,
         "interfaces_nullable_union",
         {"Query": {"node": resolve_node}},
     ):
@@ -1188,9 +1164,7 @@ async def test_nullable_union_result_validation(
         }
 
 
-async def test_list_wrapped_union(
-    httpserver: HTTPServer, monkeypatch: pytest.MonkeyPatch
-):
+async def test_list_wrapped_union(httpserver: HTTPServer):
     def resolve_nodes(_root: None, _info: GraphQLResolveInfo) -> list[dict[str, str]]:
         return [
             {"__typename": "User", "id": "u-1", "name": "Bob"},
@@ -1199,7 +1173,6 @@ async def test_list_wrapped_union(
 
     async with gql_server(
         httpserver,
-        monkeypatch,
         "interfaces_list_union",
         {"Query": {"nodes": resolve_nodes}},
     ):
@@ -1221,9 +1194,7 @@ async def test_list_wrapped_union(
         }
 
 
-async def test_interface_with_named_fragment_type_condition(
-    httpserver: HTTPServer, monkeypatch: pytest.MonkeyPatch
-):
+async def test_interface_with_named_fragment_type_condition(httpserver: HTTPServer):
     def resolve_node(
         _root: None, _info: GraphQLResolveInfo, *, id: str
     ) -> dict[str, str]:
@@ -1233,7 +1204,6 @@ async def test_interface_with_named_fragment_type_condition(
 
     async with gql_server(
         httpserver,
-        monkeypatch,
         "interfaces_named_fragment",
         {"Query": {"node": resolve_node}},
     ):
@@ -1255,9 +1225,7 @@ async def test_interface_with_named_fragment_type_condition(
         }
 
 
-async def test_interface_typename_in_named_fragment(
-    httpserver: HTTPServer, monkeypatch: pytest.MonkeyPatch
-):
+async def test_interface_typename_in_named_fragment(httpserver: HTTPServer):
     def resolve_node(
         _root: None, _info: GraphQLResolveInfo, *, id: str
     ) -> dict[str, str]:
@@ -1267,7 +1235,6 @@ async def test_interface_typename_in_named_fragment(
 
     async with gql_server(
         httpserver,
-        monkeypatch,
         "interfaces_typename_fragment",
         {"Query": {"node": resolve_node}},
     ):
@@ -1290,9 +1257,7 @@ async def test_interface_typename_in_named_fragment(
         }
 
 
-async def test_interface_exhaustively_covered(
-    httpserver: HTTPServer, monkeypatch: pytest.MonkeyPatch
-):
+async def test_interface_exhaustively_covered(httpserver: HTTPServer):
     calls = 0
 
     def resolve_node(_root: None, _info: GraphQLResolveInfo) -> dict[str, str]:
@@ -1304,7 +1269,6 @@ async def test_interface_exhaustively_covered(
 
     async with gql_server(
         httpserver,
-        monkeypatch,
         "interfaces_exhaustive",
         {"Query": {"node": resolve_node}},
     ):
