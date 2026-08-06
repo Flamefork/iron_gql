@@ -4,7 +4,7 @@ import json
 from decimal import Decimal
 from typing import TypedDict
 
-import httpx
+import httpx2
 import pytest
 from graphql import GraphQLResolveInfo
 from pydantic import TypeAdapter
@@ -804,7 +804,7 @@ async def test_redirect_response_raises_http_status_error(
         monkeypatch, "runtime_redirect", httpserver.url_for("/graphql")
     ):
         with pytest.raises(
-            httpx.HTTPStatusError,
+            httpx2.HTTPStatusError,
             match=r"Unexpected 3xx response \(307\) to /graphql/",
         ):
             await redirect_queries.ping.execute()
@@ -823,7 +823,7 @@ async def test_redirect_without_location_header(
         monkeypatch, "runtime_redirect_no_location", httpserver.url_for("/graphql")
     ):
         with pytest.raises(
-            httpx.HTTPStatusError,
+            httpx2.HTTPStatusError,
             match=r"Unexpected 3xx response \(302\)",
         ):
             await redirect_no_location_queries.ping.execute()

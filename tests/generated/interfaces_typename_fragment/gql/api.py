@@ -23,7 +23,7 @@ import builtins
 from tests.generated.interfaces_typename_fragment.settings import GRAPHQL_URL
 
 
-API_CLIENT = runtime.GQLClient(
+API_CLIENT = runtime.AsyncGQLClient(
     base_url=GRAPHQL_URL,
 )
 

@@ -2,12 +2,12 @@
 name = "iron-gql"
 version = "0.7.0"
 
-description = "iron_gql generates typed async GraphQL clients and runtime helpers from schemas for Python services"
+description = "iron_gql generates typed sync and async GraphQL clients and runtime helpers from schemas for Python services"
 readme = "README.md"
 authors = [{ name = "Ilia Ablamonov", email = "ilia@flamefork.ru" }]
 license = "MIT"
 license-files = ["LICENSE"]
-keywords = ["graphql", "gql", "client", "httpx", "pydantic", "codegen", "async"]
+keywords = ["graphql", "gql", "client", "httpx2", "pydantic", "codegen", "async", "sync"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
@@ -18,8 +18,7 @@ classifiers = [
 
 requires-python = ">=3.13"
 dependencies = [
-    "httpx>=0.28.1,<1",
-    "httpx-ws>=0.9,<1",
+    "httpx2[ws]>=2.7,<3",
     "pydantic>=2.12.3,<3",
 ]
 
@@ -45,6 +44,7 @@ dev = [
     "pytest-httpserver>=1.1.3",
     "pytest-randomly>=4.0.1",
     "ruff>=0.14.1",
+    "uvicorn>=0.34",
 ]
 
 [tool.basedpyright]

@@ -6,8 +6,8 @@ from __future__ import annotations
 
 
 import datetime
-from collections.abc import AsyncGenerator
-from contextlib import AbstractAsyncContextManager
+from collections.abc import Generator
+from contextlib import AbstractContextManager
 from typing import Annotated
 from typing import Literal
 from typing import overload
@@ -20,10 +20,10 @@ import pydantic.alias_generators
 
 import builtins
 
-from tests.generated.runtime_crud.settings import GRAPHQL_URL
+from tests.generated.sync_package.settings import GRAPHQL_URL
 
 
-API_CLIENT = runtime.AsyncGQLClient(
+API_CLIENT = runtime.GQLClient(
     base_url=GRAPHQL_URL,
 )
 
@@ -50,19 +50,18 @@ class GetUserResult(GQLModel):
     user: User | None
 
 
-class UpdateUserResult(GQLModel):
-    update_user: User | None
+class RenameUserResult(GQLModel):
+    rename_user: User
 
 
-class UpdateUserInput(GQLModel):
-    id: builtins.str
-    name: str
+class UserRenamedResult(GQLModel):
+    user_renamed: User
 
 
 class GetUser(runtime.GQLOperation):
     # See: queries.py:3
-    async def execute(self, *, id: builtins.str) -> GetUserResult:
-        return await API_CLIENT.query(
+    def execute(self, *, id: builtins.str) -> GetUserResult:
+        return API_CLIENT.query(
             GetUserResult,
             'query GetUser($id: ID!) {\n  user(id: $id) {\n    id\n    name\n  }\n}',
             variables={"id": id},
@@ -70,13 +69,24 @@ class GetUser(runtime.GQLOperation):
         )
 
 
-class UpdateUser(runtime.GQLOperation):
+class RenameUser(runtime.GQLOperation):
     # See: queries.py:14
-    async def execute(self, *, input: UpdateUserInput) -> UpdateUserResult:
-        return await API_CLIENT.query(
-            UpdateUserResult,
-            'mutation UpdateUser($input: UpdateUserInput!) {\n  updateUser(input: $input) {\n    id\n    name\n  }\n}',
-            variables={"input": input},
+    def execute(self, *, id: builtins.str, name: str) -> RenameUserResult:
+        return API_CLIENT.query(
+            RenameUserResult,
+            'mutation RenameUser($id: ID!, $name: String!) {\n  renameUser(id: $id, name: $name) {\n    id\n    name\n  }\n}',
+            variables={"id": id, "name": name},
+            headers=self.headers,
+        )
+
+
+class UserRenamed(runtime.GQLOperation):
+    # See: queries.py:25
+    def execute(self, *, id: builtins.str) -> AbstractContextManager[Generator[UserRenamedResult]]:
+        return API_CLIENT.subscribe(
+            UserRenamedResult,
+            'subscription UserRenamed($id: ID!) {\n  userRenamed(id: $id) {\n    id\n    name\n  }\n}',
+            variables={"id": id},
             headers=self.headers,
         )
 
@@ -84,14 +94,17 @@ class UpdateUser(runtime.GQLOperation):
 @overload
 def api_gql(stmt: Literal['\n    query GetUser($id: ID!) {\n        user(id: $id) {\n            id\n            name\n        }\n    }\n    ']) -> GetUser: ...
 @overload
-def api_gql(stmt: Literal['\n    mutation UpdateUser($input: UpdateUserInput!) {\n        updateUser(input: $input) {\n            id\n            name\n        }\n    }\n    ']) -> UpdateUser: ...
+def api_gql(stmt: Literal['\n    mutation RenameUser($id: ID!, $name: String!) {\n        renameUser(id: $id, name: $name) {\n            id\n            name\n        }\n    }\n    ']) -> RenameUser: ...
+@overload
+def api_gql(stmt: Literal['\n    subscription UserRenamed($id: ID!) {\n        userRenamed(id: $id) {\n            id\n            name\n        }\n    }\n    ']) -> UserRenamed: ...
 @overload
 def api_gql(stmt: str) -> runtime.GQLOperation: ...
 
 
 _API_GQL_DISPATCH: dict[str, type[runtime.GQLOperation]] = {
     '\n    query GetUser($id: ID!) {\n        user(id: $id) {\n            id\n            name\n        }\n    }\n    ': GetUser,
-    '\n    mutation UpdateUser($input: UpdateUserInput!) {\n        updateUser(input: $input) {\n            id\n            name\n        }\n    }\n    ': UpdateUser,
+    '\n    mutation RenameUser($id: ID!, $name: String!) {\n        renameUser(id: $id, name: $name) {\n            id\n            name\n        }\n    }\n    ': RenameUser,
+    '\n    subscription UserRenamed($id: ID!) {\n        userRenamed(id: $id) {\n            id\n            name\n        }\n    }\n    ': UserRenamed,
 }
 
 
