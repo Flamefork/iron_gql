@@ -65,6 +65,8 @@ CASES = [
         f = api_gql("fragment none on User { id }")
 
         s = api_gql("query S { user(id: \\"1\\") @slot { __typename } }")
+
+        bound = s.bind(user=f)
         """,
         "expect": "reject",
     },
@@ -303,54 +305,6 @@ CASES = [
         "expect": "reject",
     },
     {
-        "name": "marker-like-literal",
-        "schema": """
-        type Query {
-            search(term: String): Item
-            item: Item
-        }
-
-        type Item {
-            id: ID!
-        }
-        """,
-        "queries": """
-        from sample_app.gql.api import api_gql
-
-        q = api_gql('''
-        query Q {
-            search(term: "__slot__item") { id }
-            item @slot { __typename }
-        }
-        ''')
-        """,
-        "expect": "ok",
-    },
-    {
-        "name": "reserved-marker-token-literal",
-        "schema": """
-        type Query {
-            search(term: String): Item
-            item: Item
-        }
-
-        type Item {
-            id: ID!
-        }
-        """,
-        "queries": """
-        from sample_app.gql.api import api_gql
-
-        q = api_gql('''
-        query Q {
-            search(term: "__slot__0__") { id }
-            item @slot { __typename }
-        }
-        ''')
-        """,
-        "expect": "reject",
-    },
-    {
         "name": "schema-type-named-none",
         "schema": """
         type Query {
@@ -400,6 +354,8 @@ CASES = [
         f = api_gql("fragment F on User { id }")
 
         s = api_gql("query S { user(id: \\"1\\") @slot { __typename } }")
+
+        bound = s.bind(user=f)
         """,
         "expect": "reject",
     },
@@ -439,11 +395,6 @@ async def _run_path_twins(queries: ModuleType) -> None:
     assert result.a.b_c.id == "2"  # pyright: ignore[reportAny]
 
 
-async def _run_marker_literal(queries: ModuleType) -> None:
-    result = await queries.q.execute(item=[])  # pyright: ignore[reportAny]
-    assert result.search is not None  # pyright: ignore[reportAny]
-
-
 class OracleCase(TypedDict):
     name: str
     case: dict[str, str]
@@ -468,17 +419,6 @@ ORACLE_CASES: list[OracleCase] = [
             }
         },
         "run": _run_path_twins,
-    },
-    {
-        "name": "marker-like-literal",
-        "case": _case("marker-like-literal"),
-        "resolvers": {
-            "Query": {
-                "search": lambda *_, **__: {"id": "s"},
-                "item": lambda *_: {"__typename": "Item"},
-            }
-        },
-        "run": _run_marker_literal,
     },
 ]
 

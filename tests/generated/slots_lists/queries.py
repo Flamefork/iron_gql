@@ -40,3 +40,6 @@ card_title = api_gql(
     }
     """
 )
+
+get_events_with_texts = get_events.bind(board=activity_texts)
+get_cards_with_titles = get_cards.bind(cards=card_title)

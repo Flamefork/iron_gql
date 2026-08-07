@@ -1,9 +1,9 @@
 import functools
-import hashlib
 import shutil
-import textwrap
 from collections import defaultdict
 from collections.abc import Iterable
+from collections.abc import Mapping
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -11,37 +11,15 @@ import graphql
 import pydantic
 from graphql.utilities import value_from_ast_untyped
 
-from iron_gql.codegen.accessors import visit_document
+from iron_gql.codegen.discovery import BindDecl
+from iron_gql.codegen.discovery import IgnoredBind
+from iron_gql.codegen.discovery import Statement
 from iron_gql.codegen.ir import GraphQLGenerationError
 from iron_gql.codegen.slots import QuerySlot
-from iron_gql.codegen.slots import build_exec_parts
 from iron_gql.codegen.slots import collect_query_slots
 from iron_gql.codegen.slots import extend_schema_with_slot
-from iron_gql.codegen.slots import has_slot_directive
-from iron_gql.codegen.slots import response_key
 from iron_gql.codegen.slots import slot_fields
-from iron_gql.codegen.slots import spreads_into
-from iron_gql.codegen.slots import without_slot_directive
 from iron_gql.codegen.util import capitalize_first
-
-
-@dataclass(kw_only=True, frozen=True)
-class Statement:
-    raw_text: str
-    file: Path
-    lineno: int
-
-    @property
-    def location(self) -> str:
-        return f"{self.file}:{self.lineno}"
-
-    @property
-    def clean_text(self) -> str:
-        return textwrap.dedent(self.raw_text).strip()
-
-    @property
-    def hash_str(self) -> str:
-        return hashlib.md5(self.clean_text.encode(), usedforsecurity=False).hexdigest()
 
 
 @dataclass(kw_only=True, frozen=True)
@@ -75,15 +53,14 @@ def parse_var(
 
 @dataclass(kw_only=True, frozen=True)
 class Query:
+    # A parsed operation, before it is known which of the two kinds it is.
+    # Every query that validates becomes an `Operation` or a `Template` in
+    # `classify_queries`; nothing downstream of the parser is handed a bare
+    # `Query`, so anything defined here is what both kinds genuinely share.
     stmt: Statement
     doc: graphql.DocumentNode
     schema: graphql.GraphQLSchema
     fragments: dict[str, graphql.FragmentDefinitionNode]
-    # The printed exec source pre-split at each @slot occurrence: the text up
-    # to the first gap, then one (slot response key, following text) pair per
-    # gap; see `codegen/slots.build_exec_parts`.
-    exec_head: str
-    exec_splices: tuple[tuple[str, str], ...]
 
     @functools.cached_property
     def operation_def(self) -> graphql.OperationDefinitionNode:
@@ -98,6 +75,14 @@ class Query:
         if self.operation_def.name:
             return self.operation_def.name.value
         return f"query{capitalize_first(self.stmt.hash_str)}"
+
+    @property
+    def class_name(self) -> str:
+        return capitalize_first(self.name)
+
+    @property
+    def is_subscription(self) -> bool:
+        return self.operation_def.operation == graphql.OperationType.SUBSCRIPTION
 
     @functools.cached_property
     def variables(self) -> list[GQLVar]:
@@ -115,13 +100,23 @@ class Query:
             raise ValueError(msg)
         return root_type
 
+
+@dataclass(kw_only=True, frozen=True)
+class Operation(Query):
+    # An operation with no `@slot`: what it sends is the document as written.
     @functools.cached_property
-    def slots(self) -> tuple[QuerySlot, ...]:
-        return collect_query_slots(
-            operation_def=self.operation_def,
-            schema=self.schema,
-            location=self.stmt.location,
-        )
+    def exec_source(self) -> str:
+        return graphql.print_ast(self.doc)
+
+
+@dataclass(kw_only=True, frozen=True)
+class Template(Query):
+    # An operation carrying at least one `@slot`. It is never executed as
+    # itself -- each of its bindings prints its own expansion instead (see
+    # `bindings.expand_binding`) -- which is why it has no `exec_source`: a
+    # template's printed document still carries the `@slot` directive, and
+    # sending it would ship that directive to a real server.
+    slots: tuple[QuerySlot, ...]
 
 
 @dataclass(kw_only=True, frozen=True)
@@ -141,36 +136,33 @@ class FragmentStatement:
 
     @functools.cached_property
     def dependencies(self) -> tuple[graphql.FragmentDefinitionNode, ...]:
-        names = collect_transitive_fragment_names(
+        reachable, _unresolvable = collect_transitive_fragment_names(
             collect_fragment_spreads(self.definition), self.fragments
-        ) - {self.name}
+        )
+        names = reachable - {self.name}
         return tuple(self.fragments[name] for name in sorted(names))
 
     @functools.cached_property
     def document(self) -> graphql.DocumentNode:
         # The statement standing on its own: its definition plus every
-        # definition it transitively spreads, so a name-spread fragment can be
-        # validated standalone. A handle never has dependencies — it must be
-        # self-contained (see `validate_self_contained_handles`).
+        # definition it transitively spreads, so a name-spread fragment (and
+        # a bind-reachable one, which may itself spread further fragments)
+        # can be validated standalone.
         return graphql.DocumentNode(definitions=[self.definition, *self.dependencies])
-
-    @property
-    def definition_text(self) -> str:
-        # Printed from the AST rather than sliced out of the source: the runtime
-        # appends this verbatim to an operation, so the text has to be canonical
-        # and independent of how the statement was indented.
-        return graphql.print_ast(self.definition)
 
 
 @dataclass(kw_only=True, frozen=True)
 class ParseResult:
     schema: graphql.GraphQLSchema
-    queries: list[Query]
-    # The single-fragment statements some slot of a validated operation can
-    # accept — the ones that become fragment handles. Computed here, once: a
-    # statement no slot accepts keeps its pre-slot meaning (spread by name,
-    # untyped catch-all at the call site) and is exempt from the
-    # standalone-model invariants a handle must satisfy.
+    # Classified, so no consumer has to ask `bool(query.slots)` to find out
+    # which kind it is holding -- and so the two kinds cannot be handed to a
+    # step that means only one of them.
+    operations: list[Operation]
+    templates: list[Template]
+    # The single-fragment statements some bind references, directly or
+    # through its spread closure — the ones that become fragment handles.
+    # Computed here, once: a statement no bind reaches keeps its pre-bind
+    # meaning (spread by name, untyped catch-all at the call site).
     reachable_statements: list[FragmentStatement]
     errors: list[str]
 
@@ -270,35 +262,6 @@ def validate_fragment_statements(
     return valid, errors
 
 
-def collect_variable_names(node: graphql.Node) -> set[str]:
-    used: set[str] = set()
-
-    class VariableCollector(graphql.Visitor):
-        def enter_variable(self, node: graphql.VariableNode, *_args: object) -> None:
-            used.add(node.name.value)
-
-    graphql.visit(node, VariableCollector())
-    return used
-
-
-def slot_compatible_statements(
-    schema: graphql.GraphQLSchema,
-    statements: list[FragmentStatement],
-    slot_types: Iterable[str],
-) -> list[FragmentStatement]:
-    # A statement that spreads into no slot type inherits no slot base, so
-    # no slot kwarg accepts it.
-    slot_type_list = list(slot_types)
-    return [
-        statement
-        for statement in statements
-        if any(
-            spreads_into(schema, statement.type_condition, slot_type)
-            for slot_type in slot_type_list
-        )
-    ]
-
-
 def _fragment_spellings(
     docs: list[tuple[Statement, graphql.DocumentNode]],
 ) -> dict[str, dict[str, list[str]]]:
@@ -361,65 +324,6 @@ def validate_cross_statement_fragments(
     return errors
 
 
-def validate_fragment_variables(statements: list[FragmentStatement]) -> list[str]:
-    # A handle ships its text verbatim next to whatever operation it is passed
-    # to, and that operation declares no variable on its behalf. Standard
-    # validation misses this: a document holding only fragments is valid with
-    # any variable reference in it.
-    #
-    # Only handles that some slot accepts are checked. A fragment nobody can
-    # pass into a slot is still spread by name into operations that declare its
-    # variables — the ordinary parameterised fragment, which predates slots and
-    # must keep generating.
-    errors: list[str] = []
-    for statement in statements:
-        used = collect_variable_names(statement.definition)
-        if not used:
-            continue
-        names = ", ".join(f"${name}" for name in sorted(used))
-        message = (
-            f"Fragment '{statement.name}' at {statement.stmt.location} cannot "
-            f"reference variables ({names}); fragment arguments are not "
-            "supported"
-        )
-        errors.append(message)
-    return errors
-
-
-def validate_self_contained_handles(
-    reachable: list[FragmentStatement],
-    statements: list[FragmentStatement],
-) -> tuple[list[FragmentStatement], list[str]]:
-    # A handle travels to the server as its own text alone: shipping transitive
-    # definitions next to an arbitrary operation would resolve spreads through
-    # the global fragment index, where scan order decides among same-named
-    # definitions. A fragment a slot can accept is therefore exactly one
-    # self-contained definition; composition by spread stays available to
-    # name-spread fragments, which operations resolve and carry themselves.
-    #
-    # Returns the statements that stay eligible for the combination probe:
-    # keeping a spreading handle there would surface its spreads again as
-    # unknown fragments, burying this diagnosis.
-    errors: list[str] = []
-    spreading: set[str] = set()
-    for statement in reachable:
-        spreads = collect_fragment_spreads(statement.definition)
-        if not spreads:
-            continue
-        spreading.add(statement.name)
-        names = ", ".join(f"'{name}'" for name in sorted(spreads))
-        message = (
-            f"Fragment '{statement.name}' at {statement.stmt.location} spreads "
-            f"{names}; a fragment a slot can accept must be self-contained — "
-            "inline the spread selections"
-        )
-        errors.append(message)
-    eligible = [
-        statement for statement in statements if statement.name not in spreading
-    ]
-    return eligible, errors
-
-
 def build_queries(
     schema: graphql.GraphQLSchema,
     docs: list[tuple[Statement, graphql.DocumentNode]],
@@ -428,25 +332,21 @@ def build_queries(
     queries: list[Query] = []
     for stmt, doc in collect_operations(docs):
         validation_doc = make_validation_doc(doc, fragments)
-        exec_head, exec_splices = build_exec_parts(validation_doc)
         queries.append(
             Query(
                 stmt=stmt,
                 doc=validation_doc,
                 schema=schema,
                 fragments=collect_fragments_from_doc(validation_doc),
-                exec_head=exec_head,
-                exec_splices=exec_splices,
             )
         )
     return queries
 
 
 def validate_queries(queries: list[Query]) -> tuple[list[Query], list[str]]:
-    # Partitioned like the fragment statements: the combination rule
-    # re-validates a copy of each document once per slot, so letting an
-    # already invalid operation through would reprint its errors once per
-    # slot and bury the one line that matters.
+    # Partitioned like the fragment statements: classification below reads the
+    # operation's slots, which is only safe once the document itself is known
+    # to be valid GraphQL.
     valid: list[Query] = []
     errors: list[str] = []
     for query in queries:
@@ -461,144 +361,50 @@ def validate_queries(queries: list[Query]) -> tuple[list[Query], list[str]]:
     return valid, errors
 
 
-def validate_slots(queries: list[Query]) -> tuple[list[Query], list[str]]:
-    # Same partitioning as the fragment statements: `Query.slots` raises on a
-    # malformed slot, and the combination rule below reads it for every query
-    # it is given, so it may only ever see the ones that resolved.
-    valid: list[Query] = []
+def classify_queries(
+    queries: list[Query],
+) -> tuple[list[Operation], list[Template], list[str]]:
+    # The one place the two kinds are told apart: an operation carrying a
+    # `@slot` is a template, everything else is a plain operation. Stated once
+    # and in the type, so no later step re-derives it from `bool(slots)` and
+    # none can be handed the kind it does not mean.
+    #
+    # Partitioned like the fragment statements: `collect_query_slots` raises
+    # on a malformed slot, and a query that fails here becomes neither kind --
+    # the failure is reported instead.
+    operations: list[Operation] = []
+    templates: list[Template] = []
     errors: list[str] = []
     for query in queries:
         try:
-            _ = query.slots
+            slots = collect_query_slots(
+                operation_def=query.operation_def,
+                schema=query.schema,
+                location=query.stmt.location,
+            )
         except GraphQLGenerationError as exc:
             errors.append(str(exc))
-        else:
-            valid.append(query)
-    return valid, errors
-
-
-def spread_into_slot(
-    query: Query,
-    slot: QuerySlot,
-    statements: tuple[FragmentStatement, ...],
-) -> graphql.DocumentNode:
-    spreads = tuple(
-        graphql.FragmentSpreadNode(name=graphql.NameNode(value=statement.name))
-        for statement in statements
-    )
-
-    class SpreadInserter(graphql.Visitor):
-        def enter_field(self, node: graphql.FieldNode, *_args: object) -> object:
-            if not has_slot_directive(node) or response_key(node) != slot.name:
-                return None
-            selections: list[graphql.SelectionNode] = [
-                *(node.selection_set.selections if node.selection_set else []),
-                *spreads,
-            ]
-            return graphql.FieldNode(
-                alias=node.alias,
-                name=node.name,
-                arguments=node.arguments,
-                # The probe stands in for the document the runtime assembles and
-                # sends, and `@slot` is stripped out of that one — the question
-                # being asked here is whether a server would accept it.
-                directives=without_slot_directive(node),
-                selection_set=graphql.SelectionSetNode(selections=selections),
-            )
-
-    doc = visit_document(query.doc, SpreadInserter())
-    # Mirrors `build_slot_source`, which appends each handle's definition to an
-    # operation that already carries its own: a name the operation itself
-    # defines stays duplicated — that document is exactly what the server
-    # would reject, so the probe must see it too. Statements, however, are
-    # deduplicated by name: the same fragment discovered at several call sites
-    # arrives here once per discovery, and whether the texts agree is the
-    # dedup pass's own question, not the probe's.
-    definitions = list(doc.definitions)
-    added: set[str] = set()
-    for statement in statements:
-        if statement.name in added:
             continue
-        added.add(statement.name)
-        definitions.append(statement.definition)
-    return graphql.DocumentNode(definitions=definitions)
-
-
-def clashing_definition_names(
-    doc: graphql.DocumentNode, statement: FragmentStatement
-) -> tuple[str, ...]:
-    # `build_slot_source` appends the handle's definition to an operation that
-    # already carries every fragment it spreads by name — so a name on both
-    # sides is declared twice in the sent query.
-    own = {
-        definition.name.value
-        for definition in doc.definitions
-        if isinstance(definition, graphql.FragmentDefinitionNode)
-    }
-    return tuple(sorted(own & {statement.name}))
-
-
-def validate_slot_fragment_combinations(
-    queries: list[Query], statements: list[FragmentStatement]
-) -> list[str]:
-    # Every fragment the codebase could pass to this slot is spread into it in
-    # one probe, all together: a merge conflict between any two of them is an
-    # error even if nobody passes them together, since the operation as
-    # written cannot serve both, and graphql-core reports each conflicting
-    # pair by fragment name within the single validation. One validation per
-    # slot instead of one per pair keeps the probe linear in the number of
-    # compatible fragments.
-    errors: list[str] = []
-    for query in queries:
-        for slot in query.slots:
-            compatible = slot_compatible_statements(
-                query.schema, statements, [slot.type_name]
+        if slots:
+            templates.append(
+                Template(
+                    stmt=query.stmt,
+                    doc=query.doc,
+                    schema=query.schema,
+                    fragments=query.fragments,
+                    slots=slots,
+                )
             )
-            spreadable: list[FragmentStatement] = []
-            for statement in compatible:
-                clashing = clashing_definition_names(query.doc, statement)
-                if clashing:
-                    errors.append(
-                        _definition_clash_error(query, slot, statement, clashing)
-                    )
-                else:
-                    spreadable.append(statement)
-            if not spreadable:
-                continue
-            validation_errors = graphql.validate(
-                query.schema, spread_into_slot(query, slot, tuple(spreadable))
+        else:
+            operations.append(
+                Operation(
+                    stmt=query.stmt,
+                    doc=query.doc,
+                    schema=query.schema,
+                    fragments=query.fragments,
+                )
             )
-            if not validation_errors:
-                continue
-            names = ", ".join(statement.name for statement in spreadable)
-            headline = (
-                f"Slot '{slot.name}' at {query.stmt.location} is incompatible "
-                f"with {names}:"
-            )
-            errors.append(
-                "\n".join([
-                    headline,
-                    *(str(error) for error in validation_errors),
-                ])
-            )
-    return errors
-
-
-def _definition_clash_error(
-    query: Query,
-    slot: QuerySlot,
-    statement: FragmentStatement,
-    clashing: tuple[str, ...],
-) -> str:
-    names = ", ".join(f"'{name}'" for name in clashing)
-    return (
-        f"Slot '{slot.name}' at {query.stmt.location} cannot accept fragment "
-        f"'{statement.name}' at {statement.stmt.location}: the operation already "
-        f"defines {names} and the handle ships its own copy of that name, so the "
-        "assembled query would declare it twice. A fragment cannot be both "
-        "spread into an operation by name and passed into that operation's "
-        "slot; rename one of the two."
-    )
+    return operations, templates, errors
 
 
 def validate_no_slots_in_fragments(
@@ -638,6 +444,7 @@ def write_debug_artifacts(
     schema_path: Path,
     schema_document: graphql.DocumentNode,
     queries: list[Query],
+    classified: Sequence[Query],
 ) -> None:
     debug_path.mkdir(parents=True, exist_ok=True)
     shutil.copy(schema_path, debug_path / "schema.graphql")
@@ -654,6 +461,12 @@ def write_debug_artifacts(
         debug_path / "schema.json",
         schema_document.to_dict(),  # pyright: ignore[reportUnknownMemberType, reportUnknownArgumentType]
     )
+    # `variables` resolves every declaration against the schema and raises on
+    # one the schema has no type for -- which is exactly what a document that
+    # failed validation may carry. So this dump covers the classified queries,
+    # the ones whose declarations are known to resolve; the raw text and AST
+    # above already carry every statement, valid or not, which is what a debug
+    # run of a *broken* package needs.
     dump_json(
         debug_path / "out.json",
         [
@@ -663,29 +476,58 @@ def write_debug_artifacts(
                 "name": query.name,
                 "variables": query.variables,
             }
-            for query in queries
+            for query in classified
         ],
     )
 
 
+def write_ignored_binds(debug_path: Path, ignored: Sequence[IgnoredBind]) -> None:
+    # The `.bind(...)` calls discovery resolved and left alone, with the reason
+    # each was left. Written by the caller that holds them rather than from
+    # `write_debug_artifacts`: they are discovery's output, and `parse_gql_queries`
+    # would have to carry them through untouched only to hand them back here.
+    # Kept in this module all the same, so the debug directory's layout is
+    # decided in one place.
+    #
+    # An ignored bind is not an error and must not be reported as one -- a
+    # third-party `.bind()` is the common case. Here, where only a debug run
+    # looks, "ignored on purpose" and "ours and lost" stop being the same empty
+    # `binds` list.
+    debug_path.mkdir(parents=True, exist_ok=True)
+    dump_json(
+        debug_path / "ignored_binds.json",
+        [{"location": entry.location, "reason": entry.reason} for entry in ignored],
+    )
+
+
+class _SpreadCollector(graphql.Visitor):
+    def __init__(self, spreads: set[str]) -> None:
+        super().__init__()
+        self.spreads = spreads
+
+    def enter_fragment_spread(
+        self, node: graphql.FragmentSpreadNode, *_args: object
+    ) -> None:
+        self.spreads.add(node.name.value)
+
+
 def collect_fragment_spreads(node: graphql.Node) -> set[str]:
     spreads: set[str] = set()
-
-    class SpreadCollector(graphql.Visitor):
-        def enter_fragment_spread(
-            self, node: graphql.FragmentSpreadNode, *_args: object
-        ):
-            spreads.add(node.name.value)
-
-    graphql.visit(node, SpreadCollector())
+    graphql.visit(node, _SpreadCollector(spreads))
     return spreads
 
 
 def collect_transitive_fragment_names(
     roots: Iterable[str],
-    fragments: dict[str, graphql.FragmentDefinitionNode],
-) -> set[str]:
+    fragments: Mapping[str, graphql.FragmentDefinitionNode],
+) -> tuple[set[str], set[str]]:
+    # (resolved, unresolvable) from one walk. Callers that only need the
+    # reachable set discard the second half -- `graphql.validate` is the one
+    # place a spread with no definition is diagnosed -- while `bindings`
+    # reports the unresolvable names itself, because a bind can only see
+    # single-fragment statements and has its own remedy to offer.
     visited: set[str] = set()
+    missing: set[str] = set()
     queue = list(roots)
     while queue:
         name = queue.pop()
@@ -693,17 +535,18 @@ def collect_transitive_fragment_names(
             continue
         fragment = fragments.get(name)
         if not fragment:
+            missing.add(name)
             continue
         visited.add(name)
         queue.extend(collect_fragment_spreads(fragment))
-    return visited
+    return visited, missing
 
 
 def collect_referenced_fragment_names(
     doc: graphql.DocumentNode,
     fragments: dict[str, graphql.FragmentDefinitionNode],
 ) -> set[str]:
-    return collect_transitive_fragment_names(
+    reachable, _unresolvable = collect_transitive_fragment_names(
         [
             spread
             for defn in doc.definitions
@@ -712,6 +555,7 @@ def collect_referenced_fragment_names(
         ],
         fragments,
     )
+    return reachable
 
 
 def make_validation_doc(
@@ -730,9 +574,112 @@ def make_validation_doc(
     return graphql.DocumentNode(definitions=[*doc.definitions, *extra_definitions])
 
 
+def bind_closures(
+    binds: Sequence[BindDecl],
+    statements: list[FragmentStatement],
+) -> tuple[list[FragmentStatement], list[str]]:
+    # The single-fragment statements that become typed handles: named directly
+    # by some bind's slot argument, or reached transitively through that
+    # fragment's own spreads. Walked over those statements alone, because that
+    # is exactly what a bind can see -- a fragment defined inside a
+    # multi-definition statement is spreadable by name anywhere else, but no
+    # handle can be made of it, so it is unresolvable *here* and diagnosed
+    # here, at the predicate, instead of being resolved against the package
+    # index and rejected two layers down. `expand_binding` then walks the same
+    # closure over the set this returns and finds nothing missing by
+    # construction.
+    by_stmt = {statement.stmt: statement for statement in statements}
+    handle_defs = {statement.name: statement.definition for statement in statements}
+    errors: list[str] = []
+    reachable_names: set[str] = set()
+    for bind in binds:
+        direct_names = {
+            statement.name
+            for _key, stmts in bind.slot_args
+            for stmt in stmts
+            if (statement := by_stmt.get(stmt)) is not None
+        }
+        names, missing = collect_transitive_fragment_names(direct_names, handle_defs)
+        reachable_names |= names
+        if missing:
+            names = ", ".join(sorted(missing))
+            msg = (
+                f"Bind at {bind.location} spreads fragment(s) {names} in its "
+                "closure, but they are not single-fragment statements a bind "
+                "can see -- split each into its own statement"
+            )
+            errors.append(msg)
+    return (
+        [statement for statement in statements if statement.name in reachable_names],
+        errors,
+    )
+
+
+def validate_bind_templates(
+    binds: Sequence[BindDecl],
+    all_queries: list[Query],
+    operations: list[Operation],
+    templates: list[Template],
+) -> list[str]:
+    # Three sets on purpose. `all_queries` is unfiltered, and answers "is this
+    # even operation-shaped" -- safe to ask of a query that never validated.
+    # The other two are what classification produced, so membership in either
+    # *is* the answer to "did it validate", and which one it landed in *is*
+    # the answer to "does it have slots" -- neither is re-derived here.
+    all_stmts = {query.stmt for query in all_queries}
+    template_stmts = {query.stmt for query in templates}
+    operation_by_stmt = {query.stmt: query for query in operations}
+    errors: list[str] = []
+    for bind in binds:
+        if bind.template not in all_stmts:
+            message = (
+                f"Bind at {bind.location}: template at {bind.template.location} "
+                "is not an operation"
+            )
+            errors.append(message)
+        elif bind.template in template_stmts:
+            continue
+        elif (operation := operation_by_stmt.get(bind.template)) is not None:
+            message = (
+                f"Bind at {bind.location}: template '{operation.name}' at "
+                f"{bind.template.location} has no slots"
+            )
+            errors.append(message)
+        else:
+            # It IS an operation, so "is not an operation" would be wrong —
+            # it just never validated; that failure is already reported on
+            # its own as a GraphQL or slot error elsewhere in this same list.
+            message = (
+                f"Bind at {bind.location}: template at {bind.template.location} "
+                "failed to validate; see the GraphQL error reported for it"
+            )
+            errors.append(message)
+    return errors
+
+
+def validate_bind_slot_args(
+    binds: Sequence[BindDecl],
+    statements: list[FragmentStatement],
+) -> list[str]:
+    by_stmt = {statement.stmt: statement for statement in statements}
+    errors: list[str] = []
+    for bind in binds:
+        for key, stmts in bind.slot_args:
+            for stmt in stmts:
+                if stmt in by_stmt:
+                    continue
+                message = (
+                    f"Bind at {bind.location}: value for slot '{key}' at "
+                    f"{stmt.location} is not a single-fragment statement"
+                )
+                errors.append(message)
+    return errors
+
+
 def parse_gql_queries(
     schema_path: Path,
     statements: list[Statement],
+    binds: Sequence[BindDecl],
     *,
     debug_path: Path | None = None,
 ) -> ParseResult:
@@ -743,34 +690,20 @@ def parse_gql_queries(
     docs = parse_documents(statements)
     fragments = collect_fragments(docs)
     queries = build_queries(schema, docs, fragments)
+    all_fragment_statements = collect_fragment_statements(schema, docs, fragments)
     valid_statements, fragment_errors = validate_fragment_statements(
-        collect_fragment_statements(schema, docs, fragments)
+        all_fragment_statements
     )
     valid_queries, query_errors = validate_queries(queries)
-    # Slot rules read `Query.slots` and re-validate the document, so they run on
-    # the operations that already validated: what a slot inside a rejected
-    # operation has to say is noise on top of the reason it was rejected.
-    slot_queries, slot_errors = validate_slots(valid_queries)
-    # Fed the statements that validated: compatibility intersects possible
-    # types, which only a resolved composite type condition has.
-    reachable_statements = slot_compatible_statements(
-        schema,
-        valid_statements,
-        {slot.type_name for query in slot_queries for slot in query.slots},
-    )
-    probe_statements, containment_errors = validate_self_contained_handles(
-        reachable_statements, valid_statements
-    )
-    errors = [
-        *query_errors,
-        *fragment_errors,
-        *validate_no_slots_in_fragments(docs),
-        *slot_errors,
-        *containment_errors,
-        *validate_fragment_variables(reachable_statements),
-        *validate_cross_statement_fragments(docs, fragments),
-        *validate_slot_fragment_combinations(slot_queries, probe_statements),
-    ]
+    # Classification reads the operation's slots and re-validates the document,
+    # so it runs on the operations that already validated: what a slot inside a
+    # rejected operation has to say is noise on top of the reason it was
+    # rejected.
+    operations, templates, slot_errors = classify_queries(valid_queries)
+    # A statement's bind-reachability doesn't depend on whether it validated
+    # cleanly, but everything downstream (`expand_binding`, the IR collector)
+    # only ever sees statements that did.
+    reachable_statements, closure_errors = bind_closures(binds, valid_statements)
 
     if debug_path:
         write_debug_artifacts(
@@ -778,13 +711,24 @@ def parse_gql_queries(
             schema_path=schema_path,
             schema_document=schema_document,
             queries=queries,
+            classified=[*operations, *templates],
         )
 
     return ParseResult(
         schema=schema,
-        queries=queries,
+        operations=operations,
+        templates=templates,
         reachable_statements=reachable_statements,
-        errors=errors,
+        errors=[
+            *query_errors,
+            *fragment_errors,
+            *validate_no_slots_in_fragments(docs),
+            *slot_errors,
+            *validate_cross_statement_fragments(docs, fragments),
+            *validate_bind_templates(binds, queries, operations, templates),
+            *validate_bind_slot_args(binds, all_fragment_statements),
+            *closure_errors,
+        ],
     )
 
 

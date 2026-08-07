@@ -1,14 +1,17 @@
+from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import cast
 
 import graphql
 
 from iron_gql.codegen.accessors import type_info_type
-from iron_gql.codegen.accessors import visit_document
 from iron_gql.codegen.ir import CollectedArtifact
 from iron_gql.codegen.ir import CollectedPackageIR
 from iron_gql.codegen.ir import GraphQLGenerationError
 from iron_gql.codegen.ir import slot_roots
+from iron_gql.codegen.selection import has_conditional_directive
+from iron_gql.codegen.selection import response_key
+from iron_gql.codegen.util import reachable
 
 SLOT_DIRECTIVE_NAME = "slot"
 SLOT_DIRECTIVE_SDL = "directive @slot on FIELD"
@@ -34,9 +37,9 @@ def extend_schema_with_slot(schema: graphql.GraphQLSchema) -> graphql.GraphQLSch
 
 def has_slot_directive(node: graphql.FieldNode) -> bool:
     # graphql-core types `directives` as a plain tuple, but a `FieldNode`
-    # built without passing the argument (as the marker field below does, and
-    # as `graphql.visit` does when re-entering a replacement node's own
-    # children) gets `None` at runtime instead of `()`.
+    # gets `None` at runtime instead of `()` when `graphql.visit` re-enters a
+    # replacement node's own children -- as it does after `_SlotFiller`
+    # (bindings.py) returns one.
     return any(
         directive.name.value == SLOT_DIRECTIVE_NAME
         for directive in node.directives or ()
@@ -53,19 +56,19 @@ def without_slot_directive(
     )
 
 
-def response_key(node: graphql.FieldNode) -> str:
-    return node.alias.value if node.alias else node.name.value
+class _SlotFieldFinder(graphql.Visitor):
+    def __init__(self, found: list[graphql.FieldNode]) -> None:
+        super().__init__()
+        self.found = found
+
+    def enter_field(self, node: graphql.FieldNode, *_args: object) -> None:
+        if has_slot_directive(node):
+            self.found.append(node)
 
 
 def slot_fields(node: graphql.Node) -> list[graphql.FieldNode]:
     found: list[graphql.FieldNode] = []
-
-    class Finder(graphql.Visitor):
-        def enter_field(self, node: graphql.FieldNode, *_args: object) -> None:
-            if has_slot_directive(node):
-                found.append(node)
-
-    graphql.visit(node, Finder())
+    graphql.visit(node, _SlotFieldFinder(found))
     return found
 
 
@@ -73,71 +76,6 @@ def slot_fields(node: graphql.Node) -> list[graphql.FieldNode]:
 class QuerySlot:
     name: str
     type_name: str
-
-
-def build_exec_document(
-    doc: graphql.DocumentNode,
-) -> tuple[graphql.DocumentNode, tuple[tuple[str, str], ...]]:
-    # Each @slot occurrence gets its own indexed token rather than a
-    # name-derived one: the token only exists to be located in the printed
-    # text once, and `build_exec_parts` verifies that uniqueness.
-    markers: list[tuple[str, str]] = []
-
-    class SlotStripper(graphql.Visitor):
-        def enter_field(self, node: graphql.FieldNode, *_args: object) -> object:
-            if not has_slot_directive(node):
-                return None
-            token = f"__slot__{len(markers)}__"
-            markers.append((token, response_key(node)))
-            selections: list[graphql.SelectionNode] = [
-                *(node.selection_set.selections if node.selection_set else []),
-                graphql.FieldNode(name=graphql.NameNode(value=token)),
-            ]
-            return graphql.FieldNode(
-                alias=node.alias,
-                name=node.name,
-                arguments=node.arguments,
-                directives=without_slot_directive(node),
-                selection_set=graphql.SelectionSetNode(selections=selections),
-            )
-
-    return visit_document(doc, SlotStripper()), tuple(markers)
-
-
-def build_exec_parts(
-    doc: graphql.DocumentNode,
-) -> tuple[str, tuple[tuple[str, str], ...]]:
-    # The printed operation is split at the synthesized marker fields here, at
-    # codegen time, so the runtime splices spreads purely positionally and
-    # never matches text — user-written text that merely looks like a marker
-    # stays untouched. Each token is verified to occur exactly once, so a
-    # literal collision is a loud error instead of a silent mis-split.
-    # Returned as the head plus (slot name, following text) pairs, so a gap
-    # and its slot name cannot fall out of sync.
-    exec_doc, markers = build_exec_document(doc)
-    printed = graphql.print_ast(exec_doc)
-    positioned: list[tuple[int, str, str]] = []
-    for token, slot_name in markers:
-        if printed.count(token) != 1:
-            msg = (
-                f"Operation text contains the reserved marker token '{token}';"
-                " remove it so slot spreads can be spliced unambiguously"
-            )
-            raise GraphQLGenerationError([msg])
-        positioned.append((printed.index(token), token, slot_name))
-    # Textual order, not visitor order: for (invalid, rejected later) nested
-    # slots the outer marker prints after the inner subtree, and the split
-    # must not depend on that.
-    positioned.sort()
-    segments: list[str] = []
-    slot_names: list[str] = []
-    rest = printed
-    for _position, token, slot_name in positioned:
-        before, rest = rest.split(token, maxsplit=1)
-        segments.append(before)
-        slot_names.append(slot_name)
-    segments.append(rest)
-    return segments[0], tuple(zip(slot_names, segments[1:], strict=True))
 
 
 def possible_type_names(
@@ -158,10 +96,6 @@ def possible_type_names(
             raise AssertionError(msg)
 
 
-def fragment_base_name(type_name: str) -> str:
-    return f"{type_name}Fragment"
-
-
 def spreads_into(
     schema: graphql.GraphQLSchema, fragment_type: str, target_type: str
 ) -> bool:
@@ -174,6 +108,51 @@ def spreads_into(
     )
 
 
+class _SlotCollector(graphql.Visitor):
+    def __init__(
+        self,
+        *,
+        by_name: dict[str, QuerySlot],
+        type_info: graphql.TypeInfo,
+        location: str,
+    ) -> None:
+        super().__init__()
+        self.by_name = by_name
+        self.type_info = type_info
+        self.location = location
+
+    def enter_field(self, node: graphql.FieldNode, *_args: object) -> None:
+        if not has_slot_directive(node):
+            return
+        name = response_key(node)
+        location = self.location
+        # Composite first: a scalar field has no selection set to put
+        # __typename in, so asking it for one would report a demand that
+        # cannot be met instead of the reason it cannot.
+        named = graphql.get_named_type(type_info_type(self.type_info))
+        if not isinstance(named, graphql.GraphQLCompositeType):
+            msg = f"Slot '{name}' at {location} is not on a composite field"
+            raise GraphQLGenerationError([msg])
+        if has_conditional_directive(node):
+            msg = (
+                f"Slot '{name}' at {location} cannot carry @skip/@include; "
+                "a slot field is always requested — a caller that wants no "
+                "fragment data passes an empty list"
+            )
+            raise GraphQLGenerationError([msg])
+        if not _selects_typename(node):
+            msg = f"Slot '{name}' at {location} must select __typename unconditionally"
+            raise GraphQLGenerationError([msg])
+        existing = self.by_name.get(name)
+        if existing is not None and existing.type_name != named.name:
+            msg = (
+                f"Slot '{name}' at {location} covers fields of different types "
+                f"({existing.type_name}, {named.name}); use an alias"
+            )
+            raise GraphQLGenerationError([msg])
+        self.by_name[name] = QuerySlot(name=name, type_name=named.name)
+
+
 def collect_query_slots(
     *,
     operation_def: graphql.OperationDefinitionNode,
@@ -182,65 +161,33 @@ def collect_query_slots(
 ) -> tuple[QuerySlot, ...]:
     by_name: dict[str, QuerySlot] = {}
     type_info = graphql.TypeInfo(schema)
-
-    class SlotCollector(graphql.Visitor):
-        def enter_field(self, node: graphql.FieldNode, *_args: object) -> None:
-            if not has_slot_directive(node):
-                return
-            name = response_key(node)
-            # Composite first: a scalar field has no selection set to put
-            # __typename in, so asking it for one would report a demand that
-            # cannot be met instead of the reason it cannot.
-            named = graphql.get_named_type(type_info_type(type_info))
-            if not isinstance(named, graphql.GraphQLCompositeType):
-                msg = f"Slot '{name}' at {location} is not on a composite field"
-                raise GraphQLGenerationError([msg])
-            if any(
-                directive.name.value in {"include", "skip"}
-                for directive in node.directives or ()
-            ):
-                msg = (
-                    f"Slot '{name}' at {location} cannot carry @skip/@include; "
-                    "a slot field is always requested — a caller that wants no "
-                    "fragment data passes an empty list"
-                )
-                raise GraphQLGenerationError([msg])
-            if not _selects_typename(node):
-                msg = (
-                    f"Slot '{name}' at {location} must select __typename "
-                    "unconditionally"
-                )
-                raise GraphQLGenerationError([msg])
-            existing = by_name.get(name)
-            if existing is not None and existing.type_name != named.name:
-                msg = (
-                    f"Slot '{name}' at {location} covers fields of different types "
-                    f"({existing.type_name}, {named.name}); use an alias"
-                )
-                raise GraphQLGenerationError([msg])
-            by_name[name] = QuerySlot(name=name, type_name=named.name)
-
-    graphql.visit(operation_def, graphql.TypeInfoVisitor(type_info, SlotCollector()))
-    return tuple(by_name[name] for name in sorted(by_name))
+    graphql.visit(
+        operation_def,
+        graphql.TypeInfoVisitor(
+            type_info,
+            _SlotCollector(by_name=by_name, type_info=type_info, location=location),
+        ),
+    )
+    # Document order, which is the dict's insertion order here: the slot order
+    # is public API — it fixes the type parameter list of `{Operation}Bound` —
+    # so it follows what the developer wrote rather than an alphabetical
+    # accident of the response keys. Places that need an order-independent
+    # identity (the bind key, the rendered dispatch literal) sort for
+    # themselves.
+    return tuple(by_name.values())
 
 
 def reachable_model_names(
-    root: str, artifacts: dict[str, CollectedArtifact]
+    roots: Iterable[str], artifacts: dict[str, CollectedArtifact]
 ) -> set[str]:
-    # The models reachable from a root through NamedRef edges: a slot's or a
+    # The models reachable from the roots through NamedRef edges: a slot's or a
     # fragment's subtree, as consumed by the open-model set and the
     # nested-slot rule.
-    reached: set[str] = set()
-    queue = [root]
-    while queue:
-        name = queue.pop()
-        for dependency in artifacts[name].dependencies:
-            # A dependency that is not an artifact is an enum: a leaf.
-            if dependency in reached or dependency not in artifacts:
-                continue
-            reached.add(dependency)
-            queue.append(dependency)
-    return reached
+    return reachable(
+        roots,
+        # A dependency that is not an artifact is an enum: a leaf.
+        lambda name: (dep for dep in artifacts[name].dependencies if dep in artifacts),
+    )
 
 
 def _slot_names_by_model(ir: CollectedPackageIR) -> dict[str, str]:
@@ -258,13 +205,18 @@ def validate_no_nested_slots(ir: CollectedPackageIR) -> list[str]:
     # of the outer slot's static selection, so every fragment passed to the
     # outer overlaps the inner's payload and splice point — rejected instead
     # of being given accidental semantics.
+    #
+    # Walks `ir.templates`, not `ir.operations`: a slot can only ever appear
+    # on a template — that is what `parser.classify_queries` means by the
+    # word, and the two kinds have been separate types ever since — so an
+    # operation has no slots to nest in the first place.
     artifacts = {artifact.name: artifact for artifact in ir.result_artifacts}
     slot_names = _slot_names_by_model(ir)
     errors: list[str] = []
-    for operation in ir.operations:
-        at = ", ".join(operation.locations)
-        outer_names = reachable_model_names(operation.result_type, artifacts) & set(
-            slot_names
+    for template in ir.templates:
+        at = template.location
+        outer_names = (
+            reachable_model_names([template.result_type], artifacts) & slot_names.keys()
         )
         # Collected as slot-name pairs rather than model pairs: a slot on a union
         # or interface has one model per variant, and all of them carry the same
@@ -274,53 +226,21 @@ def validate_no_nested_slots(ir: CollectedPackageIR) -> list[str]:
         for outer in outer_names:
             nested.update(
                 (slot_names[outer], slot_names[inner])
-                for inner in reachable_model_names(outer, artifacts) & set(slot_names)
+                for inner in reachable_model_names([outer], artifacts)
+                & slot_names.keys()
             )
         errors.extend(
             _nested_slot_error(
-                operation_name=operation.class_name, at=at, outer=outer, inner=inner
+                template_name=template.class_name, at=at, outer=outer, inner=inner
             )
             for outer, inner in sorted(nested)
         )
     return errors
 
 
-def validate_slots_are_collected(ir: CollectedPackageIR) -> list[str]:
-    # A slot kwarg and its `{Type}Fragment` base come from the AST, but the
-    # slot model only exists when the field survives collection — a literal
-    # @skip/@include drops it, leaving an operation that demands a handle
-    # whose data can never arrive and a rendered module that references the
-    # never-imported slot runtime.
-    artifacts = {artifact.name: artifact for artifact in ir.result_artifacts}
-    slot_names = _slot_names_by_model(ir)
-    errors: list[str] = []
-    for operation in ir.operations:
-        at = ", ".join(operation.locations)
-        collected = {
-            slot_names[name]
-            for name in reachable_model_names(operation.result_type, artifacts)
-            if name in slot_names
-        }
-        errors.extend(
-            _excluded_slot_error(
-                slot_name=slot.name, operation_name=operation.class_name, at=at
-            )
-            for slot in operation.slots
-            if slot.name not in collected
-        )
-    return errors
-
-
-def _excluded_slot_error(*, slot_name: str, operation_name: str, at: str) -> str:
+def _nested_slot_error(*, template_name: str, at: str, outer: str, inner: str) -> str:
     return (
-        f"Slot '{slot_name}' of operation '{operation_name}' at {at} is "
-        "statically excluded by its @skip/@include directives"
-    )
-
-
-def _nested_slot_error(*, operation_name: str, at: str, outer: str, inner: str) -> str:
-    return (
-        f"Slot '{inner}' of operation '{operation_name}' at {at} is nested inside "
+        f"Slot '{inner}' of template '{template_name}' at {at} is nested inside "
         f"slot '{outer}'; a slot cannot sit inside another slot's subtree"
     )
 

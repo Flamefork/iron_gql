@@ -32,3 +32,27 @@ user_renamed = api_gql(
     }
     """
 )
+
+# Finding F12: the renderer emits a distinct sync path for bindings (the
+# branch's real-world consumer is a sync package), but nothing calls
+# execute() on one -- this template/fragment/bind exercises exactly that.
+get_user_with_manager = api_gql(
+    """
+    query GetUserWithManager($id: ID!) {
+        user(id: $id) {
+            id
+            manager @slot { __typename }
+        }
+    }
+    """
+)
+
+manager_name = api_gql(
+    """
+    fragment ManagerName on User {
+        name
+    }
+    """
+)
+
+bound_user_with_manager = get_user_with_manager.bind(manager=manager_name)

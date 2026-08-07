@@ -32,6 +32,7 @@ generated_package(
     type User {
         id: ID!
         name: String!
+        manager: User
     }
     """,
     queries='''
@@ -69,6 +70,30 @@ generated_package(
         }
         """
     )
+
+    # Finding F12: the renderer emits a distinct sync path for bindings (the
+    # branch's real-world consumer is a sync package), but nothing calls
+    # execute() on one -- this template/fragment/bind exercises exactly that.
+    get_user_with_manager = api_gql(
+        """
+        query GetUserWithManager($id: ID!) {
+            user(id: $id) {
+                id
+                manager @slot { __typename }
+            }
+        }
+        """
+    )
+
+    manager_name = api_gql(
+        """
+        fragment ManagerName on User {
+            name
+        }
+        """
+    )
+
+    bound_user_with_manager = get_user_with_manager.bind(manager=manager_name)
     ''',
 )
 
@@ -111,6 +136,29 @@ def test_sync_package_runs_query_and_mutation(httpserver: HTTPServer):
 
         missing = sync_queries.get_user.execute(id="user-2")
         assert missing.user is None
+
+
+def test_sync_binding_executes_and_reads_the_slot(httpserver: HTTPServer):
+    # Finding F12: no test anywhere called execute() on a sync-mode binding,
+    # even though the renderer emits a distinct sync path for it and
+    # example/gql/api_sync.py -- the branch's real-world consumer -- carries
+    # one. `resolve_user` returns the manager nested in the same dict, so
+    # graphql-core's default resolver reads it without a dedicated resolver.
+    def resolve_user(
+        _root: None, _info: GraphQLResolveInfo, *, id: str
+    ) -> dict[str, object]:
+        return {
+            "id": id,
+            "name": "Graph",
+            "manager": {"id": f"{id}-mgr", "name": "Carol"},
+        }
+
+    with sync_gql_server(httpserver, "sync_package", {"Query": {"user": resolve_user}}):
+        result = sync_queries.bound_user_with_manager.execute(id="user-1")
+        assert result.user is not None
+        manager = sync_queries.manager_name.read(result.user.manager)
+        assert manager is not None
+        assert manager.name == "Carol"
 
 
 def test_sync_package_raises_graphql_errors(httpserver: HTTPServer):

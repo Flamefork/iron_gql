@@ -15,7 +15,7 @@ from httpx2.websockets import WebSocketDisconnect
 from httpx2.websockets import WebSocketSession
 
 from iron_gql.errors import GraphQLResponseError
-from iron_gql.slots import SlotFragments
+from iron_gql.slots import SlotHandles
 
 
 class _WSMessage(pydantic.BaseModel):
@@ -71,7 +71,7 @@ def _handshake_action(message: _WSMessage) -> Literal["ack", "pong", "skip"]:
 def _message_action[T: pydantic.BaseModel](
     message: _WSMessage,
     result_type: type[T],
-    slot_fragments: SlotFragments | None,
+    slot_handles: SlotHandles | None,
 ) -> MessageAction[T]:
     match message.type:
         case "next":
@@ -88,9 +88,7 @@ def _message_action[T: pydantic.BaseModel](
             # Same contract as the query path: a payload that fails result
             # validation surfaces as pydantic.ValidationError with a response
             # path, identically across both transports.
-            return Emit(
-                result_type.model_validate(payload.data, context=slot_fragments)
-            )
+            return Emit(result_type.model_validate(payload.data, context=slot_handles))
         case "error":
             try:
                 error_payload = _ERROR_PAYLOAD.validate_python(message.payload)
@@ -130,14 +128,14 @@ async def async_graphql_ws_subscribe[T: pydantic.BaseModel](
     result_type: type[T],
     query: str,
     variables: dict[str, Any] | None,
-    slot_fragments: SlotFragments | None,
+    slot_handles: SlotHandles | None,
 ) -> AsyncGenerator[AsyncGenerator[T]]:
     await _async_ws_handshake(ws)
     payload: dict[str, Any] = {"query": query}
     if variables:
         payload["variables"] = variables
     await ws.send_json({"id": "1", "type": "subscribe", "payload": payload})
-    yield _async_ws_receive_messages(ws, result_type, slot_fragments)
+    yield _async_ws_receive_messages(ws, result_type, slot_handles)
 
 
 async def _async_ws_handshake(ws: AsyncWebSocketSession) -> None:
@@ -193,7 +191,7 @@ def ws_url(url: httpx2.URL) -> httpx2.URL:
 async def _async_ws_receive_messages[T: pydantic.BaseModel](
     ws: AsyncWebSocketSession,
     result_type: type[T],
-    slot_fragments: SlotFragments | None,
+    slot_handles: SlotHandles | None,
 ) -> AsyncGenerator[T]:
     while True:
         try:
@@ -208,7 +206,7 @@ async def _async_ws_receive_messages[T: pydantic.BaseModel](
             raise GraphQLResponseError([
                 {"message": f"Malformed protocol message: {exc}"}
             ]) from exc
-        match _message_action(message, result_type, slot_fragments):
+        match _message_action(message, result_type, slot_handles):
             case Emit(value=value):
                 yield value
             case "pong":
@@ -225,14 +223,14 @@ def graphql_ws_subscribe[T: pydantic.BaseModel](
     result_type: type[T],
     query: str,
     variables: dict[str, Any] | None,
-    slot_fragments: SlotFragments | None,
+    slot_handles: SlotHandles | None,
 ) -> Generator[Generator[T]]:
     _ws_handshake(ws)
     payload: dict[str, Any] = {"query": query}
     if variables:
         payload["variables"] = variables
     ws.send_json({"id": "1", "type": "subscribe", "payload": payload})
-    yield _ws_receive_messages(ws, result_type, slot_fragments)
+    yield _ws_receive_messages(ws, result_type, slot_handles)
 
 
 def _ws_handshake(ws: WebSocketSession) -> None:
@@ -273,7 +271,7 @@ def _ws_handshake(ws: WebSocketSession) -> None:
 def _ws_receive_messages[T: pydantic.BaseModel](
     ws: WebSocketSession,
     result_type: type[T],
-    slot_fragments: SlotFragments | None,
+    slot_handles: SlotHandles | None,
 ) -> Generator[T]:
     while True:
         try:
@@ -288,7 +286,7 @@ def _ws_receive_messages[T: pydantic.BaseModel](
             raise GraphQLResponseError([
                 {"message": f"Malformed protocol message: {exc}"}
             ]) from exc
-        match _message_action(message, result_type, slot_fragments):
+        match _message_action(message, result_type, slot_handles):
             case Emit(value=value):
                 yield value
             case "pong":

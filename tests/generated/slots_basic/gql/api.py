@@ -10,9 +10,13 @@ from collections.abc import AsyncGenerator
 from collections.abc import Sequence
 from contextlib import AbstractAsyncContextManager
 from typing import Annotated
+from typing import Any
 from typing import ClassVar
 from typing import Literal
+from typing import Never
+from typing import Self
 from typing import overload
+from typing import override
 
 import pydantic
 
@@ -43,106 +47,162 @@ class GQLModel(pydantic.BaseModel):
         validate_default=True,
     )
 
+    # A template's result model is subscripted with its slots' offered
+    # fragments (e.g. `GetAttachmentResult[ImageParts | NodeId]`), which
+    # builds and caches a genuine subclass rather than reusing the base -- the
+    # override below keeps that subclass's name, and so every ValidationError
+    # title raised through it, on the plain model name.
+    @classmethod
+    @override
+    def model_parametrized_name(cls, params: tuple[type[Any], ...]) -> str:
+        return cls.__name__
+
 
 class GQLOpenModel(GQLModel):
     model_config = pydantic.ConfigDict(extra="ignore")
 
 
-class GQLSlotModel(GQLOpenModel, slots.GQLSlotNode):
+class GQLSlotModel[TOffered](GQLOpenModel, slots.GQLSlotNode[TOffered]):
     pass
 
 
-class AttachmentFragment[TModel: pydantic.BaseModel](slots.GQLFragment[TModel]): ...
-
-
-class GetAttachmentResultPostAttachmentSlotImageAttachment(GQLSlotModel):
+class GetAttachmentResultPostAttachmentSlotImageAttachment[TAttachment](GQLSlotModel[TAttachment]):
     slot_name__: ClassVar[str] = "attachment"
     typename__: Annotated[Literal["ImageAttachment"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
 
 
-class GetAttachmentResultPostAttachmentSlotLinkAttachment(GQLSlotModel):
+class GetAttachmentResultPostAttachmentSlotLinkAttachment[TAttachment](GQLSlotModel[TAttachment]):
     slot_name__: ClassVar[str] = "attachment"
     typename__: Annotated[Literal["LinkAttachment"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
 
 
-type GetAttachmentResultPostAttachmentSlot = Annotated[GetAttachmentResultPostAttachmentSlotImageAttachment | GetAttachmentResultPostAttachmentSlotLinkAttachment, pydantic.Field(discriminator="typename__")]
+type GetAttachmentResultPostAttachmentSlot[TAttachment] = Annotated[GetAttachmentResultPostAttachmentSlotImageAttachment[TAttachment] | GetAttachmentResultPostAttachmentSlotLinkAttachment[TAttachment], pydantic.Field(discriminator="typename__")]
 
 
-class PostWithAttachmentId_GetAttachmentResultPostAttachmentSlot(GQLModel):
+class PostWithAttachmentId_GetAttachmentResultPostAttachmentSlot[TAttachment](GQLModel):
     id: builtins.str
-    attachment: GetAttachmentResultPostAttachmentSlot | None
+    attachment: GetAttachmentResultPostAttachmentSlot[TAttachment] | None
 
 
-class GetAttachmentResult(GQLModel):
-    post: PostWithAttachmentId_GetAttachmentResultPostAttachmentSlot | None
+class GetAttachmentResult[TAttachment](GQLModel):
+    post: PostWithAttachmentId_GetAttachmentResultPostAttachmentSlot[TAttachment] | None
 
 
-class AttachResultAttachAttachmentSlotImageAttachment(GQLSlotModel):
+class AttachResultAttachAttachmentSlotImageAttachment[TAttachment](GQLSlotModel[TAttachment]):
     slot_name__: ClassVar[str] = "attachment"
     typename__: Annotated[Literal["ImageAttachment"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
 
 
-class AttachResultAttachAttachmentSlotLinkAttachment(GQLSlotModel):
+class AttachResultAttachAttachmentSlotLinkAttachment[TAttachment](GQLSlotModel[TAttachment]):
     slot_name__: ClassVar[str] = "attachment"
     typename__: Annotated[Literal["LinkAttachment"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
 
 
-type AttachResultAttachAttachmentSlot = Annotated[AttachResultAttachAttachmentSlotImageAttachment | AttachResultAttachAttachmentSlotLinkAttachment, pydantic.Field(discriminator="typename__")]
+type AttachResultAttachAttachmentSlot[TAttachment] = Annotated[AttachResultAttachAttachmentSlotImageAttachment[TAttachment] | AttachResultAttachAttachmentSlotLinkAttachment[TAttachment], pydantic.Field(discriminator="typename__")]
 
 
-class PostWithAttachmentId_AttachResultAttachAttachmentSlot(GQLModel):
+class PostWithAttachmentId_AttachResultAttachAttachmentSlot[TAttachment](GQLModel):
     id: builtins.str
-    attachment: AttachResultAttachAttachmentSlot | None
+    attachment: AttachResultAttachAttachmentSlot[TAttachment] | None
 
 
-class AttachResult(GQLModel):
-    attach: PostWithAttachmentId_AttachResultAttachAttachmentSlot | None
+class AttachResult[TAttachment](GQLModel):
+    attach: PostWithAttachmentId_AttachResultAttachAttachmentSlot[TAttachment] | None
 
 
-class GetAttachment(runtime.GQLOperation):
-    # See: queries.py:3
-    async def execute(self, *, id: builtins.str, attachment: AttachmentFragment[pydantic.BaseModel] | Sequence[AttachmentFragment[pydantic.BaseModel]]) -> GetAttachmentResult:
-        slot_fragments = {"attachment": slots.as_handles(attachment)}
+class ImageUrlData(GQLOpenModel):
+    url: str
+
+
+class ImageUrl(slots.GQLFragment[ImageUrlData]):
+    pass
+
+
+IMAGE_URL = ImageUrl(
+    fragment_name='ImageUrl',
+    adapter=pydantic.TypeAdapter(ImageUrlData),
+)
+
+
+class GetAttachmentBound[TAttachment](runtime.GQLBoundOperation):
+    async def execute(self, *, id: builtins.str) -> GetAttachmentResult[TAttachment]:
         return await API_CLIENT.query(
-            GetAttachmentResult,
-            slots.build_slot_source('query GetAttachment($id: ID!) {\n  post(id: $id) {\n    id\n    attachment {\n      __typename\n      ', (('attachment', '\n    }\n  }\n}'),), slot_fragments),
-            variables={"id": id},
+            GetAttachmentResult[TAttachment],
+            self.exec_source__,
+            variables={"id": id, **self.fragment_args__()},
             headers=self.headers,
-            slot_fragments=slot_fragments,
+            slot_handles=self.slot_handles__,
         )
 
 
-class Attach(runtime.GQLOperation):
-    # See: queries.py:14
-    async def execute(self, *, id: builtins.str, attachment: AttachmentFragment[pydantic.BaseModel] | Sequence[AttachmentFragment[pydantic.BaseModel]]) -> AttachResult:
-        slot_fragments = {"attachment": slots.as_handles(attachment)}
+class AttachBound[TAttachment](runtime.GQLBoundOperation):
+    async def execute(self, *, id: builtins.str) -> AttachResult[TAttachment]:
         return await API_CLIENT.query(
-            AttachResult,
-            slots.build_slot_source('mutation Attach($id: ID!) {\n  attach(id: $id) {\n    id\n    attachment {\n      __typename\n      ', (('attachment', '\n    }\n  }\n}'),), slot_fragments),
-            variables={"id": id},
+            AttachResult[TAttachment],
+            self.exec_source__,
+            variables={"id": id, **self.fragment_args__()},
             headers=self.headers,
-            slot_fragments=slot_fragments,
+            slot_handles=self.slot_handles__,
         )
 
 
+class AttachWithAttachmentImageUrl(AttachBound[ImageUrl]):
+    # See: queries.py:33
+    exec_source__ = 'mutation Attach($id: ID!) {\n  attach(id: $id) {\n    id\n    attachment {\n      __typename\n      ...ImageUrl\n    }\n  }\n}\n\nfragment ImageUrl on ImageAttachment {\n  url\n}'
+    slot_handles__ = {"attachment": (slots.SlotHandle(IMAGE_URL, frozenset({'ImageAttachment'})),)}
+
+
+class GetAttachment(runtime.GQLTemplate):
+    def bind(
+        self,
+        **fragments: slots.GQLFragment[pydantic.BaseModel] | Sequence[slots.GQLFragment[pydantic.BaseModel]],
+    ) -> runtime.GQLBoundOperation:
+        cls = _API_GQL_BIND_DISPATCH.get(slots.bind_key('GetAttachment', fragments))
+        if cls is None:
+            raise LookupError("unknown bind combination for GetAttachment; every fragment a bind passes must be a discovered statement - check the call site, then regenerate the package")
+        return cls()
+
+
+class Attach(runtime.GQLTemplate):
+    def bind(self, *, attachment: ImageUrl | Sequence[ImageUrl]) -> AttachWithAttachmentImageUrl:
+        if _API_GQL_BIND_DISPATCH.get(slots.bind_key('Attach', {'attachment': attachment})) is None:
+            raise LookupError("unknown bind combination for Attach; every fragment a bind passes must be a discovered statement - check the call site, then regenerate the package")
+        return AttachWithAttachmentImageUrl()
+
+
+_API_GQL_BIND_DISPATCH: dict[slots.BindKey, type[runtime.GQLBoundOperation]] = {
+    ('Attach', (('attachment', ('ImageUrl',)),)): AttachWithAttachmentImageUrl,
+}
+
+
+@overload
+def api_gql(stmt: Literal['\n    fragment ImageUrl on ImageAttachment {\n        url\n    }\n    ']) -> ImageUrl: ...
 @overload
 def api_gql(stmt: Literal['\n    query GetAttachment($id: ID!) {\n        post(id: $id) {\n            id\n            attachment @slot { __typename }\n        }\n    }\n    ']) -> GetAttachment: ...
 @overload
 def api_gql(stmt: Literal['\n    mutation Attach($id: ID!) {\n        attach(id: $id) {\n            id\n            attachment @slot { __typename }\n        }\n    }\n    ']) -> Attach: ...
 @overload
-def api_gql(stmt: str) -> runtime.GQLOperation: ...
+def api_gql(stmt: str) -> runtime.GQLOperation | slots.GQLFragment[pydantic.BaseModel] | runtime.GQLTemplate: ...
 
 
-_API_GQL_DISPATCH: dict[str, type[runtime.GQLOperation]] = {
+_API_GQL_FRAGMENTS: dict[str, slots.GQLFragment[pydantic.BaseModel]] = {
+    '\n    fragment ImageUrl on ImageAttachment {\n        url\n    }\n    ': IMAGE_URL,
+}
+
+
+_API_GQL_TEMPLATES: dict[str, type[runtime.GQLTemplate]] = {
     '\n    query GetAttachment($id: ID!) {\n        post(id: $id) {\n            id\n            attachment @slot { __typename }\n        }\n    }\n    ': GetAttachment,
     '\n    mutation Attach($id: ID!) {\n        attach(id: $id) {\n            id\n            attachment @slot { __typename }\n        }\n    }\n    ': Attach,
 }
 
 
-def api_gql(stmt: str) -> runtime.GQLOperation:
-    query_cls = _API_GQL_DISPATCH.get(stmt)
-    if query_cls is not None:
-        return query_cls()
+def api_gql(stmt: str) -> runtime.GQLOperation | slots.GQLFragment[pydantic.BaseModel] | runtime.GQLTemplate:
+    fragment = _API_GQL_FRAGMENTS.get(stmt)
+    if fragment is not None:
+        return fragment
+    template_cls = _API_GQL_TEMPLATES.get(stmt)
+    if template_cls is not None:
+        return template_cls()
     msg = "unknown GraphQL statement passed to api_gql; "
     msg += "the generator only discovers bare-name calls with a "
     msg += "single string literal - check the call site, then "

@@ -13,4 +13,5 @@ type Subscription {
 type User {
     id: ID!
     name: String!
+    manager: User
 }

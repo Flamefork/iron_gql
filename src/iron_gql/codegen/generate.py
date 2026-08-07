@@ -1,69 +1,22 @@
-import ast
-from collections.abc import Iterator
 from pathlib import Path
 
 from pydantic import alias_generators
 
 from iron_gql.codegen.collect import collect_package_ir
+from iron_gql.codegen.discovery import discover_package
 from iron_gql.codegen.ir import GraphQLGenerationError
 from iron_gql.codegen.ir import ImportRef
 from iron_gql.codegen.ir import StrTransform
 from iron_gql.codegen.naming import apply_rename
-from iron_gql.codegen.naming import validate_execute_signatures
 from iron_gql.codegen.naming import validate_module_names
-from iron_gql.codegen.parser import Statement
+from iron_gql.codegen.naming import validate_signature_names
 from iron_gql.codegen.parser import parse_gql_queries
+from iron_gql.codegen.parser import write_ignored_binds
 from iron_gql.codegen.render import GenerationMode
 from iron_gql.codegen.render import render_package
 from iron_gql.codegen.render import scaffold_claims
 from iron_gql.codegen.slots import validate_no_nested_slots
-from iron_gql.codegen.slots import validate_slots_are_collected
 from iron_gql.codegen.util import write_if_changed
-
-
-def _find_fn_calls(
-    root_path: Path, fn_name: str, *, skip_path: Path
-) -> Iterator[tuple[Path, int, ast.Call]]:
-    for path in root_path.glob("**/*.py"):
-        if path.resolve() == skip_path.resolve():
-            continue
-        content = path.read_text(encoding="utf-8")
-        if fn_name not in content:
-            continue
-        try:
-            tree = ast.parse(content, filename=str(path))
-        except SyntaxError as exc:
-            msg = f"Failed to parse {path}: {exc.msg} (line {exc.lineno})"
-            raise SyntaxError(msg) from exc
-        for node in ast.walk(tree):
-            match node:
-                case ast.Call(func=ast.Name(id=id)) if id == fn_name:
-                    yield path, node.lineno, node
-                case _:
-                    pass
-
-
-def _find_all_queries(
-    src_path: Path, gql_fn_name: str, *, skip_path: Path
-) -> Iterator[Statement]:
-    for file, lineno, node in _find_fn_calls(
-        src_path, gql_fn_name, skip_path=skip_path
-    ):
-        relative_path = file.relative_to(src_path)
-
-        if (
-            len(node.args) != 1
-            or not isinstance(node.args[0], ast.Constant)
-            or not isinstance(node.args[0].value, str)
-        ):
-            msg = (
-                f"Invalid positional arguments for {gql_fn_name} "
-                f"at {relative_path}:{lineno}, "
-                "expected a single string literal"
-            )
-            raise TypeError(msg)
-
-        yield Statement(raw_text=node.args[0].value, file=relative_path, lineno=lineno)
 
 
 # Generates a typed GraphQL client from schema_path and the api_gql() calls
@@ -95,13 +48,18 @@ def generate_gql_package(
     scalar_refs = {name: ImportRef.parse(ref) for name, ref in scalars.items()}
     to_camel_ref = ImportRef.parse(to_camel_fn_full_name)
 
-    queries = list(
-        _find_all_queries(src_path, gql_fn_name, skip_path=target_package_path)
-    )
+    discovered = discover_package(src_path, gql_fn_name, skip_path=target_package_path)
+
+    if debug_path is not None:
+        # Written before anything can reject the GraphQL: a bind that went
+        # missing is exactly what a debug run of a package that does not
+        # generate is looking for.
+        write_ignored_binds(debug_path, discovered.ignored)
 
     parse_res = parse_gql_queries(
         schema_path,
-        queries,
+        discovered.statements,
+        discovered.binds,
         debug_path=debug_path,
     )
 
@@ -118,8 +76,11 @@ def generate_gql_package(
     collected = apply_rename(
         collect_package_ir(
             schema=parse_res.schema,
-            queries=parse_res.queries,
+            operations=parse_res.operations,
+            templates=parse_res.templates,
             fragment_statements=parse_res.reachable_statements,
+            binds=discovered.binds,
+            discovered_texts=tuple(stmt.raw_text for stmt in discovered.statements),
             scalars=scalar_refs,
             to_snake_fn=to_snake_fn,
         ),
@@ -131,25 +92,11 @@ def generate_gql_package(
     # nodes a response key was assembled from.
     ir_errors = [
         *validate_module_names(collected, scaffold),
-        *validate_execute_signatures(collected),
+        *validate_signature_names(collected),
         *validate_no_nested_slots(collected),
-        *validate_slots_are_collected(collected),
     ]
     if ir_errors:
         raise GraphQLGenerationError(ir_errors)
-
-    # Statements the scan discovered but nothing typed: fragment bundles and
-    # single fragments no slot accepts. Their fragments are spread statically
-    # by name, and the call site legitimately receives the untyped catch-all —
-    # only a statement the generator has never seen is an error there.
-    typed_texts = {
-        text for operation in collected.operations for text in operation.stmt_texts
-    } | {text for fragment in collected.fragments for text in fragment.stmt_texts}
-    passthrough_texts = tuple(
-        dict.fromkeys(
-            stmt.raw_text for stmt in queries if stmt.raw_text not in typed_texts
-        )
-    )
 
     new_content = render_package(
         mode=mode,
@@ -159,6 +106,5 @@ def generate_gql_package(
         collected=collected,
         scalars=scalar_refs,
         to_camel_ref=to_camel_ref,
-        passthrough_texts=passthrough_texts,
     )
     return write_if_changed(target_package_path, new_content + "\n")

@@ -1,8 +1,14 @@
 from collections.abc import Callable
+from collections.abc import Iterable
+from collections.abc import Mapping
 from collections.abc import Sequence
+from dataclasses import dataclass
 from typing import ClassVar
+from typing import Generic
+from typing import Never
 from typing import Self
 from typing import TypeIs
+from typing import TypeVar
 from typing import cast
 
 import pydantic
@@ -21,7 +27,7 @@ def _is_typename(value: object) -> TypeIs[str]:
     return isinstance(value, str)
 
 
-type SlotFragments = dict[str, tuple[GQLFragment[pydantic.BaseModel], ...]]
+type SlotHandles = dict[str, tuple[SlotHandle, ...]]
 
 
 class GQLFragment[TModel: pydantic.BaseModel]:
@@ -34,15 +40,9 @@ class GQLFragment[TModel: pydantic.BaseModel]:
         self,
         *,
         fragment_name: str,
-        fragment_def: str,
-        covered_typenames: frozenset[str],
         adapter: pydantic.TypeAdapter[TModel],
     ) -> None:
         self.fragment_name__ = fragment_name
-        self.fragment_def__ = fragment_def
-        # The snapshot of runtime typenames the fragment's own selection
-        # covers: a payload of any other type reads back as None.
-        self.covered_typenames__ = covered_typenames
         # Only the bound validate function is stored: a `TypeAdapter[TModel]`
         # attribute would put TModel in an invariant position and destroy the
         # inferred covariance that lets shared code accept
@@ -63,22 +63,50 @@ class GQLFragment[TModel: pydantic.BaseModel]:
     def __deepcopy__(self, memo: dict[int, object] | None) -> Self:
         return self
 
-    def read(self, node: "GQLSlotNode | None") -> TModel | None:
+    # `GQLSlotNode[Self]`, not a bare node: codegen stamps every node with the
+    # fragment classes readable on it, so the contravariant phantom rejects
+    # this very handle against a node that was never offered it -- the same
+    # wiring bug `slot_data__` raises ValueError for on type-erased paths.
+    def read(self, node: "GQLSlotNode[Self] | None") -> TModel | None:
         if node is None:
             return None
         return node.slot_data__(self)
 
 
-def _is_handles(
-    value: object,
-) -> TypeIs[tuple[GQLFragment[pydantic.BaseModel], ...]]:
+@dataclass(frozen=True, slots=True)
+class SlotHandle:
+    # One fragment offered to one slot of one binding, with the runtime
+    # typenames at which its fields are present on that slot's root payload.
+    #
+    # Per binding and slot, not per fragment: the same fragment reaches one
+    # slot's root directly and another's only through a narrower condition --
+    # an interface brick spread inside a per-type fragment -- and validating it
+    # outside the narrowed set fails a response that is entirely correct,
+    # because the server never sent those fields for that type.
+    fragment: GQLFragment[pydantic.BaseModel]
+    typenames: frozenset[str]
+
+
+def _is_handles(value: object) -> TypeIs[tuple[SlotHandle, ...]]:
     if not isinstance(value, tuple):
         return False
     handles = cast("tuple[object, ...]", value)
-    return all(isinstance(handle, GQLFragment) for handle in handles)
+    return all(isinstance(handle, SlotHandle) for handle in handles)
 
 
-class GQLSlotNode(pydantic.BaseModel):
+# The "offered fragments" phantom: the union of the fragment handle classes
+# readable on this node, stamped by codegen per binding. Contravariant so a
+# node offering more fragments is accepted where fewer are expected
+# (`Slot[A | B]` is assignable to `GQLSlotNode[A]`). An old-style TypeVar
+# because PEP 695 cannot declare variance and infers an unused (phantom)
+# parameter as covariant — so we cannot use PEP 695 type parameters syntax
+# and must suppress UP046. `default=Never` makes a bare `GQLSlotNode`
+# annotation mean "readable by nothing" — the safe bottom for a
+# contravariant parameter.
+TOffered_contra = TypeVar("TOffered_contra", contravariant=True, default=Never)
+
+
+class GQLSlotNode(pydantic.BaseModel, Generic[TOffered_contra]):  # noqa: UP046
     slot_name__: ClassVar[str]
 
     # Keyed by the handle's id() with the handle itself held in the value:
@@ -102,8 +130,8 @@ class GQLSlotNode(pydantic.BaseModel):
         entry = self._slot_data.get(id(handle))
         if entry is None:
             msg = (
-                f"fragment '{handle.fragment_name__}' was not passed to "
-                f"slot '{self.slot_name__}'"
+                f"fragment '{handle.fragment_name__}' is not part of the "
+                f"binding that produced slot '{self.slot_name__}'"
             )
             raise ValueError(msg)
         # The value under a handle is that handle's validated model by
@@ -148,18 +176,17 @@ class GQLSlotNode(pydantic.BaseModel):
         if not _is_typename(typename):
             msg = f"slot {cls.slot_name__!r} payload is missing __typename"
             raise ValueError(msg)
-        for handle in _slot_handles(info, cls.slot_name__):
+        for offered in _slot_handles(info, cls.slot_name__):
             # Every offered handle gets an entry — None on a typename
             # mismatch — so `slot_data__` can tell "never offered" apart. A
-            # covered_typenames__ miss can only be a mismatch, never schema
-            # drift: the slot node's Literal typename has already rejected
-            # drift by the time this check runs (see the uniform-branch
-            # comment in codegen/collect._collect_polymorphic_models and its
-            # test).
+            # typename miss can only be a mismatch, never schema drift: the
+            # slot node's Literal typename has already rejected drift by the
+            # time this check runs (see the uniform-branch comment in
+            # codegen/collect._collect_polymorphic_models and its test).
             node.add_slot_data__(
-                handle,
-                handle.validate__(data)
-                if typename in handle.covered_typenames__
+                offered.fragment,
+                offered.fragment.validate__(data)
+                if typename in offered.typenames
                 else None,
             )
         return node
@@ -167,7 +194,7 @@ class GQLSlotNode(pydantic.BaseModel):
 
 def _slot_handles(
     info: pydantic.ValidationInfo, slot_name: str
-) -> tuple[GQLFragment[pydantic.BaseModel], ...]:
+) -> tuple[SlotHandle, ...]:
     context = info.context
     if not isinstance(context, dict) or slot_name not in context:
         msg = f"slot {slot_name!r} validated without a fragments context"
@@ -179,12 +206,12 @@ def _slot_handles(
     # AttributeError from inside the handle loop.
     entry = cast("dict[object, object]", context)[slot_name]
     if not _is_handles(entry):
-        msg = f"slot {slot_name!r} context entry is not a tuple of fragment handles"
+        msg = f"slot {slot_name!r} context entry is not a tuple of slot handles"
         raise ValueError(msg)
     return entry
 
 
-def as_handles(
+def _as_handles(
     value: GQLFragment[pydantic.BaseModel] | Sequence[GQLFragment[pydantic.BaseModel]],
 ) -> tuple[GQLFragment[pydantic.BaseModel], ...]:
     if isinstance(value, GQLFragment):
@@ -192,27 +219,45 @@ def as_handles(
     return tuple(value)
 
 
-def build_slot_source(
-    head: str,
-    splices: Sequence[tuple[str, str]],
-    slot_fragments: SlotFragments,
-) -> str:
-    # One (slot name, following text) entry per @slot occurrence; splicing is
-    # purely positional — see `codegen/slots.build_exec_parts` for why.
-    # Definitions are keyed by fragment name: one handle passed to several
-    # slots still contributes its definition once.
-    definitions: dict[str, str] = {}
-    chunks: list[str] = [head]
-    for slot_name, part in splices:
-        handles = sorted(
-            slot_fragments[slot_name], key=lambda handle: handle.fragment_name__
-        )
-        spreads = " ".join(f"...{handle.fragment_name__}" for handle in handles)
-        chunks.extend((spreads, part))
-        for handle in handles:
-            definitions[handle.fragment_name__] = handle.fragment_def__
-    body = "".join(chunks)
-    if not definitions:
-        return body
-    ordered = "\n\n".join(definitions[name] for name in sorted(definitions))
-    return f"{body}\n\n{ordered}"
+type BindKey = tuple[str, tuple[tuple[str, tuple[str, ...]], ...]]
+
+
+def bind_key_shape(
+    template: str, slots: Iterable[tuple[str, Iterable[str]]]
+) -> BindKey:
+    # The one definition of a bind key's shape. Three layers build a key from
+    # three different materials — this module from runtime handles, codegen's
+    # renderer from the IR, codegen's uniqueness check from raw discovered
+    # statements — and any disagreement between them is invisible until a
+    # dispatch entry silently overwrites another, so the shape lives here and
+    # each layer only supplies its own names.
+    #
+    # A slot omitted from the call and one passed an explicit empty sequence
+    # both mean "no fragments for this slot", so an empty entry drops out of
+    # the key entirely -- and every layer needs that, because each hands this
+    # function its own mix of the two spellings: the scan reads the
+    # `.bind(...)` call's own keywords, where `slot=[]` is an empty entry and
+    # an omitted slot is nothing at all; the renderer walks every slot of the
+    # template, so a slot the binding leaves unfilled is always an empty
+    # entry; and the generated `bind()` passes on whichever its own form
+    # produces -- only the keywords the caller wrote (`**fragments`), or every
+    # slot with the unfilled ones defaulted to `()`. Slots and each slot's
+    # fragments are sorted, so the key never depends on the order a call or a
+    # scan happened to produce.
+    entries = [(slot, tuple(sorted(names))) for slot, names in slots]
+    return (template, tuple((slot, names) for slot, names in sorted(entries) if names))
+
+
+def bind_key(
+    template_name: str,
+    fragments: Mapping[
+        str, GQLFragment[pydantic.BaseModel] | Sequence[GQLFragment[pydantic.BaseModel]]
+    ],
+) -> BindKey:
+    return bind_key_shape(
+        template_name,
+        (
+            (slot, (handle.fragment_name__ for handle in _as_handles(raw)))
+            for slot, raw in fragments.items()
+        ),
+    )

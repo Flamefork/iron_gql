@@ -4,6 +4,7 @@ from collections import defaultdict
 from collections.abc import Iterator
 from collections.abc import Mapping
 from graphlib import TopologicalSorter
+from typing import Literal
 
 from iron_gql.codegen.ir import CollectedArtifact
 from iron_gql.codegen.ir import CollectedField
@@ -15,8 +16,10 @@ from iron_gql.codegen.ir import ListRef
 from iron_gql.codegen.ir import NamedRef
 from iron_gql.codegen.ir import ScalarRef
 from iron_gql.codegen.ir import TypeRef
+from iron_gql.codegen.ir import bindings_by_template
 from iron_gql.codegen.ir import field_name_to_pascal
-from iron_gql.codegen.slots import fragment_base_name
+from iron_gql.codegen.ir import renders_inline_bind_body
+from iron_gql.codegen.render import BIND_BODY_FREE_NAMES
 
 
 def type_tokens(typ: TypeRef) -> Iterator[str]:
@@ -29,6 +32,19 @@ def type_tokens(typ: TypeRef) -> Iterator[str]:
         case ScalarRef(name_hint=hint):
             if hint is not None:
                 yield hint
+
+
+def _graphql_type_name(model: CollectedModel) -> str:
+    # The one statement of the phases' shared premise: `build_rename_map`
+    # selects the models that carry a GraphQL type before any phase below runs,
+    # so each of them has one. `CollectedModel.graphql_type_name` is optional
+    # because most artifacts have no GraphQL type at all, not because a model
+    # the rename pass walks might lack one -- narrowed here, once, instead of
+    # at each walk that would otherwise restate the same invariant.
+    if model.graphql_type_name is None:
+        msg = f"untyped model {model.name!r} reached the rename phases"
+        raise AssertionError(msg)
+    return model.graphql_type_name
 
 
 def _model_type_name_tokens(model: CollectedModel) -> str:
@@ -114,14 +130,12 @@ def _collapse_single_shape_slots(
         defaultdict(set)
     )
     for model in models:
-        # Filtered by build_rename_map; narrow for the type checker.
-        if (gql_type := model.graphql_type_name) is None:
-            continue
-        slot_shapes[gql_type, model.field_names_key].add(shapes[model.name])
+        slot_shapes[_graphql_type_name(model), model.field_names_key].add(
+            shapes[model.name]
+        )
 
     for model in models:
-        if (gql_type := model.graphql_type_name) is None:
-            continue
+        gql_type = _graphql_type_name(model)
         slot = (gql_type, model.field_names_key)
         if len(slot_shapes[slot]) != 1:
             continue
@@ -147,10 +161,7 @@ def _collapse_single_variant_types(
     # stake in or — worse — rewrite the very name that was meant to stay put.
     type_variants: dict[str, set[str]] = defaultdict(set)
     for model in renamable:
-        # Filtered by build_rename_map; narrow for the type checker.
-        if (gql_type := model.graphql_type_name) is None:
-            continue
-        type_variants[gql_type].add(rename.get(model.name, model.name))
+        type_variants[_graphql_type_name(model)].add(rename.get(model.name, model.name))
 
     reserved = set(occupied) | set(rename.values())
 
@@ -215,23 +226,84 @@ def build_rename_map(
     return rename
 
 
+# What kind of thing claims a module-level name. The classification the
+# collision hints below branch on: carried beside the message rather than
+# recovered from it, so rewording an origin cannot silently switch a hint off.
+type ClaimKind = Literal[
+    "operation",
+    "fragment",
+    "singleton",
+    "template",
+    "bound_base",
+    "binding",
+    "type_param",
+    "scaffold",
+    "model",
+    "enum",
+]
+
+
+def _fixed_name_claims(ir: CollectedPackageIR) -> Iterator[tuple[str, ClaimKind, str]]:
+    # (name, kind, what claims it) for every name the IR pins. The one
+    # enumeration of those sources: `fixed_module_names` reserves them for the
+    # rename pass and `_module_name_claims` reports collisions between them,
+    # and a source listed in only one of the two silently drops the other's
+    # protection for every name it contributes.
+    for operation in ir.operations:
+        at = operation.location
+        yield (
+            operation.class_name,
+            "operation",
+            f"operation '{operation.class_name}' at {at}",
+        )
+    for fragment in ir.fragments:
+        origin = f"fragment '{fragment.fragment_name}' at {fragment.location}"
+        yield fragment.class_name, "fragment", origin
+        yield fragment.singleton_name, "singleton", f"the singleton of {origin}"
+    for template in ir.templates:
+        at = template.location
+        yield (
+            template.class_name,
+            "template",
+            f"template '{template.class_name}' at {at}",
+        )
+        origin = f"the bound base of template '{template.class_name}' at {at}"
+        yield template.bound_base_name, "bound_base", origin
+        for slot in template.slots:
+            # A PEP 695 type parameter is scoped to the class that declares
+            # it, so it shadows a module-level name of the same spelling
+            # inside every generic artifact this slot reaches -- silently, and
+            # with the wrong type. It pins its name for that reason, even
+            # though it never becomes a module-level binding itself.
+            origin = (
+                f"the type parameter of slot '{slot.name}' in template "
+                f"'{template.class_name}' at {at}"
+            )
+            yield slot.type_param, "type_param", origin
+    for binding in ir.bindings:
+        yield (
+            binding.class_name,
+            "binding",
+            f"binding '{binding.class_name}' at {binding.location}",
+        )
+
+
 def fixed_module_names(ir: CollectedPackageIR) -> frozenset[str]:
-    # The names this IR pins: an operation class, a fragment handle, that
-    # handle's singleton and a slot compatibility base are each named after
-    # something the developer wrote, so none of them can move to resolve a
-    # clash. A model can, which is why these are fed to the rename pass as
-    # reserved and only the leftovers become errors. Two more sets are pinned
-    # elsewhere: fragment data models via the rename pass's pinned names, and
-    # slot models by their exclusion from it. The module also binds the
-    # scaffold's own names — the client, the base models, the dispatch dicts and
-    # every import — which the IR knows nothing about; `render.scaffold_claims`
+    # The names this IR pins: an operation class and a fragment handle (and
+    # that handle's singleton) are each named after something the developer
+    # wrote, so none of them can move to resolve a clash. A model can, which
+    # is why these are fed to the rename pass as reserved and only the
+    # leftovers become errors. Two more sets are pinned elsewhere: fragment
+    # data models via the rename pass's pinned names, and slot models by
+    # their exclusion from it. The module also binds the scaffold's own
+    # names — the client, the base models, the dispatch dicts and every
+    # import — which the IR knows nothing about; `render.scaffold_claims`
     # supplies those and both sets are used together everywhere.
-    return frozenset(
-        {operation.class_name for operation in ir.operations}
-        | {fragment.class_name for fragment in ir.fragments}
-        | {fragment.singleton_name for fragment in ir.fragments}
-        | {fragment_base_name(slot_type) for slot_type in ir.slot_types}
-    )
+    # A template's class name and its `{Name}Bound` base are equally
+    # developer-named (the query name, the derived base), and a binding's
+    # class name is derived from those same names plus its fragments' -- all
+    # equally fixed.
+    return frozenset(name for name, _kind, _origin in _fixed_name_claims(ir))
 
 
 def apply_rename(
@@ -261,6 +333,7 @@ def apply_rename(
                     if (
                         existing.shape_key != renamed_model.shape_key
                         or existing.slot_name != renamed_model.slot_name
+                        or existing.slot_params != renamed_model.slot_params
                     ):
                         msg = (
                             f"rename collision on {renamed_model.name!r}:"
@@ -277,107 +350,147 @@ def apply_rename(
         input_artifacts=ir.input_artifacts,
         operations=ir.operations,
         fragments=ir.fragments,
-        slot_types=ir.slot_types,
+        templates=ir.templates,
+        bindings=ir.bindings,
         enums=ir.enums,
         # Open-model names pass through untouched: every one of them is pinned
         # out of the rename map.
         open_model_names=ir.open_model_names,
+        discovered_texts=ir.discovered_texts,
     )
+
+
+def _is_usable_identifier(name: str) -> bool:
+    # Whether the generated module survives `compile()` with this name written
+    # into it. Nothing downstream of codegen compiles the module, so a keyword
+    # or a non-identifier surfaces as a SyntaxError inside the user's own
+    # import unless it is caught here.
+    return name.isidentifier() and not keyword.iskeyword(name)
 
 
 def _module_name_claims(
     ir: CollectedPackageIR, scaffold: Mapping[str, tuple[str, ...]]
-) -> Iterator[tuple[str, str]]:
+) -> Iterator[tuple[str, ClaimKind, str]]:
     for name in sorted(scaffold):
         for origin in scaffold[name]:
-            yield name, origin
-    for operation in ir.operations:
-        at = ", ".join(operation.locations)
-        yield operation.class_name, f"operation '{operation.class_name}' at {at}"
-    for fragment in ir.fragments:
-        origin = f"fragment '{fragment.fragment_name}' at {fragment.location}"
-        yield fragment.class_name, origin
-        yield fragment.singleton_name, f"the singleton of {origin}"
-    for slot_type in ir.slot_types:
-        yield fragment_base_name(slot_type), "a slot compatibility base"
+            yield name, "scaffold", origin
+    yield from _fixed_name_claims(ir)
     for artifact in (*ir.result_artifacts, *ir.input_artifacts):
-        yield artifact.name, f"model '{artifact.name}'"
+        yield artifact.name, "model", f"model '{artifact.name}'"
     for enum in ir.enums:
-        yield enum.name, f"enum '{enum.name}'"
+        yield enum.name, "enum", f"enum '{enum.name}'"
 
 
 def validate_module_names(
     ir: CollectedPackageIR, scaffold: Mapping[str, tuple[str, ...]]
 ) -> list[str]:
-    # Operation classes, fragment handles, their singletons, models, the
-    # `{Type}Fragment` bases and the scaffold the module is built on (client,
-    # base models, dispatch dicts, imports) all land in one namespace, and
+    # Operation classes, fragment handles, their singletons, models, template
+    # classes and their `{Operation}Bound[...]` bases, bindings, and the
+    # scaffold the module is built on (client, base models, dispatch dicts,
+    # imports) all land in one namespace, and
     # Python binds the last one written. Every rebinding here breaks something
     # silently — dispatch resolving to a handle, a base class replaced by a
     # model, `API_CLIENT` replaced by a fragment singleton — so any overlap is
     # an error. Scaffold claims carry the origin of each binding, so two
     # scaffold sources fighting over one name are an overlap like any other.
-    claims: dict[str, list[str]] = defaultdict(list)
-    for name, origin in _module_name_claims(ir, scaffold):
-        claims[name].append(origin)
+    claims: dict[str, list[tuple[ClaimKind, str]]] = defaultdict(list)
+    for name, kind, origin in _module_name_claims(ir, scaffold):
+        claims[name].append((kind, origin))
     errors: list[str] = []
-    for name, origins in sorted(claims.items()):
-        if len(origins) > 1:
+    for name, entries in sorted(claims.items()):
+        origins = [origin for _kind, origin in entries]
+        kinds = {kind for kind, _origin in entries}
+        # Two templates naming a slot alike is not a clash: each type
+        # parameter is scoped to its own class, so they never share a
+        # namespace with each other -- only with the module-level names below.
+        if len(entries) > 1 and kinds != {"type_param"}:
             message = f"Name '{name}' is claimed by {' and by '.join(origins)}"
-            if any(origin.startswith("the singleton of") for origin in origins):
+            if "singleton" in kinds:
                 message += (
                     "; rename the fragment so its class and singleton names differ"
                 )
+            elif kinds == {"binding"}:
+                # Two combinations whose slot and fragment names split the
+                # same letters two ways. Neither call site named the class --
+                # the combination did -- so the fix is on the names it is
+                # built from: the slot's and the fragments'.
+                message += "; alias the slot field or rename one of the fragments"
             errors.append(message)
-        # Every claim becomes a module-level binding, so it must survive
-        # `compile()` — a keyword or non-identifier would only surface as a
-        # SyntaxError when the generated module is imported.
-        if not name.isidentifier() or keyword.iskeyword(name):
+        # Every claim becomes a module-level binding of its own.
+        if not _is_usable_identifier(name):
             errors.append(
                 f"Name '{name}' ({origins[0]}) is not a usable Python identifier"
             )
     return errors
 
 
-def validate_execute_signatures(ir: CollectedPackageIR) -> list[str]:
-    # Variables and slots share the keyword namespace of `execute`, and both
-    # arrive there through `to_snake_fn` — so names that differ in GraphQL can
-    # still render the same parameter twice. That source passes `ast.parse` and
-    # only fails at `compile()`, which nothing downstream of codegen runs.
-    errors: list[str] = []
+def _signature_claims(ir: CollectedPackageIR) -> Iterator[tuple[str, str, str]]:
+    # (scope, parameter name, what claims it) for every method the generator
+    # writes parameters onto. Each scope is one Python keyword namespace: the
+    # method's own parameters, its receiver, and any name its rendered body
+    # binds or reads from an enclosing scope. A name is claimed only where the
+    # renderer really writes it: a claim the generated body never makes turns
+    # a legal GraphQL name into a generation error with no way out.
+    grouped = bindings_by_template(ir.bindings)
     for operation in ir.operations:
-        claims: dict[str, list[str]] = defaultdict(list)
-        # `execute` takes its receiver positionally under a name that shares
-        # this namespace, so a variable or slot snaking to `self` renders the
-        # parameter twice just as surely as two variables would.
-        claims["self"].append("the method receiver")
-        if operation.slots:
-            # The rendered body binds the fragments mapping as a local before
-            # `variables` is built and reads the slot runtime module, so a
-            # parameter under either name is rebound or shadowed mid-body.
-            claims["slot_fragments"].append("the generated slot fragments binding")
-            claims["slots"].append("the iron_gql slots module")
+        at = operation.location
+        scope = f"execute() of operation '{operation.class_name}' at {at}"
+        yield scope, "self", "the method receiver"
         for variable in operation.variables:
-            claims[variable.python_name].append(f"variable ${variable.gql_name}")
-        for slot in operation.slots:
-            claims[slot.python_name].append(f"slot '{slot.name}'")
-        at = ", ".join(operation.locations)
-        for name, sources in sorted(claims.items()):
-            # A parameter name must survive `compile()` of the generated
-            # `def execute(...)` — a Python keyword only fails at import.
-            if keyword.iskeyword(name):
-                message = (
-                    f"Execute parameter '{name}' of operation "
-                    f"'{operation.class_name}' at {at} is a Python keyword;"
-                    " rename the variable or alias the field"
-                )
-                errors.append(message)
-            if len(sources) == 1:
-                continue
-            claimed = " and by ".join(sources)
-            message = (
-                f"Execute parameter '{name}' of operation "
-                f"'{operation.class_name}' at {at} is claimed by {claimed}"
+            yield scope, variable.python_name, f"variable ${variable.gql_name}"
+    for template in ir.templates:
+        at = template.location
+        scope = f"execute() of template '{template.class_name}' at {at}"
+        yield scope, "self", "the method receiver"
+        for variable in template.variables:
+            yield scope, variable.python_name, f"variable ${variable.gql_name}"
+        scope = f"bind() of template '{template.class_name}' at {at}"
+        yield scope, "self", "the method receiver"
+        if renders_inline_bind_body(grouped.get(template.class_name, [])):
+            # Only that form's `bind()` has a real body, so only it reads
+            # names from outside its own parameters -- and which ones is the
+            # renderer's to say. Otherwise the slots are parameters of
+            # `@overload` stubs whose body is `...`, over an implementation
+            # whose only parameter is `**fragments`, so nothing can be
+            # shadowed there.
+            for name, origin in BIND_BODY_FREE_NAMES:
+                yield scope, name, origin
+        for slot in template.slots:
+            yield scope, slot.python_name, f"slot '{slot.name}'"
+    for binding in ir.bindings:
+        # `render._render_with_args` builds the variables mapping as a single
+        # expression, so `with_args()`'s namespace holds nothing but its
+        # receiver and its parameters.
+        scope = f"with_args() of binding '{binding.class_name}' at {binding.location}"
+        yield scope, "self", "the method receiver"
+        for arg in binding.arg_vars:
+            yield (
+                scope,
+                arg.var.python_name,
+                f"fragment variable ${arg.var.gql_name}",
             )
-            errors.append(message)
+
+
+def validate_signature_names(ir: CollectedPackageIR) -> list[str]:
+    # Every generated method takes its parameters in one Python namespace, and
+    # names reach it through `to_snake_fn` — so two names that differ in
+    # GraphQL can render the same parameter twice, and a name that is not a
+    # usable identifier renders a parameter that never compiles.
+    #
+    # Every parameter namespace the generator writes lives here, not just
+    # `execute`'s: a template's slots become `bind()`'s parameters and a
+    # binding's fragment variables become `with_args()`'s, and each of those
+    # is as capable of colliding as an operation's variables are.
+    claims: dict[tuple[str, str], list[str]] = defaultdict(list)
+    for scope, name, origin in _signature_claims(ir):
+        claims[scope, name].append(origin)
+    errors: list[str] = []
+    for (scope, name), origins in sorted(claims.items()):
+        if not _is_usable_identifier(name):
+            unusable = "is not a usable Python identifier"
+            hint = "rename the variable or alias the field"
+            errors.append(f"Parameter '{name}' of {scope} {unusable}; {hint}")
+        if len(origins) > 1:
+            claimed = " and by ".join(origins)
+            errors.append(f"Parameter '{name}' of {scope} is claimed by {claimed}")
     return errors

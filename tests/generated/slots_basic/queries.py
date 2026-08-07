@@ -21,3 +21,13 @@ attach = api_gql(
     }
     """
 )
+
+image_url = api_gql(
+    """
+    fragment ImageUrl on ImageAttachment {
+        url
+    }
+    """
+)
+
+attach_image = attach.bind(attachment=image_url)

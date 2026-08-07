@@ -831,6 +831,128 @@ def test_interface_fragment_requires_typename(test_project: ProjectBuilder):
         test_project.generate()
 
 
+def test_interface_typename_through_a_fragment_spread_twice(
+    test_project: ProjectBuilder,
+):
+    # Both interface walks in `codegen/selection.py` -- the type conditions a
+    # selection names, and whether its base carries __typename -- visit each
+    # spread once per walk. `NodeIdent` is reached two ways here, directly and
+    # through an inline fragment on the interface, so the second reach hits
+    # that short circuit: it must drop the re-walk without dropping the
+    # __typename the first reach found inside the same fragment.
+    schema = """
+        interface Node {
+            id: ID!
+        }
+
+        type User implements Node {
+            id: ID!
+            name: String!
+        }
+
+        type Admin implements Node {
+            id: ID!
+            permissions: [String!]!
+        }
+
+        type Query {
+            node(id: ID!): Node
+        }
+    """
+
+    test_project.prepare(
+        schema=schema,
+        queries="""
+        from sample_app.gql.api import api_gql
+
+        get_node = api_gql(
+            '''
+            query GetNode($id: ID!) {
+                node(id: $id) {
+                    id
+                    ...NodeIdent
+                    ... on Node {
+                        ...NodeIdent
+                    }
+                    ... on Admin {
+                        permissions
+                    }
+                }
+            }
+
+            fragment NodeIdent on Node {
+                __typename
+            }
+            '''
+        )
+        """,
+    )
+
+    assert test_project.generate() is True
+
+
+def test_typename_inside_a_concrete_type_fragment_is_not_the_base_one(
+    test_project: ProjectBuilder,
+):
+    # `UserBits` selects __typename, but on User -- so it answers for that one
+    # variant, while Admin's model would be left without the discriminator its
+    # union needs. The base-__typename walk therefore steps into a spread only
+    # where the fragment is conditioned on the interface itself, and this
+    # document is the case that tells the two apart: rejecting it is the point
+    # of the type-condition test, not of the spread being unreachable.
+    schema = """
+        interface Node {
+            id: ID!
+        }
+
+        type User implements Node {
+            id: ID!
+            name: String!
+        }
+
+        type Admin implements Node {
+            id: ID!
+            permissions: [String!]!
+        }
+
+        type Query {
+            node(id: ID!): Node
+        }
+    """
+
+    test_project.prepare(
+        schema=schema,
+        queries="""
+        from sample_app.gql.api import api_gql
+
+        get_node = api_gql(
+            '''
+            query GetNode($id: ID!) {
+                node(id: $id) {
+                    id
+                    ...UserBits
+                    ... on Admin {
+                        permissions
+                    }
+                }
+            }
+
+            fragment UserBits on User {
+                __typename
+                name
+            }
+            '''
+        )
+        """,
+    )
+
+    with pytest.raises(
+        ValueError,
+        match=r"Missing __typename in selection set for interface 'Node'",
+    ):
+        test_project.generate()
+
+
 def test_conditional_typename_on_polymorphic_selection_is_rejected(
     test_project: ProjectBuilder,
 ):

@@ -1,5 +1,6 @@
 import importlib
 import json
+import subprocess
 import sys
 import textwrap
 from collections.abc import AsyncIterator
@@ -25,8 +26,14 @@ from iron_gql.codegen import GenerationMode
 from iron_gql.codegen import generate_gql_package
 from iron_gql.codegen.accessors import object_fields
 from iron_gql.runtime import ASGIApp
+from iron_gql.runtime import ASGIReceive
+from iron_gql.runtime import ASGIScope
+from iron_gql.runtime import ASGISend
 from iron_gql.runtime import AsyncGQLClient
 from iron_gql.runtime import GQLClient
+from iron_gql.slots import GQLFragment
+from iron_gql.slots import GQLSlotNode
+from iron_gql.testing import accept_graphql_ws
 from iron_gql.testing import use_async_client
 from iron_gql.testing import use_sync_client
 
@@ -34,7 +41,25 @@ type Resolver = Callable[..., object]
 type Resolvers = Mapping[str, Mapping[str, Resolver]]
 
 
-class _GraphQLRequest(pydantic.BaseModel):
+# Reads a slot node whose offered-fragments phantom has been erased. A bare
+# `GQLSlotNode` is `GQLSlotNode[Never]` (the phantom's declared default), and
+# under contravariance every node is assignable to it -- so this signature
+# accepts any node while `slot_data__`, which carries no phantom, still
+# answers for the handle. That is exactly the shape of a type-erased path in
+# a real program (a node behind a widened annotation, one that arrived as
+# `Any` from dynamic code, a generated module the caller forgot to
+# regenerate), and it is the seam every test pinning the runtime wiring guard
+# goes through -- `GQLFragment.read` itself cannot reach the guard, because
+# its phantom rejects an unoffered handle before the program runs.
+def read_type_erased[TData: pydantic.BaseModel](
+    handle: GQLFragment[TData], node: GQLSlotNode | None
+) -> TData | None:
+    if node is None:
+        return None
+    return node.slot_data__(handle)
+
+
+class GraphQLRequest(pydantic.BaseModel):
     model_config = pydantic.ConfigDict(extra="ignore")
     query: str = ""
     variables: dict[str, object] | None = None
@@ -51,7 +76,73 @@ def build_schema(sdl: str, resolvers: Resolvers) -> graphql.GraphQLSchema:
     return schema
 
 
-def _write_text(path: Path, content: str) -> None:
+# Minimal typed slice of basedpyright's --outputjson schema: just enough to
+# reach severity/rule/message/line without json.loads's `Any` leaking into
+# every assertion under this repo's strict basedpyright config.
+class DiagnosticPosition(pydantic.BaseModel):
+    line: int
+
+
+class DiagnosticRange(pydantic.BaseModel):
+    start: DiagnosticPosition
+
+
+class Diagnostic(pydantic.BaseModel):
+    severity: str
+    message: str
+    range: DiagnosticRange
+    rule: str | None = None
+
+
+class BasedPyrightReport(pydantic.BaseModel):
+    general_diagnostics: list[Diagnostic] = pydantic.Field(alias="generalDiagnostics")
+
+
+def basedpyright_report(check_file: Path) -> BasedPyrightReport:
+    # Type-checks one file with this repo's own basedpyright config: run from
+    # the repo root, so `pyproject.toml`'s settings apply rather than
+    # basedpyright's defaults. A parse failure is reported as the schema drift
+    # it is, instead of as a bare ValidationError from deep inside a test.
+    completed = subprocess.run(
+        [sys.executable, "-m", "basedpyright", "--outputjson", str(check_file)],
+        capture_output=True,
+        text=True,
+        check=False,
+        cwd=Path(__file__).parent.parent,
+    )
+    try:
+        return pydantic.TypeAdapter(BasedPyrightReport).validate_json(completed.stdout)
+    except pydantic.ValidationError as exc:
+        msg = (
+            "basedpyright's JSON output no longer matches the expected shape "
+            f"(exit code {completed.returncode}): {exc}\n"
+            f"stdout={completed.stdout!r}\nstderr={completed.stderr!r}"
+        )
+        pytest.fail(msg)
+
+
+def basedpyright_errors(check_file: Path) -> list[Diagnostic]:
+    return [
+        diagnostic
+        for diagnostic in basedpyright_report(check_file).general_diagnostics
+        if diagnostic.severity == "error"
+    ]
+
+
+def make_subscription_app(messages: list[dict[str, object]]) -> ASGIApp:
+    # A graphql-ws server that acks the subscription, replays `messages` in
+    # order and closes.
+    async def app(scope: ASGIScope, receive: ASGIReceive, send: ASGISend) -> None:
+        connection = await accept_graphql_ws(scope, receive, send)
+        subscription = await connection.ack()
+        for msg in messages:
+            await subscription.send_message(msg)
+        await connection.drain()
+
+    return app
+
+
+def write_text(path: Path, content: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(textwrap.dedent(content).lstrip("\n"), encoding="utf-8")
 
@@ -66,11 +157,11 @@ def generated_package(
     copy is what basedpyright checks and what PRs show as the codegen diff.
     CI catches a stale commit via a clean-worktree check after the test run.
     """
-    root = Path(__file__).parent / "generated" / name
-    _write_text(root / "schema.graphql", schema)
-    _write_text(root / "__init__.py", "")
-    _write_text(root / "settings.py", 'GRAPHQL_URL = "http://testserver/graphql/"\n')
-    _write_text(root / "queries.py", queries)
+    root = _package_root(name)
+    write_text(root / "schema.graphql", schema)
+    write_text(root / "__init__.py", "")
+    write_text(root / "settings.py", 'GRAPHQL_URL = "http://testserver/graphql/"\n')
+    write_text(root / "queries.py", queries)
     generate_gql_package(
         mode=mode,
         schema_path=root / "schema.graphql",
@@ -81,15 +172,33 @@ def generated_package(
         to_camel_fn_full_name="pydantic.alias_generators:to_camel",
         to_snake_fn=alias_generators.to_snake,
     )
-    _write_text(root / "gql" / "__init__.py", "")
+    write_text(root / "gql" / "__init__.py", "")
 
 
 def _generated_api_module(package: str) -> ModuleType:
     return importlib.import_module(f"tests.generated.{package}.gql.api")
 
 
+# Every path into a committed package goes through here, so moving
+# `tests/generated/` is one edit rather than one per test that reads a fixture.
+def _package_root(package: str) -> Path:
+    return Path(__file__).parent / "generated" / package
+
+
 def _package_schema(package: str) -> Path:
-    return Path(__file__).parent / "generated" / package / "schema.graphql"
+    return _package_root(package) / "schema.graphql"
+
+
+def generated_source(package: str) -> str:
+    # The committed generated module as it sits on disk: what basedpyright
+    # checks and what a PR shows as the codegen diff.
+    return (_package_root(package) / "gql" / "api.py").read_text(encoding="utf-8")
+
+
+def generated_queries_path(package: str) -> Path:
+    # The fixture's own `queries.py` — a developer-facing call site, handed to
+    # basedpyright as the reproduction of what a user would write.
+    return _package_root(package) / "queries.py"
 
 
 @asynccontextmanager
@@ -133,7 +242,7 @@ async def gql_server(
 
 def setup_httpserver(httpserver: HTTPServer, schema: graphql.GraphQLSchema) -> str:
     def graphql_handler(request: Request) -> Response:
-        payload = _GraphQLRequest.model_validate(request.get_json(silent=True) or {})
+        payload = GraphQLRequest.model_validate(request.get_json(silent=True) or {})
         # graphql-core types `middleware` via unparameterized Tuple/List, so the
         # function type itself is partially unknown; its return type is fine.
         result = graphql.graphql_sync(  # pyright: ignore[reportUnknownMemberType]
@@ -160,8 +269,7 @@ class ProjectBuilder:
     gql_pkg: str = "sample_app.gql.api"
 
     def write_file(self, path: Path, content: str) -> None:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(textwrap.dedent(content).lstrip("\n"), encoding="utf-8")
+        write_text(path, content)
 
     def clear_modules(self) -> None:
         for module_name in list(sys.modules):
@@ -189,6 +297,7 @@ class ProjectBuilder:
         base_url_import: str | None = None,
         package_full_name: str | None = None,
         mode: GenerationMode = "async",
+        to_snake_fn: Callable[[str], str] = alias_generators.to_snake,
     ) -> bool:
         return generate_gql_package(
             mode=mode,
@@ -198,7 +307,7 @@ class ProjectBuilder:
             base_url_import=base_url_import or f"{self.package}.settings:GRAPHQL_URL",
             scalars={"ID": "builtins:str"},
             to_camel_fn_full_name=to_camel_fn_full_name,
-            to_snake_fn=alias_generators.to_snake,
+            to_snake_fn=to_snake_fn,
         )
 
     def import_api(self) -> ModuleType:

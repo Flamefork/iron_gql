@@ -18,3 +18,5 @@ watch_attachment = api_gql(
     }
     """
 )
+
+watch_image = watch_attachment.bind(attachment=image_url)

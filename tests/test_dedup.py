@@ -4,15 +4,15 @@ import graphql
 from pydantic import alias_generators
 
 from iron_gql.codegen.collect import collect_package_ir
+from iron_gql.codegen.discovery import Statement
 from iron_gql.codegen.ir import CollectedArtifact
 from iron_gql.codegen.ir import CollectedModel
 from iron_gql.codegen.ir import CollectedPackageIR
 from iron_gql.codegen.ir import CollectedUnionAlias
 from iron_gql.codegen.ir import ImportRef
 from iron_gql.codegen.naming import apply_rename
-from iron_gql.codegen.parser import Query
-from iron_gql.codegen.parser import Statement
 from iron_gql.codegen.parser import build_queries
+from iron_gql.codegen.parser import classify_queries
 from iron_gql.codegen.parser import collect_fragment_statements
 from iron_gql.codegen.parser import collect_fragments
 from iron_gql.codegen.parser import parse_documents
@@ -26,12 +26,18 @@ def _build_ir(schema_sdl: str, query_sources: list[str]) -> CollectedPackageIR:
     ]
     docs = parse_documents(statements)
     fragments = collect_fragments(docs)
-    queries: list[Query] = build_queries(schema, docs, fragments)
+    operations, templates, errors = classify_queries(
+        build_queries(schema, docs, fragments)
+    )
+    assert errors == []
     return apply_rename(
         collect_package_ir(
             schema=schema,
-            queries=queries,
+            operations=operations,
+            templates=templates,
             fragment_statements=collect_fragment_statements(schema, docs, fragments),
+            binds=[],
+            discovered_texts=(),
             scalars={"ID": ImportRef.parse("builtins:str")},
             to_snake_fn=alias_generators.to_snake,
         ),

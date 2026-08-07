@@ -5,6 +5,7 @@ from iron_gql.codegen.ir import CollectedField
 from iron_gql.codegen.ir import CollectedModel
 from iron_gql.codegen.ir import CollectedPackageIR
 from iron_gql.codegen.ir import CollectedUnionAlias
+from iron_gql.codegen.ir import GraphQLGenerationError
 from iron_gql.codegen.ir import NamedRef
 from iron_gql.codegen.ir import ScalarRef
 from iron_gql.codegen.ir import TypeRef
@@ -122,9 +123,11 @@ def _pkg(artifacts: list[CollectedModel | CollectedUnionAlias]) -> CollectedPack
         input_artifacts=[],
         operations=[],
         fragments=[],
-        slot_types=(),
+        templates=[],
+        bindings=[],
         enums=[],
         open_model_names=frozenset(),
+        discovered_texts=(),
     )
 
 
@@ -191,6 +194,44 @@ def test_rename_map_is_order_independent_for_same_input_set():
     first = build_rename_map([a, b], frozenset(), frozenset())
     second = build_rename_map([b, a], frozenset(), frozenset())
     assert first == second
+
+
+def test_generated_name_colliding_with_a_fixed_name_is_diagnosed(
+    test_project: ProjectBuilder,
+):
+    # The residual the two collapse tests below cannot cover: both phases yield
+    # to every fixed name, but the *detailed* Phase A name is assigned before
+    # them and answers to nothing, so a fixed artifact spelled exactly like one
+    # is a real collision and the only honest answer is a diagnosis.
+    #
+    # Reached with an operation named after the model its own selection
+    # generates (`Post` + field `id` + no type token = `PostWithId_`). The
+    # aliased `id: child` is what keeps the collapse phases off that model: two
+    # selections of `Post` then share the field name `id` with different
+    # shapes, so neither the short form nor the bare type name is taken.
+    test_project.prepare(
+        schema="""
+        type Query {
+            post: Post
+        }
+
+        type Post {
+            id: String
+            child: Post
+        }
+        """,
+        queries="""
+        from sample_app.gql.api import api_gql
+
+        q = api_gql("query PostWithId_ { post { id: child { id } } }")
+        """,
+    )
+    with pytest.raises(GraphQLGenerationError) as exc_info:
+        test_project.generate()
+
+    [error] = exc_info.value.errors
+    assert "Generated model name(s) 'PostWithId_' collide" in error
+    assert "alias the colliding field or rename the fragment" in error
 
 
 def test_short_name_collapse_yields_to_a_slot_model_name(

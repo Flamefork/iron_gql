@@ -2,11 +2,34 @@ import itertools
 from collections.abc import Sequence
 from dataclasses import dataclass
 from dataclasses import field
-from typing import cast
 
 import graphql
 
-from iron_gql.codegen.slots import response_key
+from iron_gql.codegen.accessors import inline_fragment_type_condition
+
+# The two schema directives that make a selection conditional. Named once: the
+# condition algebra below reads them, a slot field may not carry them at all
+# (a slot is always requested, see `slots._SlotCollector.enter_field`), and a
+# fragment spread a bind reaches at a slot's root may not carry them at the
+# typenames that spread is the only way there -- where the same fragment also
+# reaches the root unconditionally, its fields are always requested at those
+# typenames and the conditional path adds nothing to be wrong about (see
+# `bindings._readable_fragments`).
+CONDITIONAL_DIRECTIVE_NAMES = frozenset({"include", "skip"})
+
+
+def has_conditional_directive(
+    node: graphql.FieldNode | graphql.InlineFragmentNode | graphql.FragmentSpreadNode,
+) -> bool:
+    return any(
+        directive.name.value in CONDITIONAL_DIRECTIVE_NAMES
+        for directive in node.directives or ()
+    )
+
+
+def response_key(node: graphql.FieldNode) -> str:
+    return node.alias.value if node.alias else node.name.value
+
 
 # A conjunction of @include/@skip literals: (variable name, required value)
 # pairs. The empty conjunction always holds; `_conjoin` returns None for a
@@ -63,9 +86,7 @@ class _FieldWalk:
                 case graphql.FieldNode():
                     self._field(selection, cond)
                 case graphql.InlineFragmentNode():
-                    type_condition = cast(
-                        "graphql.NamedTypeNode | None", selection.type_condition
-                    )
+                    type_condition = inline_fragment_type_condition(selection)
                     self._nested(
                         selection, selection.selection_set, type_condition, cond
                     )
@@ -75,8 +96,13 @@ class _FieldWalk:
                         selection, fragment.selection_set, fragment.type_condition, cond
                     )
                 case _:
+                    # Internal invariant, not a diagnosis: a selection is one
+                    # of exactly three node kinds, and every document walked
+                    # here came out of graphql-core's own parser. The case
+                    # stays because the kinds are subclasses of one node type,
+                    # which no type checker can see as exhausted.
                     msg = f"Unsupported selection node: {selection}"
-                    raise TypeError(msg)
+                    raise AssertionError(msg)
 
     def _field(self, selection: graphql.FieldNode, cond: Cond) -> None:
         node_cond = _selection_cond(selection, cond)
@@ -142,22 +168,27 @@ def _directive_literals(
     | graphql.FragmentSpreadNode,
 ) -> list[tuple[str, bool]] | None:
     # None: a literal boolean if-argument excludes the node statically. A
-    # variable argument becomes a literal of the conjunction; validation has
-    # already pinned the argument to a boolean variable or a boolean value.
+    # variable argument becomes a literal of the conjunction.
     literals: list[tuple[str, bool]] = []
     for directive in selection.directives or ():
-        if directive.name.value not in {"include", "skip"}:
+        if directive.name.value not in CONDITIONAL_DIRECTIVE_NAMES:
             continue
         required = directive.name.value == "include"
+        # Both directives declare exactly one argument, `if: Boolean!`, and
+        # validation has already rejected a document that names another one or
+        # gives it anything but a boolean literal or a boolean variable -- so
+        # the loop needs no name test, and a third shape of value is an
+        # internal invariant to crash on, not a case with a meaning.
         for argument in directive.arguments or ():
-            if argument.name.value != "if":
-                continue
-            value = argument.value
-            if isinstance(value, graphql.BooleanValueNode):
-                if value.value is not required:
-                    return None
-            elif isinstance(value, graphql.VariableNode):
-                literals.append((value.name.value, required))
+            match argument.value:
+                case graphql.BooleanValueNode() as literal:
+                    if literal.value is not required:
+                        return None
+                case graphql.VariableNode() as variable:
+                    literals.append((variable.name.value, required))
+                case unexpected:
+                    msg = f"@{directive.name.value}(if:) is {unexpected.kind}"
+                    raise AssertionError(msg)
     return literals
 
 
@@ -197,21 +228,24 @@ def resolve_explicit_types(
     explicit_conditions = collect_type_conditions(selection_set, fragments) - {
         interface_type.name
     }
+    possible_set = set(possible_types)
     explicit_objects: set[graphql.GraphQLObjectType] = set()
     for name in explicit_conditions:
-        typ = schema.get_type(name)
-        if typ is None:
-            msg = f"Unknown GraphQL type '{name}'"
-            raise ValueError(msg)
-        if isinstance(typ, graphql.GraphQLObjectType):
-            explicit_objects.add(typ)
-            continue
-        if isinstance(typ, graphql.GraphQLInterfaceType | graphql.GraphQLUnionType):
-            possible_set = set(possible_types)
-            explicit_objects.update(set(schema.get_possible_types(typ)) & possible_set)
-            continue
-        msg = f"Type condition '{name}' is not a composite type"
-        raise TypeError(msg)
+        named = schema.get_type(name)
+        match named:
+            case graphql.GraphQLObjectType():
+                explicit_objects.add(named)
+            case graphql.GraphQLInterfaceType() | graphql.GraphQLUnionType():
+                explicit_objects.update(
+                    set(schema.get_possible_types(named)) & possible_set
+                )
+            case _:
+                # Internal invariant, not a diagnosis: every name here is a
+                # type condition of a validated document, so the schema
+                # resolves it and validation has already rejected a condition
+                # on anything but a composite type.
+                msg = f"Type condition '{name}' is not a composite type"
+                raise AssertionError(msg)
     return explicit_objects
 
 
@@ -228,25 +262,29 @@ def collect_type_conditions(
                 case graphql.FieldNode():
                     pass
                 case graphql.InlineFragmentNode():
-                    type_condition = cast(
-                        graphql.NamedTypeNode | None, selection.type_condition
-                    )
+                    type_condition = inline_fragment_type_condition(selection)
                     if type_condition is not None:
                         conditions.add(type_condition.name.value)
                     stack.append(selection.selection_set)
                 case graphql.FragmentSpreadNode():
                     name = selection.name.value
+                    # Once per walk: a diamond spreads the same fragment down
+                    # two paths, and the second visit can only re-add the
+                    # conditions the first already collected.
                     if name in visited_fragments:
                         continue
                     visited_fragments.add(name)
-                    fragment = fragments.get(name)
-                    if fragment is None:
-                        continue
+                    # Indexed, not `.get`: a spread whose definition is
+                    # missing never survives validation -- the assumption
+                    # `_FieldWalk.selection_set` walks on over the same map.
+                    fragment = fragments[name]
                     conditions.add(fragment.type_condition.name.value)
                     stack.append(fragment.selection_set)
                 case _:
+                    # The three selection kinds again, see
+                    # `_FieldWalk.selection_set`.
                     msg = f"Unsupported selection node: {selection}"
-                    raise TypeError(msg)
+                    raise AssertionError(msg)
     return conditions
 
 
@@ -264,23 +302,27 @@ def interface_has_base_typename(
                     if selection.alias is None and selection.name.value == "__typename":
                         return True
                 case graphql.InlineFragmentNode():
-                    type_cond = cast(
-                        graphql.NamedTypeNode | None, selection.type_condition
-                    )
+                    type_cond = inline_fragment_type_condition(selection)
                     if type_cond is None or type_cond.name.value == interface_name:
                         stack.append(selection.selection_set)
                 case graphql.FragmentSpreadNode():
                     name = selection.name.value
+                    # Once per walk, like `collect_type_conditions`: the
+                    # second visit re-walks a subtree that has already had its
+                    # say about the base __typename.
                     if name in visited_fragments:
                         continue
                     visited_fragments.add(name)
-                    fragment = fragments.get(name)
-                    if (
-                        fragment is not None
-                        and fragment.type_condition.name.value == interface_name
-                    ):
+                    # Only a fragment conditioned on the interface itself is
+                    # part of the base selection; one on a concrete type
+                    # carries its __typename into that variant alone, which is
+                    # not what the caller is asking about.
+                    fragment = fragments[name]
+                    if fragment.type_condition.name.value == interface_name:
                         stack.append(fragment.selection_set)
                 case _:
+                    # The three selection kinds again, see
+                    # `_FieldWalk.selection_set`.
                     msg = f"Unsupported selection node: {selection}"
-                    raise TypeError(msg)
+                    raise AssertionError(msg)
     return False

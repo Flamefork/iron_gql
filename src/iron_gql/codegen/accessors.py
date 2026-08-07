@@ -1,4 +1,5 @@
 from typing import Any
+from typing import cast
 
 import graphql
 
@@ -36,6 +37,19 @@ import graphql
 # Unknown from `TypeInfo.get_type`: the stub leaves the return unannotated, so
 # `type_info_type` pins it to the documented `GraphQLType | None`.
 #
+# Over-wide `InlineFragmentNode.type_condition`: the stub declares it
+# `NamedTypeNode`, but an inline fragment without a type condition
+# (`... @include(if: $x) { ... }`) really carries `None` at runtime, so every
+# reader has to narrow it back. `inline_fragment_type_condition` does that once.
+#
+# Unknown from `TypeInfo.get_input_type`, on top of the stub hole above:
+# `GraphQLInputType` is itself a `Union[..., GraphQLWrappingType]` with the
+# same bare, unparameterized `GraphQLWrappingType` member described above, so
+# even a fully-annotated wrapper would still return an Unknown-tainted type.
+# `type_info_input_type` returns the untainted `GraphQLType` base instead — the
+# same widening `wrapping_of_type` already does for the identical reason —
+# rather than reproducing a tainted alias under a new name.
+#
 # On upgrade to graphql-core 3.3+, re-check which of these accessors can be
 # deleted in favor of direct attribute access.
 
@@ -71,10 +85,22 @@ def union_types(
     return tuple(gql_type.types)  # pyright: ignore[reportAny]
 
 
+def inline_fragment_type_condition(
+    node: graphql.InlineFragmentNode,
+) -> graphql.NamedTypeNode | None:
+    return cast("graphql.NamedTypeNode | None", node.type_condition)
+
+
 def type_info_type(
     type_info: graphql.TypeInfo,
 ) -> graphql.GraphQLType | None:
     return type_info.get_type()  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+
+
+def type_info_input_type(
+    type_info: graphql.TypeInfo,
+) -> graphql.GraphQLType | None:
+    return type_info.get_input_type()  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
 
 
 def visit_document(

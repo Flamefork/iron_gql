@@ -1,3 +1,6 @@
+from collections.abc import Iterable
+from collections.abc import Sequence
+from itertools import chain
 from typing import Protocol
 from warnings import warn
 
@@ -23,14 +26,19 @@ class TypeRefBuilder(Protocol):
 
 
 def collect_input_type_closure(
-    queries: list[Query],
+    queries: Sequence[Query],
+    *,
+    extra_types: Iterable[graphql.GraphQLType] = (),
 ) -> list[graphql.GraphQLInputObjectType]:
-    roots: set[graphql.GraphQLInputObjectType] = set()
-    for query in queries:
-        for variable in query.variables:
-            named = graphql.get_named_type(variable.gql_type)
-            if isinstance(named, graphql.GraphQLInputObjectType):
-                roots.add(named)
+    # `extra_types` covers roots a query's own `variables` never lists: a
+    # binding's synthesized fragment variables (see `bindings.expand_binding`)
+    # can introduce an input type no query declares on its own.
+    declared = (variable.gql_type for query in queries for variable in query.variables)
+    roots = {
+        named
+        for named in map(graphql.get_named_type, chain(declared, extra_types))
+        if isinstance(named, graphql.GraphQLInputObjectType)
+    }
 
     visited: set[str] = set()
     result: list[graphql.GraphQLInputObjectType] = []

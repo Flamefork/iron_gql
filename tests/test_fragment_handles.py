@@ -1,5 +1,3 @@
-import subprocess
-import sys
 import textwrap
 from pathlib import Path
 from types import ModuleType
@@ -11,6 +9,7 @@ from iron_gql import runtime
 from iron_gql import slots
 from iron_gql.codegen import GraphQLGenerationError
 from tests.conftest import ProjectBuilder
+from tests.conftest import basedpyright_report
 from tests.conftest import generated_package
 
 SCHEMA = """
@@ -81,6 +80,12 @@ generated_package(
         }
         """
     )
+
+    # A fragment becomes a handle only once some bind reaches it; these two
+    # binds are what make `user_fields`/`node_fields` handles for the tests
+    # below, not the mere existence of a slot they are spread-compatible with.
+    with_user_fields = with_slot.bind(node=user_fields)
+    with_node_fields = with_slot.bind(node=node_fields)
     ''',
 )
 
@@ -93,11 +98,10 @@ def test_fragment_statement_returns_a_handle_singleton():
     assert handle_queries.user_fields is api.USER_FIELDS
 
 
-def test_handle_carries_fragment_metadata():
-    handle = handle_queries.user_fields
-    assert handle.fragment_name__ == "UserFields"
-    assert handle.covered_typenames__ == frozenset({"User"})
-    assert handle.fragment_def__ == "fragment UserFields on User {\n  id\n  name\n}"
+def test_handle_carries_its_fragment_name():
+    # The name is the handle's whole identity: a bind dispatches on it, and it
+    # is what a diagnosis names back to the developer.
+    assert handle_queries.user_fields.fragment_name__ == "UserFields"
 
 
 def test_handle_validates_its_own_selection():
@@ -121,8 +125,8 @@ def test_interface_fragment_covers_every_possible_type():
     # Every possible type is covered, and each variant model sees only its own
     # selection: `permissions` belongs to the Admin inline fragment and is not
     # a field of the User variant.
-    handle = handle_queries.node_fields
-    assert handle.covered_typenames__ == frozenset({"Admin", "User"})
+    (handle,) = api.WithSlotWithNodeNodeFields.slot_handles__["node"]
+    assert handle.typenames == frozenset({"Admin", "User"})
     user = api.NODE_FIELDS.validate__({
         "__typename": "User",
         "id": "u-1",
@@ -161,8 +165,8 @@ def test_statement_with_an_operation_is_not_a_handle():
 def test_package_without_operations_passes_fragments_through(
     test_project: ProjectBuilder,
 ):
-    # No operations means no slots, so nothing can accept a handle — the
-    # statement keeps its pre-slot meaning: spread by name, untyped catch-all.
+    # No operations means no templates, so nothing can bind it — the
+    # statement keeps its pre-bind meaning: spread by name, untyped catch-all.
     test_project.prepare(
         schema=SCHEMA,
         queries="""
@@ -212,6 +216,11 @@ def test_duplicate_fragment_names_across_statements_are_rejected(
             }
             '''
         )
+
+        # `first` must be bind-reachable for the name collision to surface at
+        # all: an unbound fragment keeps its pre-bind meaning and is never
+        # compiled into a handle in the first place.
+        bound = with_slot.bind(node=first)
         """,
     )
 
@@ -261,6 +270,8 @@ NESTED_HANDLE_STATEMENTS = """
             }
             '''
         )
+
+        bound = with_slot.bind(node=card)
 """
 
 
@@ -369,6 +380,8 @@ def test_duplicate_fragment_with_different_spelling_returns_the_handle(
             }
             '''
         )
+
+        bound = with_slot.bind(node=first)
         """,
     )
     api_module, queries_module = test_project.generate_and_import()
@@ -418,6 +431,8 @@ def test_fragment_pinning_a_generated_model_name_is_rejected(
             query S { user @slot { __typename } }
             '''
         )
+
+        bound = s.bind(user=f)
         """,
     )
     with pytest.raises(GraphQLGenerationError, match="pins model name"):
@@ -446,6 +461,8 @@ def test_fragment_named_python_keyword_is_rejected(test_project: ProjectBuilder)
             }
             '''
         )
+
+        bound = with_slot.bind(node=f)
         """,
     )
     with pytest.raises(
@@ -478,6 +495,8 @@ def test_statically_empty_fragment_is_rejected(test_project: ProjectBuilder):
             }
             '''
         )
+
+        bound = with_slot.bind(node=empty_bits)
         """,
     )
     with pytest.raises(ValueError, match="statically empty"):
@@ -505,41 +524,19 @@ def test_invalid_standalone_fragment_is_rejected(test_project: ProjectBuilder):
         test_project.generate()
 
 
-# Minimal typed slice of basedpyright's --outputjson schema: just enough to
-# reach severity/rule/message/line without json.loads's `Any` leaking into
-# every assertion under this repo's strict basedpyright config.
-class _DiagnosticPosition(pydantic.BaseModel):
-    line: int
-
-
-class _DiagnosticRange(pydantic.BaseModel):
-    start: _DiagnosticPosition
-
-
-class _Diagnostic(pydantic.BaseModel):
-    severity: str
-    message: str
-    range: _DiagnosticRange
-    rule: str | None = None
-
-
-class _BasedPyrightReport(pydantic.BaseModel):
-    general_diagnostics: list[_Diagnostic] = pydantic.Field(alias="generalDiagnostics")
-
-
 def test_type_checker_rejects_incompatible_fragment_and_infers_read_type(
     tmp_path: Path,
 ):
-    # The per-type compatibility bases exist only for basedpyright: they are
-    # empty marker classes, so no runtime assertion can tell a correct base
-    # from a dropped one. This is the only test that can catch that
-    # regression class. `slots_multi` has everything needed: AlbumSummary is
+    # The overloads `bind()` renders exist only for basedpyright: a caller
+    # who passes an incompatible fragment class gets a static rejection, not
+    # a runtime one. This is the only test that can catch a dropped or
+    # mistyped overload. `slots_multi` has everything needed: AlbumSummary is
     # a fragment on Album, a type outside every slot's possible types in that
     # package, so it never becomes a handle at all — its statement resolves
-    # to the untyped catch-all, which no slot kwarg accepts — and AlbumTitle
-    # is compatible with both `preview` and `attachment`. The scratch file
-    # lives under tmp_path, outside the repo tree, so `just lint`'s
-    # whole-project basedpyright run never picks it up.
+    # to the untyped catch-all, which no bind() overload accepts — and
+    # AlbumTitle is compatible with both `attachment` and `preview`. The
+    # scratch file lives under tmp_path, outside the repo tree, so `just
+    # lint`'s whole-project basedpyright run never picks it up.
     check_file = tmp_path / "check_slots.py"
     check_file.write_text(
         textwrap.dedent("""
@@ -547,16 +544,12 @@ def test_type_checker_rejects_incompatible_fragment_and_infers_read_type(
 
 
             async def main() -> None:
-                await queries.list_posts.execute(
-                    preview=queries.album_title,
-                    attachment=queries.album_cover,
+                bad = queries.list_posts.bind(
+                    attachment=queries.album_title,
+                    preview=queries.album_cover,
                     owner=queries.album_summary,
                 )
-                result = await queries.list_posts.execute(
-                    preview=queries.album_title,
-                    attachment=queries.album_cover,
-                    owner=queries.owner_identity,
-                )
+                result = await queries.list_posts_typed.execute()
                 post = result.posts[0]
                 title = queries.album_title.read(post.attachment)
                 reveal_type(title)
@@ -565,38 +558,28 @@ def test_type_checker_rejects_incompatible_fragment_and_infers_read_type(
         """).lstrip("\n"),
         encoding="utf-8",
     )
-    completed = subprocess.run(
-        [sys.executable, "-m", "basedpyright", "--outputjson", str(check_file)],
-        capture_output=True,
-        text=True,
-        check=False,
-        cwd=Path(__file__).parent.parent,
-    )
-    try:
-        report = pydantic.TypeAdapter(_BasedPyrightReport).validate_json(
-            completed.stdout
-        )
-    except pydantic.ValidationError as exc:
-        msg = (
-            "basedpyright's JSON output no longer matches the expected shape "
-            f"(exit code {completed.returncode}): {exc}\n"
-            f"stdout={completed.stdout!r}\nstderr={completed.stderr!r}"
-        )
-        pytest.fail(msg)
-    diagnostics = report.general_diagnostics
+    diagnostics = basedpyright_report(check_file).general_diagnostics
 
-    # Half 1: AlbumSummary must be statically rejected as `owner`, pinned
-    # to the exact kwarg's line so an unrelated type error can't satisfy it.
+    # Half 1: AlbumSummary must be statically rejected as `owner`. `bad`'s
+    # call matches no bind() overload (`owner` is untyped GQLOperation), so
+    # basedpyright reports the overload-resolution failure at the call's own
+    # line plus cascading "unknown type"/"unused variable" noise on `bad` —
+    # the diagnostic that actually pins the rejection is the best-match
+    # argument-type error, at the exact kwarg's line so an unrelated type
+    # error can't satisfy it.
     errors = [d for d in diagnostics if d.severity == "error"]
-    assert len(errors) == 1, f"expected exactly one type error, got: {diagnostics}"
-    rejection = errors[0]
-    assert rejection.rule == "reportArgumentType", rejection
+    argument_errors = [d for d in errors if d.rule == "reportArgumentType"]
+    assert len(argument_errors) == 1, (
+        f"expected exactly one argument-type error, got: {diagnostics}"
+    )
+    rejection = argument_errors[0]
     assert rejection.range.start.line == 7, rejection
     assert "GQLOperation" in rejection.message, rejection.message
-    assert "OwnerFragment" in rejection.message, rejection.message
+    assert "OwnerIdentity" in rejection.message, rejection.message
 
     # Half 2: read() must recover AlbumTitle's own model (AlbumTitleData),
-    # not the `attachment` slot's discriminated-union model.
+    # not some slot-specific union — a handle's `read` is typed by its own
+    # model alone, independent of which slot it was ever bound into.
     infos = [d for d in diagnostics if d.severity == "information"]
     assert len(infos) == 2, (
         f"expected exactly two reveal_type diagnostics, got: {diagnostics}"
@@ -604,10 +587,9 @@ def test_type_checker_rejects_incompatible_fragment_and_infers_read_type(
     inference = infos[0]
     assert inference.message == 'Type of "title" is "AlbumTitleData | None"', inference
 
-    # Half 3: a known-but-untyped statement (a fragment no slot accepts) keeps
-    # its own Literal overload returning the plain GQLOperation — the handles
-    # elsewhere in the package widen only the catch-all, so operation methods
-    # like `with_headers` stay available at this call site.
+    # Half 3: a known-but-unbound statement (a fragment no bind ever reaches)
+    # keeps its own Literal overload returning the plain GQLOperation, so
+    # operation methods like `with_headers` stay available at this call site.
     passthrough = infos[1]
     assert passthrough.message == 'Type of "passthrough" is "GQLOperation"', passthrough
 
@@ -624,7 +606,7 @@ def test_operation_spreading_an_ambiguous_fragment_is_rejected(
     test_project: ProjectBuilder,
 ):
     # The operation defines no local `Common`, so it resolves through the
-    # global index where scan order picks the winner — same ambiguity rule as
+    # global fragment index where scan order picks the winner — same ambiguity rule as
     # a handle's dependencies.
     test_project.prepare(
         schema=SCHEMA,

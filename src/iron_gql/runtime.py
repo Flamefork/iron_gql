@@ -9,8 +9,10 @@ from contextlib import asynccontextmanager
 from contextlib import contextmanager
 from typing import IO
 from typing import Any
+from typing import ClassVar
 from typing import Self
 from typing import TypeIs
+from typing import override
 
 import httpx2
 import pydantic
@@ -19,7 +21,7 @@ from httpx2.websockets import AsyncWebSocketClient
 from httpx2.websockets import WebSocketClient
 
 from iron_gql.errors import GraphQLResponseError
-from iron_gql.slots import SlotFragments
+from iron_gql.slots import SlotHandles
 from iron_gql.websockets import async_graphql_ws_subscribe
 from iron_gql.websockets import graphql_ws_subscribe
 from iron_gql.websockets import ws_url
@@ -66,10 +68,80 @@ class GQLOperation:
     def __init__(self):
         self.headers: dict[str, str] = {}
 
-    def with_headers(self, headers: dict[str, str]) -> Self:
+    def _copy(self) -> Self:
+        # The one statement of what "the same operation" carries. Every
+        # `with_*` copies through here and then replaces only the field it is
+        # named after, so a subclass adding state overrides this alone and
+        # every `with_*` carries it -- rather than each `with_*` re-listing
+        # the state it has to bring along and silently dropping what it forgot.
         q = self.__class__()
+        q.headers = dict(self.headers)
+        return q
+
+    def with_headers(self, headers: dict[str, str]) -> Self:
+        q = self._copy()
         q.headers = dict(headers)
         return q
+
+
+# The base every generated template class derives from. Deliberately empty: a
+# template is not executable and carries no state — it is a `bind()` dispatcher,
+# and each of its bindings is a `GQLBoundOperation` of its own. It exists so the
+# generated `gql()`'s catch-all overload can name a type that covers a template,
+# instead of widening to `object` and stripping every `gql(some_variable)` in
+# the package of its typing.
+class GQLTemplate:
+    pass
+
+
+class GQLBoundOperation(GQLOperation):
+    # Pinned by generated binding classes.
+    exec_source__: ClassVar[str]
+    # Every fragment readable at each slot's root: what the bind named for the
+    # slot, plus whatever those fragments spread at their own root level, each
+    # with the typenames it is reachable at. Offered to pydantic's validation
+    # context so each one becomes independently readable and is
+    # boundary-validated; reading happens through each fragment's own
+    # `read(node)`.
+    slot_handles__: ClassVar[SlotHandles]
+    required_arg_names__: ClassVar[frozenset[str]] = frozenset()
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._fragment_args: dict[str, object] = {}
+
+    @override
+    def _copy(self) -> Self:
+        q = super()._copy()
+        q.set_fragment_args__(self._fragment_args)
+        return q
+
+    def with_args__(self, args: dict[str, object]) -> Self:
+        # Replaces, never merges: the generated `with_args` writes every
+        # fragment variable it knows about on every call, and expresses "use
+        # the schema's default" by leaving a key out. Merging into the previous
+        # call's args would make that spelling unreachable — a value set once
+        # could never be taken back.
+        q = self._copy()
+        q.set_fragment_args__(args)
+        return q
+
+    def set_fragment_args__(self, args: dict[str, object]) -> None:
+        # Cross-instance write from `_copy`/`with_args__`, which `q.
+        # _fragment_args = ...` cannot spell -- ruff's SLF001 rejects reaching
+        # into another instance's private attribute even from inside the
+        # class. The trailing-__ (no leading _) marks it as the same
+        # generated-code-contract idiom as add_slot_data__ in slots.py, not a
+        # public setter for callers.
+        self._fragment_args = dict(args)
+
+    def fragment_args__(self) -> dict[str, object]:
+        if not self.required_arg_names__ <= self._fragment_args.keys():
+            missing = sorted(self.required_arg_names__ - self._fragment_args.keys())
+            names = ", ".join(f"${name}" for name in missing)
+            msg = f"missing fragment variable values ({names}); pass them via with_args"
+            raise ValueError(msg)
+        return self._fragment_args
 
 
 def _build_payload(
@@ -104,7 +176,7 @@ def _multipart_body(
 def _parse_query_response[T: pydantic.BaseModel](
     response: httpx2.Response,
     result_type: type[T],
-    slot_fragments: SlotFragments | None,
+    slot_handles: SlotHandles | None,
 ) -> T:
     if httpx2.codes.is_redirect(response.status_code):
         # httpx2 `Headers.get` is typed as Any
@@ -128,7 +200,7 @@ def _parse_query_response[T: pydantic.BaseModel](
     if body.data is None:
         raise GraphQLResponseError([{"message": "No data in response"}])
 
-    return result_type.model_validate(body.data, context=slot_fragments)
+    return result_type.model_validate(body.data, context=slot_handles)
 
 
 class AsyncGQLClient:
@@ -156,7 +228,7 @@ class AsyncGQLClient:
         *,
         variables: dict[str, Any],
         headers: dict[str, str],
-        slot_fragments: SlotFragments | None = None,
+        slot_handles: SlotHandles | None = None,
     ) -> T:
         payload, files = _build_payload(query, variables)
         if files:
@@ -168,7 +240,7 @@ class AsyncGQLClient:
             response = await self._client.post(
                 self._endpoint_url, json=payload, headers=headers
             )
-        return _parse_query_response(response, result_type, slot_fragments)
+        return _parse_query_response(response, result_type, slot_handles)
 
     @asynccontextmanager
     async def subscribe[T: pydantic.BaseModel](
@@ -178,7 +250,7 @@ class AsyncGQLClient:
         *,
         variables: dict[str, Any],
         headers: dict[str, str],
-        slot_fragments: SlotFragments | None = None,
+        slot_handles: SlotHandles | None = None,
     ) -> AsyncGenerator[AsyncGenerator[T]]:
         serialized_vars, files = serialize_variables(variables)
         if files:
@@ -202,7 +274,7 @@ class AsyncGQLClient:
                     url, subprotocols=["graphql-transport-ws"]
                 ) as ws,
                 async_graphql_ws_subscribe(
-                    ws, result_type, query, serialized_vars, slot_fragments
+                    ws, result_type, query, serialized_vars, slot_handles
                 ) as stream,
             ):
                 yield stream
@@ -236,7 +308,7 @@ class GQLClient:
         *,
         variables: dict[str, Any],
         headers: dict[str, str],
-        slot_fragments: SlotFragments | None = None,
+        slot_handles: SlotHandles | None = None,
     ) -> T:
         payload, files = _build_payload(query, variables)
         if files:
@@ -248,7 +320,7 @@ class GQLClient:
             response = self._client.post(
                 self._endpoint_url, json=payload, headers=headers
             )
-        return _parse_query_response(response, result_type, slot_fragments)
+        return _parse_query_response(response, result_type, slot_handles)
 
     @contextmanager
     def subscribe[T: pydantic.BaseModel](
@@ -258,7 +330,7 @@ class GQLClient:
         *,
         variables: dict[str, Any],
         headers: dict[str, str],
-        slot_fragments: SlotFragments | None = None,
+        slot_handles: SlotHandles | None = None,
     ) -> Generator[Generator[T]]:
         serialized_vars, files = serialize_variables(variables)
         if files:
@@ -273,7 +345,7 @@ class GQLClient:
                 url, subprotocols=["graphql-transport-ws"], headers=headers
             ) as ws,
             graphql_ws_subscribe(
-                ws, result_type, query, serialized_vars, slot_fragments
+                ws, result_type, query, serialized_vars, slot_handles
             ) as stream,
         ):
             yield stream

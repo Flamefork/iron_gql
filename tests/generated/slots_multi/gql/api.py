@@ -10,9 +10,13 @@ from collections.abc import AsyncGenerator
 from collections.abc import Sequence
 from contextlib import AbstractAsyncContextManager
 from typing import Annotated
+from typing import Any
 from typing import ClassVar
 from typing import Literal
+from typing import Never
+from typing import Self
 from typing import overload
+from typing import override
 
 import pydantic
 
@@ -43,52 +47,57 @@ class GQLModel(pydantic.BaseModel):
         validate_default=True,
     )
 
+    # A template's result model is subscripted with its slots' offered
+    # fragments (e.g. `GetAttachmentResult[ImageParts | NodeId]`), which
+    # builds and caches a genuine subclass rather than reusing the base -- the
+    # override below keeps that subclass's name, and so every ValidationError
+    # title raised through it, on the plain model name.
+    @classmethod
+    @override
+    def model_parametrized_name(cls, params: tuple[type[Any], ...]) -> str:
+        return cls.__name__
+
 
 class GQLOpenModel(GQLModel):
     model_config = pydantic.ConfigDict(extra="ignore")
 
 
-class GQLSlotModel(GQLOpenModel, slots.GQLSlotNode):
+class GQLSlotModel[TOffered](GQLOpenModel, slots.GQLSlotNode[TOffered]):
     pass
 
 
-class AttachmentFragment[TModel: pydantic.BaseModel](slots.GQLFragment[TModel]): ...
-class OwnerFragment[TModel: pydantic.BaseModel](slots.GQLFragment[TModel]): ...
-class PreviewableFragment[TModel: pydantic.BaseModel](slots.GQLFragment[TModel]): ...
-
-
-class ListPostsResultPostsAttachmentSlotImageAttachment(GQLSlotModel):
+class ListPostsResultPostsAttachmentSlotImageAttachment[TAttachment](GQLSlotModel[TAttachment]):
     slot_name__: ClassVar[str] = "attachment"
     typename__: Annotated[Literal["ImageAttachment"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
 
 
-class ListPostsResultPostsAttachmentSlotLinkAttachment(GQLSlotModel):
+class ListPostsResultPostsAttachmentSlotLinkAttachment[TAttachment](GQLSlotModel[TAttachment]):
     slot_name__: ClassVar[str] = "attachment"
     typename__: Annotated[Literal["LinkAttachment"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
 
 
-type ListPostsResultPostsAttachmentSlot = Annotated[ListPostsResultPostsAttachmentSlotImageAttachment | ListPostsResultPostsAttachmentSlotLinkAttachment, pydantic.Field(discriminator="typename__")]
+type ListPostsResultPostsAttachmentSlot[TAttachment] = Annotated[ListPostsResultPostsAttachmentSlotImageAttachment[TAttachment] | ListPostsResultPostsAttachmentSlotLinkAttachment[TAttachment], pydantic.Field(discriminator="typename__")]
 
 
-class ListPostsResultPostsPreviewSlot(GQLSlotModel):
+class ListPostsResultPostsPreviewSlot[TPreview](GQLSlotModel[TPreview]):
     slot_name__: ClassVar[str] = "preview"
     typename__: Annotated[Literal['ImageAttachment'], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
 
 
-class ListPostsResultPostsOwnerSlot(GQLSlotModel):
+class ListPostsResultPostsOwnerSlot[TOwner](GQLSlotModel[TOwner]):
     slot_name__: ClassVar[str] = "owner"
     typename__: Annotated[Literal['TeamOwner', 'UserOwner'], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
 
 
-class Post(GQLModel):
+class Post[TAttachment, TPreview, TOwner](GQLModel):
     id: builtins.str
-    attachment: ListPostsResultPostsAttachmentSlot | None
-    preview: ListPostsResultPostsPreviewSlot | None
-    owner: ListPostsResultPostsOwnerSlot
+    attachment: ListPostsResultPostsAttachmentSlot[TAttachment] | None
+    preview: ListPostsResultPostsPreviewSlot[TPreview] | None
+    owner: ListPostsResultPostsOwnerSlot[TOwner]
 
 
-class ListPostsResult(GQLModel):
-    posts: list[Post]
+class ListPostsResult[TAttachment, TPreview, TOwner](GQLModel):
+    posts: list[Post[TAttachment, TPreview, TOwner]]
 
 
 class AlbumTitleDataAlbum(GQLOpenModel):
@@ -122,60 +131,112 @@ class OwnerIdentityDataUserOwner(GQLOpenModel):
 type OwnerIdentityData = Annotated[OwnerIdentityDataTeamOwner | OwnerIdentityDataUserOwner, pydantic.Field(discriminator="typename__")]
 
 
-class ListPosts(runtime.GQLOperation):
-    # See: queries.py:38
-    async def execute(self, *, attachment: AttachmentFragment[pydantic.BaseModel] | Sequence[AttachmentFragment[pydantic.BaseModel]], owner: OwnerFragment[pydantic.BaseModel] | Sequence[OwnerFragment[pydantic.BaseModel]], preview: PreviewableFragment[pydantic.BaseModel] | Sequence[PreviewableFragment[pydantic.BaseModel]]) -> ListPostsResult:
-        slot_fragments = {"attachment": slots.as_handles(attachment), "owner": slots.as_handles(owner), "preview": slots.as_handles(preview)}
+class LinkHrefData(GQLOpenModel):
+    href: str
+
+
+class AlbumTitle(slots.GQLFragment[AlbumTitleData]):
+    pass
+
+
+ALBUM_TITLE = AlbumTitle(
+    fragment_name='AlbumTitle',
+    adapter=pydantic.TypeAdapter(AlbumTitleData),
+)
+
+
+class AlbumCover(slots.GQLFragment[AlbumCoverData]):
+    pass
+
+
+ALBUM_COVER = AlbumCover(
+    fragment_name='AlbumCover',
+    adapter=pydantic.TypeAdapter(AlbumCoverData),
+)
+
+
+class OwnerIdentity(slots.GQLFragment[OwnerIdentityData]):
+    pass
+
+
+OWNER_IDENTITY = OwnerIdentity(
+    fragment_name='OwnerIdentity',
+    adapter=pydantic.TypeAdapter(OwnerIdentityData),
+)
+
+
+class LinkHref(slots.GQLFragment[LinkHrefData]):
+    pass
+
+
+LINK_HREF = LinkHref(
+    fragment_name='LinkHref',
+    adapter=pydantic.TypeAdapter(LinkHrefData),
+)
+
+
+class ListPostsBound[TAttachment, TPreview, TOwner](runtime.GQLBoundOperation):
+    async def execute(self) -> ListPostsResult[TAttachment, TPreview, TOwner]:
         return await API_CLIENT.query(
-            ListPostsResult,
-            slots.build_slot_source('query ListPosts {\n  posts {\n    id\n    attachment {\n      __typename\n      ', (('attachment', '\n    }\n    preview {\n      __typename\n      '), ('preview', '\n    }\n    owner {\n      __typename\n      '), ('owner', '\n    }\n  }\n}')), slot_fragments),
-            variables={},
+            ListPostsResult[TAttachment, TPreview, TOwner],
+            self.exec_source__,
+            variables={**self.fragment_args__()},
             headers=self.headers,
-            slot_fragments=slot_fragments,
+            slot_handles=self.slot_handles__,
         )
 
 
-class AlbumTitle(AttachmentFragment[AlbumTitleData], PreviewableFragment[AlbumTitleData]):
-    def __init__(self) -> None:
-        super().__init__(
-            fragment_name='AlbumTitle',
-            fragment_def='fragment AlbumTitle on ImageAttachment {\n  album {\n    title\n  }\n}',
-            covered_typenames=frozenset({'ImageAttachment'}),
-            adapter=pydantic.TypeAdapter(AlbumTitleData),
-        )
+class ListPostsWithAttachmentAlbumTitleWithOwnerOwnerIdentityWithPreviewAlbumCover(ListPostsBound[AlbumTitle, AlbumCover, OwnerIdentity]):
+    # See: queries.py:63
+    exec_source__ = 'query ListPosts {\n  posts {\n    id\n    attachment {\n      __typename\n      ...AlbumTitle\n    }\n    preview {\n      __typename\n      ...AlbumCover\n    }\n    owner {\n      __typename\n      ...OwnerIdentity\n    }\n  }\n}\n\nfragment AlbumCover on ImageAttachment {\n  album {\n    cover\n  }\n}\n\nfragment AlbumTitle on ImageAttachment {\n  album {\n    title\n  }\n}\n\nfragment OwnerIdentity on Owner {\n  __typename\n  id\n  ... on UserOwner {\n    email\n  }\n  ... on TeamOwner {\n    memberCount\n  }\n}'
+    slot_handles__ = {"attachment": (slots.SlotHandle(ALBUM_TITLE, frozenset({'ImageAttachment'})),), "preview": (slots.SlotHandle(ALBUM_COVER, frozenset({'ImageAttachment'})),), "owner": (slots.SlotHandle(OWNER_IDENTITY, frozenset({'TeamOwner', 'UserOwner'})),)}
 
 
-ALBUM_TITLE = AlbumTitle()
+class ListPostsWithAttachmentAlbumCoverLinkHrefWithOwnerOwnerIdentityWithPreviewAlbumCover(ListPostsBound[AlbumCover | LinkHref, AlbumCover, OwnerIdentity]):
+    # See: queries.py:80
+    exec_source__ = 'query ListPosts {\n  posts {\n    id\n    attachment {\n      __typename\n      ...AlbumCover\n      ...LinkHref\n    }\n    preview {\n      __typename\n      ...AlbumCover\n    }\n    owner {\n      __typename\n      ...OwnerIdentity\n    }\n  }\n}\n\nfragment AlbumCover on ImageAttachment {\n  album {\n    cover\n  }\n}\n\nfragment LinkHref on LinkAttachment {\n  href\n}\n\nfragment OwnerIdentity on Owner {\n  __typename\n  id\n  ... on UserOwner {\n    email\n  }\n  ... on TeamOwner {\n    memberCount\n  }\n}'
+    slot_handles__ = {"attachment": (slots.SlotHandle(ALBUM_COVER, frozenset({'ImageAttachment'})), slots.SlotHandle(LINK_HREF, frozenset({'LinkAttachment'}))), "preview": (slots.SlotHandle(ALBUM_COVER, frozenset({'ImageAttachment'})),), "owner": (slots.SlotHandle(OWNER_IDENTITY, frozenset({'TeamOwner', 'UserOwner'})),)}
 
 
-class AlbumCover(AttachmentFragment[AlbumCoverData], PreviewableFragment[AlbumCoverData]):
-    def __init__(self) -> None:
-        super().__init__(
-            fragment_name='AlbumCover',
-            fragment_def='fragment AlbumCover on ImageAttachment {\n  album {\n    cover\n  }\n}',
-            covered_typenames=frozenset({'ImageAttachment'}),
-            adapter=pydantic.TypeAdapter(AlbumCoverData),
-        )
+class ListPostsWithAttachmentAlbumTitleWithOwnerOwnerIdentityWithPreviewAlbumTitle(ListPostsBound[AlbumTitle, AlbumTitle, OwnerIdentity]):
+    # See: queries.py:85
+    exec_source__ = 'query ListPosts {\n  posts {\n    id\n    attachment {\n      __typename\n      ...AlbumTitle\n    }\n    preview {\n      __typename\n      ...AlbumTitle\n    }\n    owner {\n      __typename\n      ...OwnerIdentity\n    }\n  }\n}\n\nfragment AlbumTitle on ImageAttachment {\n  album {\n    title\n  }\n}\n\nfragment OwnerIdentity on Owner {\n  __typename\n  id\n  ... on UserOwner {\n    email\n  }\n  ... on TeamOwner {\n    memberCount\n  }\n}'
+    slot_handles__ = {"attachment": (slots.SlotHandle(ALBUM_TITLE, frozenset({'ImageAttachment'})),), "preview": (slots.SlotHandle(ALBUM_TITLE, frozenset({'ImageAttachment'})),), "owner": (slots.SlotHandle(OWNER_IDENTITY, frozenset({'TeamOwner', 'UserOwner'})),)}
 
 
-ALBUM_COVER = AlbumCover()
+class ListPostsWithNothing(ListPostsBound[Never, Never, Never]):
+    # See: queries.py:88
+    exec_source__ = 'query ListPosts {\n  posts {\n    id\n    attachment {\n      __typename\n    }\n    preview {\n      __typename\n    }\n    owner {\n      __typename\n    }\n  }\n}'
+    slot_handles__ = {"attachment": (), "preview": (), "owner": ()}
 
 
-class OwnerIdentity(OwnerFragment[OwnerIdentityData]):
-    def __init__(self) -> None:
-        super().__init__(
-            fragment_name='OwnerIdentity',
-            fragment_def='fragment OwnerIdentity on Owner {\n  __typename\n  id\n  ... on UserOwner {\n    email\n  }\n  ... on TeamOwner {\n    memberCount\n  }\n}',
-            covered_typenames=frozenset({'TeamOwner', 'UserOwner'}),
-            adapter=pydantic.TypeAdapter(OwnerIdentityData),
-        )
+class ListPosts(runtime.GQLTemplate):
+    @overload
+    def bind(self, *, attachment: Sequence[Never] = (), preview: Sequence[Never] = (), owner: Sequence[Never] = ()) -> ListPostsWithNothing: ...
+    @overload
+    def bind(self, *, attachment: AlbumTitle | Sequence[AlbumTitle], preview: AlbumCover | Sequence[AlbumCover], owner: OwnerIdentity | Sequence[OwnerIdentity]) -> ListPostsWithAttachmentAlbumTitleWithOwnerOwnerIdentityWithPreviewAlbumCover: ...
+    @overload
+    def bind(self, *, attachment: AlbumTitle | Sequence[AlbumTitle], preview: AlbumTitle | Sequence[AlbumTitle], owner: OwnerIdentity | Sequence[OwnerIdentity]) -> ListPostsWithAttachmentAlbumTitleWithOwnerOwnerIdentityWithPreviewAlbumTitle: ...
+    @overload
+    def bind(self, *, attachment: Sequence[AlbumCover | LinkHref], preview: AlbumCover | Sequence[AlbumCover], owner: OwnerIdentity | Sequence[OwnerIdentity]) -> ListPostsWithAttachmentAlbumCoverLinkHrefWithOwnerOwnerIdentityWithPreviewAlbumCover: ...
+    def bind(
+        self,
+        **fragments: slots.GQLFragment[pydantic.BaseModel] | Sequence[slots.GQLFragment[pydantic.BaseModel]],
+    ) -> runtime.GQLBoundOperation:
+        cls = _API_GQL_BIND_DISPATCH.get(slots.bind_key('ListPosts', fragments))
+        if cls is None:
+            raise LookupError("unknown bind combination for ListPosts; every fragment a bind passes must be a discovered statement - check the call site, then regenerate the package")
+        return cls()
 
 
-OWNER_IDENTITY = OwnerIdentity()
+_API_GQL_BIND_DISPATCH: dict[slots.BindKey, type[runtime.GQLBoundOperation]] = {
+    ('ListPosts', (('attachment', ('AlbumTitle',)), ('owner', ('OwnerIdentity',)), ('preview', ('AlbumCover',)))): ListPostsWithAttachmentAlbumTitleWithOwnerOwnerIdentityWithPreviewAlbumCover,
+    ('ListPosts', (('attachment', ('AlbumCover', 'LinkHref')), ('owner', ('OwnerIdentity',)), ('preview', ('AlbumCover',)))): ListPostsWithAttachmentAlbumCoverLinkHrefWithOwnerOwnerIdentityWithPreviewAlbumCover,
+    ('ListPosts', (('attachment', ('AlbumTitle',)), ('owner', ('OwnerIdentity',)), ('preview', ('AlbumTitle',)))): ListPostsWithAttachmentAlbumTitleWithOwnerOwnerIdentityWithPreviewAlbumTitle,
+    ('ListPosts', ()): ListPostsWithNothing,
+}
 
 
-@overload
-def api_gql(stmt: Literal['\n    query ListPosts {\n        posts {\n            id\n            attachment @slot { __typename }\n            preview @slot { __typename }\n            owner @slot { __typename }\n        }\n    }\n    ']) -> ListPosts: ...
 @overload
 def api_gql(stmt: Literal['\n    fragment AlbumTitle on ImageAttachment {\n        album { title }\n    }\n    ']) -> AlbumTitle: ...
 @overload
@@ -183,20 +244,25 @@ def api_gql(stmt: Literal['\n    fragment AlbumCover on ImageAttachment {\n     
 @overload
 def api_gql(stmt: Literal['\n    fragment OwnerIdentity on Owner {\n        __typename\n        id\n        ... on UserOwner { email }\n        ... on TeamOwner { memberCount }\n    }\n    ']) -> OwnerIdentity: ...
 @overload
+def api_gql(stmt: Literal['\n    fragment LinkHref on LinkAttachment {\n        href\n    }\n    ']) -> LinkHref: ...
+@overload
+def api_gql(stmt: Literal['\n    query ListPosts {\n        posts {\n            id\n            attachment @slot { __typename }\n            preview @slot { __typename }\n            owner @slot { __typename }\n        }\n    }\n    ']) -> ListPosts: ...
+@overload
 def api_gql(stmt: Literal['\n    fragment AlbumSummary on Album {\n        id\n    }\n    ']) -> runtime.GQLOperation: ...
 @overload
-def api_gql(stmt: str) -> runtime.GQLOperation | slots.GQLFragment[pydantic.BaseModel]: ...
-
-
-_API_GQL_DISPATCH: dict[str, type[runtime.GQLOperation]] = {
-    '\n    query ListPosts {\n        posts {\n            id\n            attachment @slot { __typename }\n            preview @slot { __typename }\n            owner @slot { __typename }\n        }\n    }\n    ': ListPosts,
-}
+def api_gql(stmt: str) -> runtime.GQLOperation | slots.GQLFragment[pydantic.BaseModel] | runtime.GQLTemplate: ...
 
 
 _API_GQL_FRAGMENTS: dict[str, slots.GQLFragment[pydantic.BaseModel]] = {
     '\n    fragment AlbumTitle on ImageAttachment {\n        album { title }\n    }\n    ': ALBUM_TITLE,
     '\n    fragment AlbumCover on ImageAttachment {\n        album { cover }\n    }\n    ': ALBUM_COVER,
     '\n    fragment OwnerIdentity on Owner {\n        __typename\n        id\n        ... on UserOwner { email }\n        ... on TeamOwner { memberCount }\n    }\n    ': OWNER_IDENTITY,
+    '\n    fragment LinkHref on LinkAttachment {\n        href\n    }\n    ': LINK_HREF,
+}
+
+
+_API_GQL_TEMPLATES: dict[str, type[runtime.GQLTemplate]] = {
+    '\n    query ListPosts {\n        posts {\n            id\n            attachment @slot { __typename }\n            preview @slot { __typename }\n            owner @slot { __typename }\n        }\n    }\n    ': ListPosts,
 }
 
 
@@ -205,13 +271,13 @@ _API_GQL_PASSTHROUGH: frozenset[str] = frozenset({
 })
 
 
-def api_gql(stmt: str) -> runtime.GQLOperation | slots.GQLFragment[pydantic.BaseModel]:
-    query_cls = _API_GQL_DISPATCH.get(stmt)
-    if query_cls is not None:
-        return query_cls()
+def api_gql(stmt: str) -> runtime.GQLOperation | slots.GQLFragment[pydantic.BaseModel] | runtime.GQLTemplate:
     fragment = _API_GQL_FRAGMENTS.get(stmt)
     if fragment is not None:
         return fragment
+    template_cls = _API_GQL_TEMPLATES.get(stmt)
+    if template_cls is not None:
+        return template_cls()
     if stmt in _API_GQL_PASSTHROUGH:
         return runtime.GQLOperation()
     msg = "unknown GraphQL statement passed to api_gql; "

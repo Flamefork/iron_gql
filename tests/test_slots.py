@@ -1,7 +1,6 @@
 import inspect
 import json
-import weakref
-from pathlib import Path
+from typing import Never
 
 import pydantic
 import pytest
@@ -11,14 +10,12 @@ from werkzeug import Request
 from werkzeug import Response
 
 from iron_gql.codegen import GraphQLGenerationError
-from iron_gql.runtime import ASGIApp
-from iron_gql.runtime import ASGIReceive
-from iron_gql.runtime import ASGIScope
-from iron_gql.runtime import ASGISend
-from iron_gql.testing import accept_graphql_ws
 from tests.conftest import ProjectBuilder
 from tests.conftest import generated_package
+from tests.conftest import generated_source
 from tests.conftest import gql_server
+from tests.conftest import make_subscription_app
+from tests.conftest import read_type_erased
 from tests.conftest import use_package_client
 
 SCHEMA = """
@@ -110,6 +107,16 @@ type Mutation {
         }
         """
     )
+
+    image_url = api_gql(
+        """
+        fragment ImageUrl on ImageAttachment {
+            url
+        }
+        """
+    )
+
+    attach_image = attach.bind(attachment=image_url)
     ''',
 )
 
@@ -160,6 +167,24 @@ generated_package(
         }
         """
     )
+
+    board_id = api_gql(
+        """
+        fragment BoardId on Board {
+            id
+        }
+        """
+    )
+
+    ping_main_bare = ping_main.bind()
+    # A template whose only binding is the all-unfilled one renders a single
+    # `@overload` for `bind()`, which basedpyright always flags
+    # (reportInconsistentOverload -- it requires 2+ overload variants); this
+    # second, otherwise-unused binding keeps the overload count at 2 so the
+    # bare one below stays checkable.
+    ping_main_typed = ping_main.bind(main=board_id)
+    merged_board_bare = merged_board.bind()
+    merged_board_typed = merged_board.bind(merged=board_id)
     ''',
 )
 
@@ -209,6 +234,9 @@ generated_package(
         }
         """
     )
+
+    get_events_with_texts = get_events.bind(board=activity_texts)
+    get_cards_with_titles = get_cards.bind(cards=card_title)
     ''',
 )
 
@@ -277,18 +305,22 @@ generated_package(
         """
     )
 
-    image_caption = api_gql(
-        """
-        fragment ImageCaption on ImageAttachment {
-            caption
-        }
-        """
-    )
-
     link_href = api_gql(
         """
         fragment LinkHref on LinkAttachment {
             href
+        }
+        """
+    )
+
+    # A fragment used only inside the multi-fragment `attachment` list below:
+    # reusing `image_url` there (already bound alone in `get_image`) would
+    # render a `Sequence[ImageUrl | LinkHref]` overload that basedpyright
+    # flags as overlapping `get_image`'s own `Sequence[ImageUrl]` overload.
+    image_caption = api_gql(
+        """
+        fragment ImageCaption on ImageAttachment {
+            caption
         }
         """
     )
@@ -313,6 +345,10 @@ generated_package(
         }
         """
     )
+
+    get_image = get_attachment.bind(attachment=image_url)
+    get_image_or_link = get_attachment.bind(attachment=[image_caption, link_href])
+    get_identity = get_attachment.bind(attachment=attachment_identity)
     ''',
 )
 
@@ -358,6 +394,14 @@ generated_package(
         """
     )
 
+    link_href = api_gql(
+        """
+        fragment LinkHref on LinkAttachment {
+            href
+        }
+        """
+    )
+
     list_posts = api_gql(
         """
         query ListPosts {
@@ -370,6 +414,37 @@ generated_package(
         }
         """
     )
+
+    # `album_summary` stays deliberately unbound here: it is a fragment on
+    # Album, a type outside every slot's possible types in this package, so
+    # it can never be bound (test_fragment_handles.py's basedpyright test
+    # relies on it staying the untyped passthrough).
+    list_posts_typed = list_posts.bind(
+        attachment=album_title, preview=album_cover, owner=owner_identity
+    )
+    # A slot's list may mix fragments whose runtime-type coverage overlaps --
+    # each reads its own slice of the payload independently. LinkHref and
+    # AlbumCover happen to be type-disjoint here regardless, but that is not
+    # why they are paired: AlbumCover stands in for AlbumTitle only because
+    # AlbumTitle already appears alone in
+    # `list_posts_typed`/`list_posts_shared_handle`'s `attachment`, and
+    # reusing it in this list would render a `Sequence[AlbumTitle |
+    # LinkHref]` overload that basedpyright flags as overlapping the existing
+    # bare-AlbumTitle overloads' own Sequence form. A multi-fragment slot
+    # loses the single-handle overload for the whole combo, so the only
+    # overload left types every filled slot as a Sequence -- preview/owner
+    # must be spelled as one-element lists here to match it (bind_key
+    # normalizes either spelling to the same dispatch key, so this is a
+    # static-typing concern only).
+    list_posts_dual = list_posts.bind(
+        attachment=[link_href, album_cover],
+        preview=[album_cover],
+        owner=[owner_identity],
+    )
+    list_posts_shared_handle = list_posts.bind(
+        attachment=album_title, preview=album_title, owner=owner_identity
+    )
+    list_posts_bare = list_posts.bind()
     ''',
 )
 
@@ -407,11 +482,12 @@ generated_package(
         }
         """
     )
+
+    watch_image = watch_attachment.bind(attachment=image_url)
     ''',
 )
 
 
-from tests.generated.slots_basic import queries as basic_queries
 from tests.generated.slots_basic.gql import api as basic_api
 from tests.generated.slots_execute import queries as execute_queries
 from tests.generated.slots_execute.gql.api import AttachmentIdentityDataImageAttachment
@@ -429,31 +505,9 @@ from tests.generated.slots_lists import queries as lists_queries
 from tests.generated.slots_lists.gql.api import ActivityTextsDataEventsComment
 from tests.generated.slots_lists.gql.api import ActivityTextsDataEventsMove
 from tests.generated.slots_multi import queries as multi_queries
-from tests.generated.slots_multi.gql import api as multi_api
 from tests.generated.slots_multi.gql.api import OwnerIdentityDataTeamOwner
 from tests.generated.slots_multi.gql.api import OwnerIdentityDataUserOwner
 from tests.generated.slots_subscription import queries as subscription_queries
-
-
-def generated_source(package: str) -> str:
-    return (Path(__file__).parent / "generated" / package / "gql" / "api.py").read_text(
-        encoding="utf-8"
-    )
-
-
-def test_slot_directive_is_stripped_and_split_in_exec_source():
-    generated = generated_source("slots_basic")
-    # `@slot` legitimately survives elsewhere in the file: `api_gql`'s overload
-    # literal and dispatch dict key are the developer's exact source text, used
-    # to resolve the call to its typed return value. Only the exec source —
-    # the parts actually sent to the server, embedded in `execute()` — must be
-    # free of the directive and split at the slot's position.
-    exec_source_lines = [
-        line for line in generated.splitlines() if "build_slot_source" in line
-    ]
-    assert exec_source_lines, "build_slot_source call not found in generated api.py"
-    assert all("@slot" not in line for line in exec_source_lines)
-    assert all("('attachment', " in line for line in exec_source_lines)
 
 
 def test_slot_inside_fragment_is_rejected(test_project: ProjectBuilder):
@@ -520,27 +574,6 @@ def test_slot_on_a_scalar_field_reports_the_scalar(test_project: ProjectBuilder)
         test_project.generate()
 
 
-def test_slot_name_colliding_with_variable_is_rejected(test_project: ProjectBuilder):
-    test_project.prepare(
-        schema=SCHEMA,
-        queries="""
-        from sample_app.gql.api import api_gql
-
-        get_attachment = api_gql(
-            '''
-            query GetAttachment($attachment: ID!) {
-                post(id: $attachment) {
-                    attachment @slot { __typename }
-                }
-            }
-            '''
-        )
-        """,
-    )
-    with pytest.raises(GraphQLGenerationError, match="Execute parameter 'attachment'"):
-        test_project.generate()
-
-
 def test_slot_name_covering_different_types_is_rejected(test_project: ProjectBuilder):
     # Same alias `x` on two @slot fields that resolve to different composite
     # types: `post` itself (Post) and, nested under a second,
@@ -566,82 +599,6 @@ def test_slot_name_covering_different_types_is_rejected(test_project: ProjectBui
         """,
     )
     with pytest.raises(GraphQLGenerationError, match="different types"):
-        test_project.generate()
-
-
-def test_slot_kwarg_colliding_with_a_variable_by_case_is_rejected(
-    test_project: ProjectBuilder,
-):
-    # `$ImageUrl` and the slot alias `imageUrl` are different GraphQL names,
-    # so the exact-name rule sees nothing — but both snake to `image_url` and
-    # `execute` would be rendered with the same kwarg twice. That source parses
-    # fine and only fails at `compile()`, so nothing downstream catches it.
-    test_project.prepare(
-        schema=SCHEMA,
-        queries="""
-        from sample_app.gql.api import api_gql
-
-        get_attachment = api_gql(
-            '''
-            query GetAttachment($ImageUrl: ID!) {
-                post(id: $ImageUrl) {
-                    imageUrl: attachment @slot { __typename }
-                }
-            }
-            '''
-        )
-        """,
-    )
-    with pytest.raises(GraphQLGenerationError, match="Execute parameter 'image_url'"):
-        test_project.generate()
-
-
-def test_variable_snaking_to_slot_fragments_is_rejected(test_project: ProjectBuilder):
-    # The rendered `execute` binds a `slot_fragments` local before building
-    # `variables`, so a variable snaking to that name would silently send the
-    # mapping to the server instead of the caller's value.
-    test_project.prepare(
-        schema=SCHEMA,
-        queries="""
-        from sample_app.gql.api import api_gql
-
-        get_attachment = api_gql(
-            '''
-            query GetAttachment($slotFragments: ID!) {
-                post(id: $slotFragments) {
-                    attachment @slot { __typename }
-                }
-            }
-            '''
-        )
-        """,
-    )
-    with pytest.raises(
-        GraphQLGenerationError, match="Execute parameter 'slot_fragments'"
-    ):
-        test_project.generate()
-
-
-def test_variable_named_slots_is_rejected(test_project: ProjectBuilder):
-    # `execute` reads `slots.as_handles` and `slots.build_slot_source`, so a
-    # parameter named `slots` would shadow the module inside the method body.
-    test_project.prepare(
-        schema=SCHEMA,
-        queries="""
-        from sample_app.gql.api import api_gql
-
-        get_attachment = api_gql(
-            '''
-            query GetAttachment($slots: ID!) {
-                post(id: $slots) {
-                    attachment @slot { __typename }
-                }
-            }
-            '''
-        )
-        """,
-    )
-    with pytest.raises(GraphQLGenerationError, match="Execute parameter 'slots'"):
         test_project.generate()
 
 
@@ -780,33 +737,8 @@ def test_base_url_symbol_shadowing_the_slots_module_is_rejected(
         test_project.generate(base_url_import="sample_app.queries:slots")
 
 
-def test_reserved_marker_token_in_operation_is_rejected(test_project: ProjectBuilder):
-    # The exec source is split at synthesized `__slot__<i>__` tokens, each
-    # verified to occur exactly once in the printed operation; user text
-    # spelling out that exact token makes the split ambiguous and must be a
-    # loud error rather than a silent mis-split.
-    test_project.prepare(
-        schema=SCHEMA,
-        queries="""
-        from sample_app.gql.api import api_gql
-
-        get_attachment = api_gql(
-            '''
-            query GetAttachment {
-                post(id: "__slot__0__") {
-                    attachment @slot { __typename }
-                }
-            }
-            '''
-        )
-        """,
-    )
-    with pytest.raises(ValueError, match="reserved marker token"):
-        test_project.generate()
-
-
 def test_conditional_slot_is_rejected(test_project: ProjectBuilder):
-    # A slot field is always requested: its spreads are spliced wherever the
+    # A slot field is always requested: its spreads are inserted wherever the
     # node selects the key, and a caller that wants no fragment data passes an
     # empty list — so @skip/@include on the slot field itself is rejected
     # instead of producing a key that can arrive without its fragments.
@@ -924,10 +856,10 @@ def test_slot_conditional_alongside_matching_conditional_selection_generates(
 
 def test_statically_excluded_slot_is_rejected(test_project: ProjectBuilder):
     # A literal `@include(if: false)` on an enclosing selection drops the slot
-    # field from the collected models, but the slot kwarg and the
-    # `{Type}Fragment` base are derived from the AST — the operation would
-    # demand a handle whose data can never arrive, and the rendered module
-    # would reference the never-imported `slots` runtime.
+    # field from the collected models, but the slot itself is still derived
+    # from the AST — the template would promise fragment data on that slot
+    # that can never arrive, and the rendered module would reference the
+    # never-imported `slots` runtime.
     test_project.prepare(
         schema=SCHEMA,
         queries="""
@@ -1006,107 +938,6 @@ type Post {
 """
 
 
-def test_fragment_with_variable_is_rejected(test_project: ProjectBuilder):
-    # The fragment is on a member of the `attachment` slot's union, so it is a
-    # handle some slot kwarg accepts — the only case the rule speaks about.
-    test_project.prepare(
-        schema=SCHEMA,
-        queries="""
-        from sample_app.gql.api import api_gql
-
-        conditional = api_gql(
-            '''
-            fragment ConditionalUrl on ImageAttachment {
-                url @include(if: $withUrl)
-            }
-            '''
-        )
-        """
-        + SLOT_OPERATION,
-    )
-    with pytest.raises(GraphQLGenerationError, match="cannot reference variables"):
-        test_project.generate()
-
-
-def test_fragment_spreading_another_fragment_is_rejected(
-    test_project: ProjectBuilder,
-):
-    # A handle travels to the server as its own text alone; a spread inside it
-    # would have to ship a definition resolved through the global fragment
-    # index. A fragment a slot can accept must therefore be self-contained.
-    test_project.prepare(
-        schema=SCHEMA,
-        queries="""
-        from sample_app.gql.api import api_gql
-
-        url_bits = api_gql(
-            '''
-            fragment UrlBits on ImageAttachment {
-                url
-            }
-            '''
-        )
-
-        outer = api_gql(
-            '''
-            fragment OuterUrl on ImageAttachment {
-                caption
-                ...UrlBits
-            }
-            '''
-        )
-        """
-        + SLOT_OPERATION,
-    )
-    with pytest.raises(
-        GraphQLGenerationError,
-        match=r"'OuterUrl'.*spreads 'UrlBits'.*self-contained",
-    ):
-        test_project.generate()
-
-
-def test_slot_compatible_fragment_with_a_variable_is_rejected_when_only_spread(
-    test_project: ProjectBuilder,
-):
-    # The rule follows compatibility, not usage. Nothing here passes the
-    # fragment into a slot: it is spread by name into `GetOther`, which declares
-    # `$withUrl`, and the slot lives in a different operation. It is still
-    # rejected, because which handles reach a slot is a runtime fact codegen
-    # cannot see — the alternative is an error that surfaces at the first
-    # `execute` passing it. This is the subcase a codebase hits when it adds its
-    # first `@slot` next to fragments that have always taken variables.
-    test_project.prepare(
-        schema=SCHEMA,
-        queries="""
-        from sample_app.gql.api import api_gql
-
-        conditional = api_gql(
-            '''
-            fragment ConditionalUrl on ImageAttachment {
-                url @include(if: $withUrl)
-            }
-            '''
-        )
-
-        get_other = api_gql(
-            '''
-            query GetOther($id: ID!, $withUrl: Boolean!) {
-                post(id: $id) {
-                    attachment {
-                        __typename
-                        ... on ImageAttachment { ...ConditionalUrl }
-                    }
-                }
-            }
-            '''
-        )
-        """
-        + SLOT_OPERATION,
-    )
-    with pytest.raises(GraphQLGenerationError, match="cannot reference variables"):
-        test_project.generate()
-
-
 def test_parameterised_fragment_generates_without_slots(test_project: ProjectBuilder):
     # A named fragment taking its arguments from the operation that spreads it
     # is what static fragments have always been for, and nothing here can reach
@@ -1139,35 +970,6 @@ def test_parameterised_fragment_generates_without_slots(test_project: ProjectBui
     assert test_project.generate() is True
 
 
-def test_fragment_with_a_variable_no_slot_accepts_is_generated(
-    test_project: ProjectBuilder,
-):
-    # The package does have a slot, on Attachment; this fragment is on
-    # Post, which shares no possible type with it, so it never becomes a
-    # handle at all — its statement passes through untyped and the variables
-    # rule does not apply to it. Pins that the rule follows spread
-    # compatibility rather than the mere presence of a slot in the package.
-    test_project.prepare(
-        schema=SCHEMA,
-        queries="""
-        from sample_app.gql.api import api_gql
-
-        conditional = api_gql(
-            '''
-            fragment ConditionalId on Post {
-                id @include(if: $withId)
-            }
-            '''
-        )
-        """
-        + SLOT_OPERATION,
-    )
-    assert test_project.generate() is True
-    generated = (test_project.root / "sample_app/gql/api.py").read_text()
-    assert "ConditionalIdData" not in generated
-    assert "_GQL_PASSTHROUGH" in generated
-
-
 def test_fragment_conflicting_with_the_slot_selection_is_rejected(
     test_project: ProjectBuilder,
 ):
@@ -1198,45 +1000,8 @@ def test_fragment_conflicting_with_the_slot_selection_is_rejected(
             }
             '''
         )
-        """,
-    )
-    with pytest.raises(GraphQLGenerationError, match="Fields 'value' conflict"):
-        test_project.generate()
 
-
-def test_conflicting_fragment_pair_on_one_slot_is_rejected(
-    test_project: ProjectBuilder,
-):
-    test_project.prepare(
-        schema=SCHEMA,
-        queries="""
-        from sample_app.gql.api import api_gql
-
-        url_as_is = api_gql(
-            '''
-            fragment UrlAsIs on ImageAttachment {
-                value: url
-            }
-            '''
-        )
-
-        caption_as_value = api_gql(
-            '''
-            fragment CaptionAsValue on ImageAttachment {
-                value: caption
-            }
-            '''
-        )
-
-        get_attachment = api_gql(
-            '''
-            query GetAttachment($id: ID!) {
-                post(id: $id) {
-                    attachment @slot { __typename }
-                }
-            }
-            '''
-        )
+        bound = get_attachment.bind(attachment=caption_as_value)
         """,
     )
     with pytest.raises(GraphQLGenerationError, match="Fields 'value' conflict"):
@@ -1246,9 +1011,12 @@ def test_conflicting_fragment_pair_on_one_slot_is_rejected(
 def test_compatible_fragments_that_merge_cleanly_are_accepted(
     test_project: ProjectBuilder,
 ):
-    # The same two type conditions and the same slot as the pair above, but the
-    # aliases no longer collide — the combination pass must stay quiet here, or
-    # it would reject the feature's main use case.
+    # `Wrapper` is the one fragment directly bound; `UrlAsIs` reaches the slot
+    # transitively through `Wrapper`'s own spread. The two must still merge
+    # cleanly at the full-pipeline level, or it would reject the feature's
+    # main use case — the conflicting counterpart of this shape is pinned
+    # directly on expand_binding by
+    # test_binding_expansion.py::test_merge_conflict_across_fragments_reported.
     test_project.prepare(
         schema=SCHEMA,
         queries="""
@@ -1262,10 +1030,11 @@ def test_compatible_fragments_that_merge_cleanly_are_accepted(
             '''
         )
 
-        caption_as_value = api_gql(
+        wrapper = api_gql(
             '''
-            fragment CaptionAsValue on ImageAttachment {
+            fragment Wrapper on ImageAttachment {
                 value: caption
+                ...UrlAsIs
             }
             '''
         )
@@ -1279,93 +1048,11 @@ def test_compatible_fragments_that_merge_cleanly_are_accepted(
             }
             '''
         )
+
+        bound = get_attachment.bind(attachment=wrapper)
         """,
     )
     assert test_project.generate() is True
-
-
-def test_handle_shadowing_an_operations_own_fragment_is_rejected(
-    test_project: ProjectBuilder,
-):
-    # The operation already ships a `Url` definition and the runtime appends
-    # the handle's verbatim, so the query as sent would define the name twice.
-    # A locally shadowed fragment is only legal while nothing splices a second
-    # definition of that name in next to it.
-    test_project.prepare(
-        schema=SCHEMA,
-        queries="""
-        from sample_app.gql.api import api_gql
-
-        get_attachment = api_gql(
-            '''
-            fragment Url on ImageAttachment {
-                url
-            }
-
-            query GetAttachment($id: ID!) {
-                post(id: $id) {
-                    attachment @slot { __typename }
-                    other: attachment {
-                        ... on ImageAttachment { ...Url }
-                    }
-                }
-            }
-            '''
-        )
-
-        url = api_gql(
-            '''
-            fragment Url on ImageAttachment {
-                caption
-            }
-            '''
-        )
-        """,
-    )
-    with pytest.raises(GraphQLGenerationError, match="cannot accept fragment 'Url'"):
-        test_project.generate()
-
-
-def test_handle_statically_spread_by_the_same_operation_is_rejected(
-    test_project: ProjectBuilder,
-):
-    # Nothing is shadowed here: there is one global `Url`, the operation
-    # spreads it by name in a branch that has nothing to do with the slot, and
-    # the handle would ship that very same definition alongside. Byte-identical
-    # or not, the assembled query declares the name twice — so the reach of the
-    # rule is wider than the shadowing case and pinned here.
-    test_project.prepare(
-        schema=SCHEMA,
-        queries="""
-        from sample_app.gql.api import api_gql
-
-        url = api_gql(
-            '''
-            fragment Url on ImageAttachment {
-                url
-            }
-            '''
-        )
-
-        get_attachment = api_gql(
-            '''
-            query GetAttachment($id: ID!) {
-                post(id: $id) {
-                    attachment @slot { __typename }
-                    other: attachment {
-                        ... on ImageAttachment { ...Url }
-                    }
-                }
-            }
-            '''
-        )
-        """,
-    )
-    with pytest.raises(
-        GraphQLGenerationError,
-        match="cannot be both spread into an operation by name",
-    ):
-        test_project.generate()
 
 
 def test_nested_slot_in_a_merged_response_key_is_rejected(
@@ -1416,7 +1103,10 @@ def test_fragment_named_like_the_client_singleton_is_rejected(
             '''
         )
         """
-        + SLOT_OPERATION,
+        + SLOT_OPERATION
+        + """
+        bound = get_attachment.bind(attachment=client)
+        """,
     )
     with pytest.raises(GraphQLGenerationError, match="'API_CLIENT' is claimed by"):
         test_project.generate()
@@ -1494,38 +1184,6 @@ def test_enum_named_after_an_unconditional_import_is_rejected(
         _ = test_project.generate(to_camel_fn_full_name="sample_app.casing:to_camel")
 
 
-def test_an_invalid_operation_with_slots_reports_its_error_once(
-    test_project: ProjectBuilder,
-):
-    # The combination pass re-validates a copy of the document once per slot,
-    # so an operation that is already invalid would have its own error
-    # reprinted once per slot and bury the one line that matters.
-    test_project.prepare(
-        schema=SCHEMA,
-        queries="""
-        from sample_app.gql.api import api_gql
-
-        first = api_gql('''fragment First on ImageAttachment { a: url }''')
-        second = api_gql('''fragment Second on ImageAttachment { b: url }''')
-        third = api_gql('''fragment Third on ImageAttachment { c: url }''')
-
-        get_attachment = api_gql(
-            '''
-            query GetAttachment($id: ID!) {
-                post(id: $id) {
-                    nope
-                    attachment @slot { __typename }
-                }
-            }
-            '''
-        )
-        """,
-    )
-    with pytest.raises(GraphQLGenerationError) as exc_info:
-        test_project.generate()
-    assert str(exc_info.value).count("Cannot query field 'nope'") == 1
-
-
 def test_variable_named_self_is_rejected(test_project: ProjectBuilder):
     # `execute` already takes `self` positionally; a second one parses fine and
     # only `compile()` rejects it.
@@ -1543,8 +1201,164 @@ def test_variable_named_self_is_rejected(test_project: ProjectBuilder):
         )
         """,
     )
-    with pytest.raises(GraphQLGenerationError, match="Execute parameter 'self'"):
+    with pytest.raises(
+        GraphQLGenerationError,
+        match=r"Parameter 'self' of execute\(\) of operation .* is claimed by",
+    ):
         test_project.generate()
+
+
+# An input type spelled exactly like the `attachment` slot's type parameter.
+_T_ATTACHMENT_INPUT = """
+input TAttachment { q: String }
+
+extend type Query { search(f: TAttachment): String }
+"""
+
+
+ENUM_IN_SLOT_SCHEMA = """
+type Query {
+    post(id: ID!): Post
+}
+
+type Post {
+    id: ID!
+    attachment: Attachment
+}
+
+union Attachment = ImageAttachment | LinkAttachment
+
+enum Kind {
+    PHOTO
+    VIDEO
+}
+
+type ImageAttachment {
+    url: String!
+    kind: Kind!
+    thumb: Thumb!
+}
+
+type Thumb {
+    label: String!
+    kind: Kind!
+}
+
+type LinkAttachment {
+    href: String!
+}
+"""
+
+
+def test_a_bound_fragment_selecting_an_enum_generates(test_project: ProjectBuilder):
+    # `reachable_model_names` walks the slot's subtree and has to step over
+    # two kinds of dependency that are not artifacts to recurse into: an enum,
+    # which is a leaf, and a model already reached by another path. Narrowing
+    # the nested-slot check to templates left both untested -- and without the
+    # enum half the walk raises KeyError for every package that selects an
+    # enum field inside a bound fragment.
+    test_project.prepare(
+        schema=ENUM_IN_SLOT_SCHEMA,
+        queries="""
+        from sample_app.gql.api import api_gql
+
+        image_parts = api_gql(
+            '''
+            fragment ImageParts on ImageAttachment {
+                url
+                kind
+                thumb { label kind }
+            }
+            '''
+        )
+
+        with_slot = api_gql(
+            '''
+            query WithSlot($id: ID!) {
+                post(id: $id) { attachment @slot { __typename } }
+            }
+            '''
+        )
+
+        bound = with_slot.bind(attachment=image_parts)
+        """,
+    )
+    assert test_project.generate() is True
+    generated = (test_project.root / "sample_app/gql/api.py").read_text()
+    assert "type Kind = Literal['PHOTO', 'VIDEO']" in generated
+
+
+def test_model_named_like_a_slot_type_parameter_is_rejected(
+    test_project: ProjectBuilder,
+):
+    # A slot's PEP 695 type parameter is scoped to the bound base and to every
+    # generic result artifact the slot reaches, where it shadows the
+    # module-level model of the same name -- so `execute`'s own `$f` argument
+    # was annotated with the offered-fragments phantom instead of the input
+    # model, silently and with no diagnosis.
+    test_project.prepare(
+        schema=SCHEMA + _T_ATTACHMENT_INPUT,
+        queries="""
+        from sample_app.gql.api import api_gql
+
+        url = api_gql(
+            '''
+            fragment Url on ImageAttachment { url }
+            '''
+        )
+
+        with_slot = api_gql(
+            '''
+            query WithSlot($id: ID!, $f: TAttachment) {
+                search(f: $f)
+                post(id: $id) { attachment @slot { __typename } }
+            }
+            '''
+        )
+
+        bound = with_slot.bind(attachment=url)
+        """,
+    )
+    with pytest.raises(GraphQLGenerationError, match="'TAttachment' is claimed by"):
+        test_project.generate()
+
+
+def test_two_templates_may_name_a_slot_alike(test_project: ProjectBuilder):
+    # The mirror: each type parameter is scoped to its own class, so two
+    # templates with an `attachment` slot both render `TAttachment` without
+    # ever sharing a namespace.
+    test_project.prepare(
+        schema=SCHEMA,
+        queries="""
+        from sample_app.gql.api import api_gql
+
+        url = api_gql(
+            '''
+            fragment Url on ImageAttachment { url }
+            '''
+        )
+
+        first = api_gql(
+            '''
+            query First($id: ID!) {
+                post(id: $id) { attachment @slot { __typename } }
+            }
+            '''
+        )
+
+        second = api_gql(
+            '''
+            query Second($id: ID!) {
+                post(id: $id) { attachment @slot { __typename } }
+            }
+            '''
+        )
+
+        one = first.bind(attachment=url)
+        two = second.bind(attachment=url)
+        """,
+    )
+    assert test_project.generate() is True
 
 
 def test_fragment_named_like_an_operation_is_rejected(test_project: ProjectBuilder):
@@ -1579,6 +1393,8 @@ def test_fragment_named_like_an_operation_is_rejected(test_project: ProjectBuild
             }
             '''
         )
+
+        bound = with_slot.bind(attachment=url)
         """,
     )
     with pytest.raises(GraphQLGenerationError, match="'GetAttachment' is claimed by"):
@@ -1603,44 +1419,12 @@ def test_fragment_name_colliding_with_its_own_singleton_is_rejected(
             '''
         )
         """
-        + SLOT_OPERATION,
-    )
-    with pytest.raises(GraphQLGenerationError, match="'N' is claimed by"):
-        test_project.generate()
-
-
-def test_fragment_named_like_a_compatibility_base_is_rejected(
-    test_project: ProjectBuilder,
-):
-    # `{Type}Fragment` bases occupy the module namespace too; the handle would
-    # rebind the name its own base class is declared under.
-    test_project.prepare(
-        schema=SCHEMA,
-        queries="""
-        from sample_app.gql.api import api_gql
-
-        url = api_gql(
-            '''
-            fragment AttachmentFragment on ImageAttachment {
-                url
-            }
-            '''
-        )
-
-        get_attachment = api_gql(
-            '''
-            query GetAttachment($id: ID!) {
-                post(id: $id) {
-                    attachment @slot { __typename }
-                }
-            }
-            '''
-        )
+        + SLOT_OPERATION
+        + """
+        bound = get_attachment.bind(attachment=url)
         """,
     )
-    with pytest.raises(
-        GraphQLGenerationError, match="'AttachmentFragment' is claimed by"
-    ):
+    with pytest.raises(GraphQLGenerationError, match="'N' is claimed by"):
         test_project.generate()
 
 
@@ -1676,13 +1460,13 @@ def test_fragment_named_after_a_schema_type_keeps_the_model_apart(
             }
             '''
         )
+
+        bound = get_attachment.bind(attachment=image_attachment)
         """,
     )
     assert test_project.generate() is True
     generated = (test_project.root / "sample_app/gql/api.py").read_text()
-    assert (
-        "class ImageAttachment(AttachmentFragment[ImageAttachmentData]):" in generated
-    )
+    assert "class ImageAttachment(slots.GQLFragment[ImageAttachmentData]):" in generated
     assert "class ImageAttachment(GQLModel):" not in generated
 
 
@@ -1696,7 +1480,7 @@ def test_slot_subtree_models_are_open_and_the_rest_stay_strict():
     assert (
         "class GetBoardResultBoardSlotActivityCommentAuthor(GQLOpenModel):" in generated
     )
-    assert "class GetBoardResult(GQLModel):" in generated
+    assert "class GetBoardResult[TBoard](GQLModel):" in generated
     assert GetBoardResultBoardSlot.model_config.get("extra") == "ignore"
     assert GetBoardResult.model_config.get("extra") == "forbid"
 
@@ -1707,13 +1491,13 @@ def test_slots_with_equal_static_selections_are_not_deduplicated():
     # single class whose one `slot_name__` would then have to speak for three
     # slots. GetBoard's richer selection makes the fourth.
     generated = generated_source("slots_isolation")
-    for name in (
-        "GetBoardResultBoardSlot",
-        "PingBoardResultBoardSlot",
-        "PingMainResultMainSlot",
-        "MergedBoardResultMergedSlot",
+    for name, param in (
+        ("GetBoardResultBoardSlot", "TBoard"),
+        ("PingBoardResultBoardSlot", "TBoard"),
+        ("PingMainResultMainSlot", "TMain"),
+        ("MergedBoardResultMergedSlot", "TMerged"),
     ):
-        assert f"class {name}(GQLSlotModel):" in generated
+        assert f"class {name}[{param}](GQLSlotModel[{param}]):" in generated
 
 
 def test_slot_is_detected_on_any_node_of_a_merged_response_key():
@@ -1721,8 +1505,8 @@ def test_slot_is_detected_on_any_node_of_a_merged_response_key():
     # (a shared fragment selecting the field plus `@slot` in the operation is
     # the realistic shape of this). Slot collection and exec-source stripping
     # both fire on any node with the directive, so the model must too —
-    # otherwise the operation gets a slot kwarg and a marker in its source but
-    # a plain model that cannot hold fragment data.
+    # otherwise the template still has the slot in its bind() surface but a
+    # plain model that cannot hold fragment data.
     generated = generated_source("slots_isolation")
     assert 'slot_name__: ClassVar[str] = "merged"' in generated
 
@@ -1733,7 +1517,9 @@ def test_slot_subtree_ignores_foreign_fields_at_every_depth():
     # config ignores those, while the models expose exactly their own
     # selection. An empty handle tuple stands in for the fragments that would
     # have selected `email`/`position`/`authorId`.
-    result = GetBoardResult.model_validate(
+    # `Never`: no fragment was offered to this slot (the empty handle tuple
+    # below), so nothing is readable on its node.
+    result = GetBoardResult[Never].model_validate(
         {
             "board": {
                 "__typename": "Board",
@@ -1783,36 +1569,11 @@ async def test_execute_reads_fragment_through_slot(httpserver: HTTPServer):
         "slots_execute",
         {"Query": {"post": _resolve_post(IMAGE_PAYLOAD)}},
     ):
-        result = await execute_queries.get_attachment.execute(
-            id="p-1", attachment=execute_queries.image_url
-        )
+        result = await execute_queries.get_image.execute(id="p-1")
         assert result.post is not None
         image = execute_queries.image_url.read(result.post.attachment)
         assert image is not None
         assert image.url == "https://cdn.example/pic.png"
-
-
-async def test_several_fragments_share_one_slot(httpserver: HTTPServer):
-    async with gql_server(
-        httpserver,
-        "slots_execute",
-        {"Query": {"post": _resolve_post(IMAGE_PAYLOAD)}},
-    ):
-        result = await execute_queries.get_attachment.execute(
-            id="p-1",
-            attachment=[
-                execute_queries.image_url,
-                execute_queries.image_caption,
-            ],
-        )
-        assert result.post is not None
-        node = result.post.attachment
-        image = execute_queries.image_url.read(node)
-        caption = execute_queries.image_caption.read(node)
-        assert image is not None
-        assert caption is not None
-        assert image.url == "https://cdn.example/pic.png"
-        assert caption.caption == "A picture"
 
 
 async def test_foreign_typename_reads_as_none(httpserver: HTTPServer):
@@ -1825,16 +1586,10 @@ async def test_foreign_typename_reads_as_none(httpserver: HTTPServer):
         "slots_execute",
         {"Query": {"post": _resolve_post(attachment)}},
     ):
-        result = await execute_queries.get_attachment.execute(
-            id="p-1",
-            attachment=[
-                execute_queries.image_url,
-                execute_queries.link_href,
-            ],
-        )
+        result = await execute_queries.get_image_or_link.execute(id="p-1")
         assert result.post is not None
         node = result.post.attachment
-        assert execute_queries.image_url.read(node) is None
+        assert execute_queries.image_caption.read(node) is None
         link = execute_queries.link_href.read(node)
         assert link is not None
         assert link.href == "https://example.com/post"
@@ -1846,9 +1601,7 @@ async def test_null_slot_node_reads_as_none(httpserver: HTTPServer):
         "slots_execute",
         {"Query": {"post": _resolve_post(None)}},
     ):
-        result = await execute_queries.get_attachment.execute(
-            id="p-1", attachment=execute_queries.image_url
-        )
+        result = await execute_queries.get_image.execute(id="p-1")
         assert result.post is not None
         assert execute_queries.image_url.read(result.post.attachment) is None
 
@@ -1876,12 +1629,8 @@ async def test_union_fragment_reads_the_matching_variant(httpserver: HTTPServer)
         "slots_execute",
         {"Query": {"post": _resolve_attachment_by_id}},
     ):
-        image = await execute_queries.get_attachment.execute(
-            id="img", attachment=execute_queries.attachment_identity
-        )
-        link = await execute_queries.get_attachment.execute(
-            id="link", attachment=execute_queries.attachment_identity
-        )
+        image = await execute_queries.get_identity.execute(id="img")
+        link = await execute_queries.get_identity.execute(id="link")
     assert image.post is not None
     assert link.post is not None
     assert execute_queries.attachment_identity.read(
@@ -1894,27 +1643,6 @@ async def test_union_fragment_reads_the_matching_variant(httpserver: HTTPServer)
     ) == AttachmentIdentityDataLinkAttachment(
         typename__="LinkAttachment", href="https://example.com/post"
     )
-
-
-def test_handles_inherit_only_the_bases_they_are_spread_compatible_with():
-    # Every slot type gets a base whether or not a fragment for it exists.
-    # AlbumTitle is on a union member, OwnerIdentity on the interface itself,
-    # and AlbumSummary is on a type no slot can hold — it never becomes a
-    # handle at all. Checked on the real MRO, not the rendered text: the base
-    # classes exist for isinstance/issubclass relationships and static
-    # compatibility, and this is that relationship stated directly.
-    # ImageAttachment is both an Attachment member and a Previewable
-    # implementation, so its fragments carry two bases at once — the only
-    # shape that exercises multiple generic bases.
-    assert issubclass(multi_api.AlbumTitle, multi_api.AttachmentFragment)
-    assert issubclass(multi_api.AlbumTitle, multi_api.PreviewableFragment)
-    assert not issubclass(multi_api.AlbumTitle, multi_api.OwnerFragment)
-    assert issubclass(multi_api.AlbumCover, multi_api.AttachmentFragment)
-    assert issubclass(multi_api.AlbumCover, multi_api.PreviewableFragment)
-    assert issubclass(multi_api.OwnerIdentity, multi_api.OwnerFragment)
-    assert not issubclass(multi_api.OwnerIdentity, multi_api.AttachmentFragment)
-    assert not issubclass(multi_api.OwnerIdentity, multi_api.PreviewableFragment)
-    assert not hasattr(multi_api, "AlbumSummary")
 
 
 FIRST_ATTACHMENT: dict[str, object] = {
@@ -1962,34 +1690,12 @@ async def test_every_list_element_gets_its_own_slot_data(httpserver: HTTPServer)
         "slots_multi",
         {"Query": {"posts": _resolve_rows}},
     ):
-        result = await multi_queries.list_posts.execute(
-            attachment=multi_queries.album_title,
-            preview=multi_queries.album_cover,
-            owner=multi_queries.owner_identity,
-        )
+        result = await multi_queries.list_posts_typed.execute()
         titles = [
             _not_none(multi_queries.album_title.read(row.attachment)).album.title
             for row in result.posts
         ]
         assert titles == ["First", "Second"]
-
-
-async def test_overlapping_nested_selections_stay_isolated(httpserver: HTTPServer):
-    async with gql_server(
-        httpserver,
-        "slots_multi",
-        {"Query": {"posts": _resolve_rows}},
-    ):
-        result = await multi_queries.list_posts.execute(
-            attachment=[multi_queries.album_title, multi_queries.album_cover],
-            preview=multi_queries.album_cover,
-            owner=multi_queries.owner_identity,
-        )
-        node = result.posts[0].attachment
-        # Both fragments select `album`, so the server merges their fields
-        # into one node; each model exposes only its own selection of it.
-        assert _not_none(multi_queries.album_title.read(node)).album.title == "First"
-        assert _not_none(multi_queries.album_cover.read(node)).album.cover == "cover-1"
 
 
 async def test_two_slots_are_read_independently(httpserver: HTTPServer):
@@ -1998,11 +1704,7 @@ async def test_two_slots_are_read_independently(httpserver: HTTPServer):
         "slots_multi",
         {"Query": {"posts": _resolve_rows}},
     ):
-        result = await multi_queries.list_posts.execute(
-            attachment=multi_queries.album_title,
-            preview=multi_queries.album_cover,
-            owner=multi_queries.owner_identity,
-        )
+        result = await multi_queries.list_posts_typed.execute()
         owners = [
             _not_none(multi_queries.owner_identity.read(row.owner))
             for row in result.posts
@@ -2011,54 +1713,27 @@ async def test_two_slots_are_read_independently(httpserver: HTTPServer):
         assert owners[0].email == "alice@example.com"
         assert isinstance(owners[1], OwnerIdentityDataTeamOwner)
         assert owners[1].member_count == 7
-        # Reading another slot's node isn't caught statically, but it is loud
-        # at runtime: this handle was never passed to the `attachment` slot,
-        # so its data key is absent — which must not read as a legitimate
-        # typename mismatch.
-        with pytest.raises(ValueError, match="was not passed to slot 'attachment'"):
-            multi_queries.owner_identity.read(result.posts[0].attachment)
-
-
-async def test_slot_data_is_keyed_by_handle_identity(httpserver: HTTPServer):
-    # Handle constructors are public, so the passed handle need not be the
-    # module singleton — and a fresh instance of the same class is a different
-    # handle whose read must fail as "was not passed", never alias the passed
-    # instance's data. The node also keeps the passed instance alive: entries
-    # are keyed by the handle object itself, so a released address can never
-    # be recycled into a stored key.
-    async with gql_server(
-        httpserver,
-        "slots_multi",
-        {"Query": {"posts": _resolve_rows}},
-    ):
-        passed = type(multi_queries.album_title)()
-        result = await multi_queries.list_posts.execute(
-            attachment=passed, preview=[], owner=[]
-        )
-        node = result.posts[0].attachment
-        released = weakref.ref(passed)
-        del passed
-        kept = released()
-        assert kept is not None
-        assert _not_none(kept.read(node)).album.title == "First"
-        fresh = type(multi_queries.album_title)()
-        with pytest.raises(ValueError, match="was not passed to slot"):
-            fresh.read(node)
+        # This handle was never passed to the `attachment` slot, so its data
+        # key is absent — which must not read as a legitimate typename
+        # mismatch. The phantom rejects the read statically; through a
+        # type-erased path it stays loud at runtime.
+        with pytest.raises(
+            ValueError,
+            match="is not part of the binding that produced slot 'attachment'",
+        ):
+            read_type_erased(multi_queries.owner_identity, result.posts[0].attachment)
 
 
 async def test_one_handle_serves_two_slots_of_different_types(httpserver: HTTPServer):
-    # AlbumTitle inherits both PreviewableFragment and AttachmentFragment,
-    # so the same handle is accepted at both kwargs and reads back from both nodes.
+    # AlbumTitle is spread-compatible with both `attachment` and `preview`, so
+    # the same fragment can be bound into both slots at once and reads back
+    # independently from both nodes.
     async with gql_server(
         httpserver,
         "slots_multi",
         {"Query": {"posts": _resolve_rows}},
     ):
-        result = await multi_queries.list_posts.execute(
-            attachment=multi_queries.album_title,
-            preview=multi_queries.album_title,
-            owner=multi_queries.owner_identity,
-        )
+        result = await multi_queries.list_posts_shared_handle.execute()
         row = result.posts[0]
         from_attachment = _not_none(multi_queries.album_title.read(row.attachment))
         from_preview = _not_none(multi_queries.album_title.read(row.preview))
@@ -2069,76 +1744,31 @@ async def test_one_handle_serves_two_slots_of_different_types(httpserver: HTTPSe
 async def test_slot_without_fragments_sends_only_its_static_selection(
     httpserver: HTTPServer,
 ):
-    # The one "no fragments" shape the feature can send: an explicit empty set
-    # leaves the marker replaced by nothing and contributes no definitions.
+    # The one "no fragments" shape the feature can send: the exec source is
+    # static text fixed at codegen time, and an all-empty bind's text carries
+    # no spreads and no fragment definitions at all.
     async with gql_server(
         httpserver,
         "slots_multi",
         {"Query": {"posts": _resolve_rows}},
     ):
-        result = await multi_queries.list_posts.execute(
-            attachment=[], preview=[], owner=[]
-        )
-        # An explicit empty set means no handle was offered at all, so a read
-        # is a wiring bug and fails loudly rather than blending into None.
-        with pytest.raises(ValueError, match="was not passed to slot"):
-            multi_queries.album_title.read(result.posts[0].attachment)
+        result = await multi_queries.list_posts_bare.execute()
+        # No handle was ever bound into this slot, so its phantom is `Never`
+        # and a read is a wiring bug: statically rejected, and still loud at
+        # runtime through a type-erased path rather than blending into None.
+        with pytest.raises(
+            ValueError, match="is not part of the binding that produced slot"
+        ):
+            read_type_erased(multi_queries.album_title, result.posts[0].attachment)
     request, _response = httpserver.log[-1]
     payload = pydantic.TypeAdapter(dict[str, str]).validate_json(
         request.get_data(as_text=True)
     )
     sent = payload["query"]
-    assert "__slot__" not in sent
+    assert "@slot" not in sent
+    assert "..." not in sent
     assert "fragment" not in sent
-    # The marker sits on its own line, so substituting nothing for it leaves the
-    # line blank rather than removing it. GraphQL ignores the whitespace and the
-    # node keeps its static selection; pinned here so a tidier substitution is a
-    # deliberate change rather than an accident.
-    assert "attachment {\n      __typename\n      \n    }" in sent
-
-
-async def test_marker_like_text_in_the_operation_survives_splicing(
-    test_project: ProjectBuilder, httpserver: HTTPServer
-):
-    # "__slot__item" written by the developer as an argument value must reach
-    # the server untouched: splicing may only ever replace the synthesized
-    # marker field, never matching text elsewhere in the document.
-    received: list[str | None] = []
-
-    def resolve_search(
-        _obj: object, _info: GraphQLResolveInfo, term: str | None = None
-    ) -> dict[str, str]:
-        received.append(term)
-        return {"id": "s-1"}
-
-    async with test_project.server(
-        httpserver,
-        schema="""
-        type Query {
-            search(term: String): Item
-            item: Item
-        }
-
-        type Item {
-            id: ID!
-        }
-        """,
-        queries='''
-        from sample_app.gql.api import api_gql
-
-        find = api_gql(
-            """
-            query Find {
-                search(term: "__slot__item") { id }
-                item @slot { __typename }
-            }
-            """
-        )
-        ''',
-        resolvers={"Query": {"search": resolve_search, "item": lambda *_: {}}},
-    ) as (_api_module, queries_module):
-        await queries_module.find.execute(item=[])  # pyright: ignore[reportAny]
-    assert received == ["__slot__item"]
+    assert "attachment {" in sent
 
 
 async def test_assembled_source_carries_spreads_and_definitions(httpserver: HTTPServer):
@@ -2147,27 +1777,24 @@ async def test_assembled_source_carries_spreads_and_definitions(httpserver: HTTP
         "slots_multi",
         {"Query": {"posts": _resolve_rows}},
     ):
-        # Passed in the reverse of the sorted order (AlbumCover < AlbumTitle):
-        # spreads and definitions are emitted sorted by fragment name, not in the
-        # order the kwarg listed them. AlbumCover also reaches two slots at
-        # once, so the definition counts below cover cross-slot dedup.
-        _ = await multi_queries.list_posts.execute(
-            attachment=[multi_queries.album_title, multi_queries.album_cover],
-            preview=multi_queries.album_cover,
-            owner=multi_queries.owner_identity,
-        )
+        # `list_posts_dual` binds `attachment` in reverse of the sorted order
+        # (AlbumCover < LinkHref): spreads and definitions are emitted sorted
+        # by fragment name, not in the order the bind call listed them.
+        # `preview` reaches AlbumCover through a separate slot of its own, so
+        # the definition counts below also cover cross-slot dedup.
+        _ = await multi_queries.list_posts_dual.execute()
     request, _response = httpserver.log[-1]
     payload = pydantic.TypeAdapter(dict[str, str]).validate_json(
         request.get_data(as_text=True)
     )
     sent = payload["query"]
     attachment_selection = (
-        "attachment {\n      __typename\n      ...AlbumCover ...AlbumTitle\n    }"
+        "attachment {\n      __typename\n      ...AlbumCover\n      ...LinkHref\n    }"
     )
     assert attachment_selection in sent
     assert "owner {\n      __typename\n      ...OwnerIdentity\n    }" in sent
     assert sent.count("fragment AlbumCover on ImageAttachment") == 1
-    assert sent.count("fragment AlbumTitle on ImageAttachment") == 1
+    assert sent.count("fragment LinkHref on LinkAttachment") == 1
     assert sent.count("fragment OwnerIdentity on Owner") == 1
 
 
@@ -2191,26 +1818,13 @@ async def test_broken_slot_data_fails_execute(httpserver: HTTPServer):
     )
     async with use_package_client("slots_execute", httpserver.url_for("/graphql/")):
         with pytest.raises(pydantic.ValidationError) as exc_info:
-            _ = await execute_queries.get_attachment.execute(
-                id="p-1", attachment=execute_queries.image_url
-            )
+            _ = await execute_queries.get_image.execute(id="p-1")
     assert exc_info.value.errors()[0]["loc"] == (
         "post",
         "attachment",
         "ImageAttachment",
         "url",
     )
-
-
-def _make_subscription_app(messages: list[dict[str, object]]) -> ASGIApp:
-    async def app(scope: ASGIScope, receive: ASGIReceive, send: ASGISend) -> None:
-        connection = await accept_graphql_ws(scope, receive, send)
-        subscription = await connection.ack()
-        for msg in messages:
-            await subscription.send_message(msg)
-        await connection.drain()
-
-    return app
 
 
 FIRST_SUBSCRIPTION_ATTACHMENT: dict[str, object] = {
@@ -2255,15 +1869,13 @@ async def test_subscription_validates_slot_on_every_message():
         },
         {"type": "complete"},
     ]
-    app = _make_subscription_app(messages)
+    app = make_subscription_app(messages)
 
     async with use_package_client(
         "slots_subscription", "http://testserver/graphql", target_app=app
     ):
         events: list[str] = []
-        async with subscription_queries.watch_attachment.execute(
-            id="p-1", attachment=subscription_queries.image_url
-        ) as stream:
+        async with subscription_queries.watch_image.execute(id="p-1") as stream:
             async for event in stream:
                 image = subscription_queries.image_url.read(
                     event.attachment_changed.attachment
@@ -2355,6 +1967,12 @@ get_box = api_gql(
     }
     """
 )
+
+get_post_variant = get_post.bind(owner=per_variant)
+get_box_nested = get_box.bind(post=nested_owner)
+# Bound only to make `owner_slug` a real handle at all -- unused elsewhere in
+# this module, so its closure never reaches `get_post_variant`.
+get_post_by_slug = get_post.bind(owner=owner_slug)
 '''
 
 
@@ -2381,10 +1999,7 @@ async def test_polymorphic_handle_reads_per_variant(
         queries=POLY_QUERIES,
         resolvers={"Query": {"post": _resolve_poly_post}},
     ) as (_api_module, queries_module):
-        result = await queries_module.get_post.execute(  # pyright: ignore[reportAny]
-            id="p1",
-            owner=queries_module.per_variant,  # pyright: ignore[reportAny]
-        )
+        result = await queries_module.get_post_variant.execute(id="p1")  # pyright: ignore[reportAny]
         data = queries_module.per_variant.read(result.post.owner)  # pyright: ignore[reportAny]
         assert data is not None
         assert data.profile.name == "Alice"  # pyright: ignore[reportAny]
@@ -2402,10 +2017,7 @@ async def test_nested_polymorphic_selection_in_handle_reads_per_variant(
         queries=POLY_QUERIES,
         resolvers={"Query": {"post": _resolve_poly_post}},
     ) as (_api_module, queries_module):
-        result = await queries_module.get_box.execute(  # pyright: ignore[reportAny]
-            id="p1",
-            post=queries_module.nested_owner,  # pyright: ignore[reportAny]
-        )
+        result = await queries_module.get_box_nested.execute(id="p1")  # pyright: ignore[reportAny]
         data = queries_module.nested_owner.read(result.post)  # pyright: ignore[reportAny]
         assert data is not None
         assert data.owner.profile.name == "Alice"  # pyright: ignore[reportAny]
@@ -2423,11 +2035,11 @@ async def test_reading_with_a_handle_not_passed_to_the_slot_raises(
         queries=POLY_QUERIES,
         resolvers={"Query": {"post": _resolve_poly_post}},
     ) as (_api_module, queries_module):
-        result = await queries_module.get_post.execute(  # pyright: ignore[reportAny]
-            id="p1",
-            owner=queries_module.per_variant,  # pyright: ignore[reportAny]
-        )
-        with pytest.raises(ValueError, match=r"'OwnerSlug' was not passed to slot"):
+        result = await queries_module.get_post_variant.execute(id="p1")  # pyright: ignore[reportAny]
+        with pytest.raises(
+            ValueError,
+            match=r"'OwnerSlug' is not part of the binding that produced slot",
+        ):
             queries_module.owner_slug.read(result.post.owner)  # pyright: ignore[reportAny]
 
 
@@ -2453,71 +2065,45 @@ async def test_schema_drift_typename_fails_loudly_on_interface_slot(
     api_module, queries_module = test_project.generate_and_import()
     try:
         with pytest.raises(pydantic.ValidationError, match="BotOwner"):
-            await queries_module.get_post.execute(  # pyright: ignore[reportAny]
-                id="p1",
-                owner=queries_module.per_variant,  # pyright: ignore[reportAny]
-            )
+            await queries_module.get_post_variant.execute(id="p1")  # pyright: ignore[reportAny]
     finally:
         await api_module.API_CLIENT.close()  # pyright: ignore[reportAny]
 
 
-def test_incompatible_fragment_error_names_the_slot_and_fragments(
-    test_project: ProjectBuilder,
-):
-    # The headline of the combination probe is public wording; pinned so a
-    # change of the validation strategy that loses it is deliberate.
-    test_project.prepare(
-        schema="""
-        type Query {
-            item: Item
-        }
-
-        type Item {
-            id: ID!
-            name: String
-        }
-        """,
-        queries='''
-        from sample_app.gql.api import api_gql
-
-        clashing = api_gql("fragment Clashing on Item { value: name }")
-
-        get_item = api_gql(
-            """
-            query GetItem {
-                item @slot { __typename value: id }
-            }
-            """
-        )
-        ''',
-    )
-    with pytest.raises(GraphQLGenerationError, match=r"is incompatible with Clashing"):
-        test_project.generate()
-
-
 def test_slot_in_a_mutation_generates_the_same_kwarg_contract():
     # README promises @slot works in mutations; this pins the fixture through
-    # the real signature of the generated `execute`, not the rendered text.
-    parameter = inspect.signature(basic_api.Attach.execute).parameters["attachment"]
-    assert parameter.kind is inspect.Parameter.KEYWORD_ONLY
-    # inspect's stubs type both as Any; the generated module stringifies
-    # annotations via `from __future__ import annotations`.
-    default: object = parameter.default  # pyright: ignore[reportAny]
-    annotation: object = parameter.annotation  # pyright: ignore[reportAny]
+    # the real signature of the generated binding's `execute`, not the
+    # rendered text. The binding's execute takes only the template's own
+    # variables — fragment selection happens at bind time, not at call time.
+    parameters = inspect.signature(
+        basic_api.AttachWithAttachmentImageUrl.execute
+    ).parameters
+    assert list(parameters) == ["self", "id"]
+    assert parameters["id"].kind is inspect.Parameter.KEYWORD_ONLY
+    default: object = parameters["id"].default  # pyright: ignore[reportAny]
+    annotation: object = parameters["id"].annotation  # pyright: ignore[reportAny]
     assert default is inspect.Parameter.empty
-    assert annotation == (
-        "AttachmentFragment[pydantic.BaseModel]"
-        " | Sequence[AttachmentFragment[pydantic.BaseModel]]"
-    )
+    assert annotation == "builtins.str"
 
 
 def test_slot_kwarg_is_snake_case_of_the_response_key(test_project: ProjectBuilder):
-    # README documents the kwarg as snake_case of the slot field's name or
-    # alias; the wire mapping keeps the original response key.
+    # README documents the bind() kwarg as snake_case of the slot field's name
+    # or alias; the wire mapping keeps the original response key. Both halves
+    # have to agree on one name: the keyword discovery reads from the source
+    # and the parameter the generator renders. A response key that is already
+    # snake_case hides a disagreement between them, so this one is not -- and
+    # the generated module is imported, which re-executes the very
+    # `q.bind(main_attachment=...)` call the package was generated from.
     test_project.prepare(
         schema=SCHEMA,
         queries="""
         from sample_app.gql.api import api_gql
+
+        image_url = api_gql(
+            '''
+            fragment ImageUrl on ImageAttachment { url }
+            '''
+        )
 
         q = api_gql(
             '''
@@ -2528,19 +2114,75 @@ def test_slot_kwarg_is_snake_case_of_the_response_key(test_project: ProjectBuild
             }
             '''
         )
+
+        bound = q.bind(main_attachment=image_url)
         """,
     )
-    test_project.generate()
+    _api_module, queries_module = test_project.generate_and_import()
     generated = (test_project.root / "sample_app/gql/api.py").read_text()
-    assert "main_attachment: AttachmentFragment[pydantic.BaseModel]" in generated
-    assert '"mainAttachment": slots.as_handles(main_attachment)' in generated
+    # A template with exactly one binding has no `@overload` at all --
+    # `@overload` needs two or more signatures, and one binding has only one
+    # shape to declare -- so `bind()` renders as that one typed signature
+    # directly, with a real body (see `_bind_single_binding_impl`).
+    assert (
+        "def bind(self, *, main_attachment: ImageUrl | Sequence[ImageUrl]) "
+        "-> GetPostWithMainAttachmentImageUrl:"
+    ) in generated
+    assert (
+        '"mainAttachment": (slots.SlotHandle(IMAGE_URL, '
+        "frozenset({'ImageAttachment'})),)"
+    ) in generated
+    # attributes of a dynamically imported module are Any
+    assert (
+        type(queries_module.bound).__name__  # pyright: ignore[reportAny]
+        == "GetPostWithMainAttachmentImageUrl"
+    )
+
+
+def test_bind_keyword_spelled_as_the_raw_response_key_is_rejected(
+    test_project: ProjectBuilder,
+):
+    # The counterpart of the rule above: a bind that names the slot by its
+    # GraphQL response key must be rejected at generation, naming the snake
+    # spelling. Accepting it produced a class whose own `bind()` signature
+    # could not be called with the keyword that created it -- an import-time
+    # TypeError in the user's own module.
+    test_project.prepare(
+        schema=SCHEMA,
+        queries="""
+        from sample_app.gql.api import api_gql
+
+        image_url = api_gql(
+            '''
+            fragment ImageUrl on ImageAttachment { url }
+            '''
+        )
+
+        q = api_gql(
+            '''
+            query GetPost($id: ID!) {
+                post(id: $id) {
+                    mainAttachment: attachment @slot { __typename }
+                }
+            }
+            '''
+        )
+
+        bound = q.bind(mainAttachment=image_url)
+        """,
+    )
+    with pytest.raises(
+        GraphQLGenerationError,
+        match=r"unknown slot 'mainAttachment'.*slots are: main_attachment",
+    ):
+        test_project.generate()
 
 
 def test_same_fragment_serves_both_roles_across_operations(
     test_project: ProjectBuilder,
 ):
     # README: the same fragment works spread by name in one operation and
-    # passed into another operation's slot.
+    # bound into another operation's slot.
     test_project.prepare(
         schema=SCHEMA,
         queries="""
@@ -2556,7 +2198,7 @@ def test_same_fragment_serves_both_roles_across_operations(
             '''
             query ByName($id: ID!) {
                 post(id: $id) {
-                    attachment { __typename ... on ImageAttachment { url } }
+                    attachment { __typename ... on ImageAttachment { ...ImageUrl } }
                 }
             }
             '''
@@ -2571,6 +2213,8 @@ def test_same_fragment_serves_both_roles_across_operations(
             }
             '''
         )
+
+        bound = by_slot.bind(attachment=image_url)
         """,
     )
     test_project.generate()
@@ -2607,7 +2251,7 @@ async def test_subscription_surfaces_broken_data_in_a_later_message():
         },
         {"type": "complete"},
     ]
-    app = _make_subscription_app(messages)
+    app = make_subscription_app(messages)
 
     async with use_package_client(
         "slots_subscription", "http://testserver/graphql", target_app=app
@@ -2615,9 +2259,7 @@ async def test_subscription_surfaces_broken_data_in_a_later_message():
         events: list[str] = []
 
         async def consume() -> None:
-            async with subscription_queries.watch_attachment.execute(
-                id="p-1", attachment=subscription_queries.image_url
-            ) as stream:
+            async with subscription_queries.watch_image.execute(id="p-1") as stream:
                 async for event in stream:
                     image = subscription_queries.image_url.read(
                         event.attachment_changed.attachment
@@ -2628,13 +2270,6 @@ async def test_subscription_surfaces_broken_data_in_a_later_message():
         with pytest.raises(pydantic.ValidationError, match="url"):
             await consume()
         assert events == ["https://cdn.example/1.png"]
-
-
-def test_slot_kwarg_is_mandatory_at_runtime():
-    # Pinned as behavior, not as an annotation substring: there is no default,
-    # so omitting the slot kwarg fails at the call site.
-    with pytest.raises(TypeError, match="missing 1 required keyword-only argument"):
-        basic_queries.get_attachment.execute(id="p-1")  # pyright: ignore[reportCallIssue]
 
 
 @pytest.mark.parametrize(
@@ -2773,7 +2408,7 @@ async def test_aliased_slot_executes_end_to_end(httpserver: HTTPServer):
         "slots_isolation",
         {"Query": {"board": _resolve_isolation_board}},
     ):
-        result = await isolation_queries.ping_main.execute(id="b-1", main=[])
+        result = await isolation_queries.ping_main_bare.execute(id="b-1")
         assert result.main is not None
         assert result.main.typename__ == "Board"
 
@@ -2784,7 +2419,7 @@ async def test_merged_key_slot_executes_end_to_end(httpserver: HTTPServer):
         "slots_isolation",
         {"Query": {"board": _resolve_isolation_board}},
     ):
-        result = await isolation_queries.merged_board.execute(id="b-1", merged=[])
+        result = await isolation_queries.merged_board_bare.execute(id="b-1")
         assert result.merged is not None
         assert result.merged.typename__ == "Board"
 
@@ -2813,9 +2448,7 @@ async def test_list_of_union_projects_each_element_through_its_variant(
         "slots_lists",
         {"Query": {"board": _resolve_lists_board}},
     ):
-        result = await lists_queries.get_events.execute(
-            id="b-1", board=lists_queries.activity_texts
-        )
+        result = await lists_queries.get_events_with_texts.execute(id="b-1")
     assert result.board is not None
     data = lists_queries.activity_texts.read(result.board)
     assert data is not None
@@ -2836,9 +2469,221 @@ async def test_slot_on_a_list_field_gives_each_element_its_own_node(
         "slots_lists",
         {"Query": {"board": _resolve_lists_board}},
     ):
-        result = await lists_queries.get_cards.execute(
-            id="b-1", cards=lists_queries.card_title
-        )
+        result = await lists_queries.get_cards_with_titles.execute(id="b-1")
     assert result.board is not None
     cards = [lists_queries.card_title.read(node) for node in result.board.cards]
     assert [card.title for card in cards if card is not None] == ["First", "Second"]
+
+
+# --- Namespaces the generator writes parameters into ------------------------
+
+TWO_ATTACHMENT_SCHEMA = """
+type Query {
+    post(id: ID!): Post
+    comment(id: ID!): Comment
+}
+
+type Post {
+    id: ID!
+    attachment: Attachment
+}
+
+type Comment {
+    id: ID!
+    attachment: Attachment
+}
+
+union Attachment = ImageAttachment | LinkAttachment
+
+type ImageAttachment {
+    url: String!
+}
+
+type LinkAttachment {
+    href: String!
+}
+"""
+
+
+def test_template_execute_parameter_that_is_a_keyword_is_rejected(
+    test_project: ProjectBuilder,
+):
+    # An operation with a slot is a template, not a `CollectedOperation`, and
+    # its `execute` renders from `template.variables` -- a namespace of its
+    # own. `$class` reaches it as `class`, which parses but never compiles.
+    test_project.prepare(
+        schema=SCHEMA,
+        queries="""
+        from sample_app.gql.api import api_gql
+
+        image_url = api_gql(
+            '''
+            fragment ImageUrl on ImageAttachment { url }
+            '''
+        )
+
+        q = api_gql(
+            '''
+            query GetPost($class: ID!) {
+                post(id: $class) {
+                    id
+                    attachment @slot { __typename }
+                }
+            }
+            '''
+        )
+
+        bound = q.bind(attachment=image_url)
+        """,
+    )
+    with pytest.raises(
+        GraphQLGenerationError,
+        match=r"Parameter 'class' of execute\(\) of template 'GetPost'",
+    ):
+        test_project.generate()
+
+
+def test_two_slots_mapping_to_one_python_name_are_rejected(
+    test_project: ProjectBuilder,
+):
+    # `att` and `Att` are two response keys and two slot models, but one
+    # `bind()` keyword and one `TAtt` type parameter -- the generated class
+    # body would declare each of them twice.
+    test_project.prepare(
+        schema=TWO_ATTACHMENT_SCHEMA,
+        queries="""
+        from sample_app.gql.api import api_gql
+
+        q = api_gql(
+            '''
+            query GetBoth($id: ID!) {
+                post(id: $id) { att: attachment @slot { __typename } }
+                comment(id: $id) { Att: attachment @slot { __typename } }
+            }
+            '''
+        )
+        """,
+    )
+    with pytest.raises(
+        GraphQLGenerationError,
+        match=r"Slots 'att', 'Att' of template 'GetBoth'.*map to the Python name 'att'",
+    ):
+        test_project.generate()
+
+
+def test_two_slots_mapping_to_one_type_parameter_are_rejected(
+    test_project: ProjectBuilder,
+):
+    # `aB` and `_aB` snake to two distinct Python names, so the `bind()`
+    # keyword namespace stays injective -- but PascalCase drops the leading
+    # underscore again and both claim `TAB`, the type parameter namespace
+    # reserved for the slot's own type variable.
+    test_project.prepare(
+        schema=TWO_ATTACHMENT_SCHEMA,
+        queries="""
+        from sample_app.gql.api import api_gql
+
+        q = api_gql(
+            '''
+            query GetBoth($id: ID!) {
+                post(id: $id) { aB: attachment @slot { __typename } }
+                comment(id: $id) { _aB: attachment @slot { __typename } }
+            }
+            '''
+        )
+        """,
+    )
+    with pytest.raises(
+        GraphQLGenerationError,
+        match=(
+            r"Slots 'aB', '_aB' of template 'GetBoth'"
+            r".*map to the type parameter 'TAB'"
+        ),
+    ):
+        test_project.generate()
+
+
+def test_one_slot_name_under_two_parents_collects_both_positions_models(
+    test_project: ProjectBuilder,
+):
+    # One response key, two positions: both carry the same spliced fragments,
+    # so the slot's node types collect both positions' models rather than one
+    # picked by collection order.
+    test_project.prepare(
+        schema=TWO_ATTACHMENT_SCHEMA,
+        queries="""
+        from sample_app.gql.api import api_gql
+
+        q = api_gql(
+            '''
+            query GetBoth($id: ID!) {
+                post(id: $id) { attachment @slot { __typename } }
+                comment(id: $id) { attachment @slot { __typename } }
+            }
+            '''
+        )
+        """,
+    )
+    test_project.generate()
+    generated = (test_project.root / "sample_app/gql/api.py").read_text()
+    assert "type GetBothResultPostAttachmentSlot[TAttachment] = " in generated
+    assert "type GetBothResultCommentAttachmentSlot[TAttachment] = " in generated
+
+
+POLYMORPHIC_SLOT_PARENT_SCHEMA = """
+type Query {
+    item: Item
+}
+
+interface Item {
+    id: ID!
+    detail: Detail!
+}
+
+type Post implements Item {
+    id: ID!
+    detail: Detail!
+    title: String!
+}
+
+type Note implements Item {
+    id: ID!
+    detail: Detail!
+}
+
+type Detail {
+    body: String!
+}
+"""
+
+
+def test_a_slot_under_a_polymorphic_parent_collects_each_variants_model(
+    test_project: ProjectBuilder,
+):
+    # One source position for `detail @slot`, but the parent is an interface
+    # with an explicit variant, so the collector builds one slot node model per
+    # variant. That split is the collector's own, not two parents a developer
+    # could alias apart -- generation must not reject it, and the slot's node
+    # types collect every variant's model.
+    test_project.prepare(
+        schema=POLYMORPHIC_SLOT_PARENT_SCHEMA,
+        queries="""
+        from sample_app.gql.api import api_gql
+
+        q = api_gql(
+            '''
+            query Feed {
+                item {
+                    __typename
+                    detail @slot { __typename }
+                    ... on Post { title }
+                }
+            }
+            '''
+        )
+        """,
+    )
+    test_project.generate()
+    generated = (test_project.root / "sample_app/gql/api.py").read_text()
+    assert "class FeedResultItemPostDetailSlot[TDetail](" in generated
+    assert "class FeedResultItemItemDetailSlot[TDetail](" in generated

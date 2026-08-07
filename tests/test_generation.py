@@ -1,4 +1,5 @@
 import importlib
+import json
 
 import pytest
 from graphql import GraphQLResolveInfo
@@ -445,6 +446,45 @@ def test_debug_artifacts_generation(test_project: ProjectBuilder):
     assert (debug_dir / "out.json").exists()
 
 
+def test_debug_artifacts_are_written_for_an_invalid_query(
+    test_project: ProjectBuilder,
+):
+    # A debug run is most useful on a package that does not compile, so the
+    # dump must survive one. `$id`'s type does not exist in the schema, which
+    # makes the document invalid *and* makes resolving its variable
+    # declarations raise -- reading them for every raw statement used to kill
+    # the dump before it wrote anything.
+    test_project.prepare(
+        schema="""
+        type Query {
+            ping: String
+        }
+        """,
+        queries="""
+        from sample_app.gql.api import api_gql
+        q = api_gql("query Ping($id: NoSuchType!) { ping }")
+        """,
+    )
+
+    debug_dir = test_project.root / "debug_out"
+    with pytest.raises(GraphQLGenerationError, match="NoSuchType"):
+        generate_gql_package(
+            mode="async",
+            schema_path=test_project.root / "schema.graphql",
+            src_path=test_project.root,
+            package_full_name="sample_app.gql.api",
+            base_url_import="sample_app.settings:GRAPHQL_URL",
+            debug_path=debug_dir,
+        )
+
+    # The raw text and AST carry every statement, valid or not; `out.json`
+    # carries what the parser resolved, which here is nothing.
+    assert "query Ping($id: NoSuchType!)" in (debug_dir / "queries.gql").read_text(
+        encoding="utf-8"
+    )
+    assert json.loads((debug_dir / "out.json").read_text(encoding="utf-8")) == []
+
+
 def test_introspection_query(test_project: ProjectBuilder):
     schema = """
         type Query {
@@ -821,7 +861,11 @@ def test_variable_mapping_to_python_keyword_is_rejected(test_project: ProjectBui
         """,
     )
     with pytest.raises(
-        GraphQLGenerationError, match=r"Execute parameter 'class'.*Python keyword"
+        GraphQLGenerationError,
+        match=(
+            r"Parameter 'class' of execute\(\) of operation.*not a usable Python "
+            r"identifier"
+        ),
     ):
         test_project.generate()
 
@@ -851,7 +895,53 @@ def test_field_aliased_to_python_keyword_is_rejected(test_project: ProjectBuilde
         test_project.generate()
 
 
-def test_syntax_error_in_scanned_file(test_project: ProjectBuilder):
+def test_variable_that_to_snake_fn_turns_into_a_non_identifier_is_rejected(
+    test_project: ProjectBuilder,
+):
+    # `to_snake_fn` is a documented customization hook, so the name a variable
+    # arrives under in `execute`'s signature is ultimately the caller's. One
+    # that is not an identifier renders `def execute(self, *, a-b: ...)`, which
+    # `ast.parse` of the generated file accepts and only `compile()` rejects --
+    # inside the user's own import, with nothing pointing back at the variable.
+    test_project.prepare(
+        schema="""
+            type Query {
+                user(id: ID!): User
+            }
+
+            type User {
+                id: ID!
+            }
+        """,
+        queries="""
+        from sample_app.gql.api import api_gql
+
+        q = api_gql(
+            '''
+            query GetUser($userId: ID!) { user(id: $userId) { id } }
+            '''
+        )
+        """,
+    )
+    with pytest.raises(
+        GraphQLGenerationError,
+        match=r"Parameter 'a-b' of execute\(\).*not a usable Python identifier",
+    ):
+        test_project.generate(
+            to_snake_fn=lambda name: (
+                "a-b" if name == "userId" else alias_generators.to_snake(name)
+            )
+        )
+
+
+def test_unparseable_file_stops_generation_before_the_package_is_rewritten(
+    test_project: ProjectBuilder,
+):
+    # A file the interpreter cannot parse may declare statements or binds of
+    # its own -- nothing short of parsing it can tell. Skipping it would
+    # rewrite the committed package with everything it owns silently removed,
+    # so the run stops instead, naming the file, and the previous generated
+    # module is left untouched on disk.
     test_project.prepare(
         schema="""
             type Query {
@@ -870,12 +960,15 @@ def test_syntax_error_in_scanned_file(test_project: ProjectBuilder):
         )
         """,
     )
+    assert test_project.generate() is True
+    before = (test_project.root / "sample_app/gql/api.py").read_text()
 
     broken = test_project.root / "sample_app" / "broken.py"
     broken.write_text("api_gql(\ndef foo(\n", encoding="utf-8")
 
-    with pytest.raises(SyntaxError, match=r"Failed to parse.*broken\.py"):
+    with pytest.raises(SyntaxError, match=r"Failed to parse .*broken\.py"):
         test_project.generate()
+    assert (test_project.root / "sample_app/gql/api.py").read_text() == before
 
 
 def test_union_alias_colliding_with_a_model_name_is_rejected(

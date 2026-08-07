@@ -2,6 +2,7 @@ import dataclasses
 from collections.abc import Callable
 from collections.abc import Iterable
 from collections.abc import Iterator
+from collections.abc import Mapping
 from dataclasses import dataclass
 
 from iron_gql.codegen.util import capitalize_first
@@ -87,14 +88,37 @@ class ListRef:
 type TypeRef = ScalarRef | NamedRef | ListRef
 
 
-def render_type_expr(typ: TypeRef) -> str:
+# The empty parameter index: nothing a call renders takes type parameters, so
+# every reference is written bare. One shared instance rather than a `{}`
+# default, so no caller can be handed a mapping another call could grow.
+_NO_PARAMS: Mapping[str, tuple[str, ...]] = {}
+
+
+def render_parametrized(name: str, params: tuple[str, ...]) -> str:
+    # An artifact's name written with its type parameters, or bare when it
+    # declares none. One spelling for both sides of the threading rule: the
+    # declaration a renderer writes and every reference to it below.
+    if not params:
+        return name
+    return f"{name}[{', '.join(params)}]"
+
+
+def render_type_expr(
+    typ: TypeRef, params_of: Mapping[str, tuple[str, ...]] = _NO_PARAMS
+) -> str:
     match typ:
         case ScalarRef(expr=expr):
             body = expr
         case NamedRef(name=name):
-            body = name
+            # `params_of` indexes only the artifacts that declare type
+            # parameters; absent means none, and the reference is written
+            # bare. An artifact that does declare them is always referenced
+            # with them, and the referring artifact declares the very same
+            # ones -- `_stamp_slot_params` reached it through this reference --
+            # so passing them straight through is the whole threading rule.
+            body = render_parametrized(name, params_of.get(name, ()))
         case ListRef(element=element):
-            body = f"list[{render_type_expr(element)}]"
+            body = f"list[{render_type_expr(element, params_of)}]"
     if typ.nullable:
         body += " | None"
     return body
@@ -162,11 +186,10 @@ class CollectedModel:
     fields: list[CollectedField]
     graphql_type_name: str | None = None
     slot_name: str | None = None
-    # The runtime typenames this model's selection covers: one for a concrete
-    # object, several for a uniform composite or a polymorphic fallback group.
-    # Consumed by the handles' covered-typename snapshots; empty for models
-    # those walks never reach (operation roots).
-    covered_typenames: tuple[str, ...] = ()
+    # Ordered type-parameter names this artifact declares because a slot node
+    # is reachable from it (template slot document order); () outside slot
+    # paths. A slot node model carries exactly its own slot's parameter.
+    slot_params: tuple[str, ...] = ()
     dependencies: tuple[str, ...] = dataclasses.field(init=False, compare=False)
 
     def __post_init__(self) -> None:
@@ -199,10 +222,15 @@ class CollectedUnionAlias:
     name: str
     variants: tuple[str, ...]
     discriminator: str | None = None
+    # Same contract as CollectedModel.slot_params: the parameters this alias
+    # declares and passes through to every variant.
+    slot_params: tuple[str, ...] = ()
 
-    @property
-    def type_expr(self) -> str:
-        union_expr = " | ".join(self.variants)
+    def type_expr_with(self, params_of: Mapping[str, tuple[str, ...]]) -> str:
+        union_expr = " | ".join(
+            render_type_expr(NamedRef(name=variant), params_of)
+            for variant in self.variants
+        )
         if self.discriminator is None:
             return union_expr
         return (
@@ -261,22 +289,30 @@ class CollectedOperationVar:
 
 
 @dataclass(kw_only=True, frozen=True)
-class CollectedSlot:
-    name: str
-    python_name: str
-    base_name: str
+class CollectedBindingArg:
+    # A binding's `with_args` parameter: the synthesized fragment variable
+    # together with the one fact that makes it differ from an operation
+    # variable. Carried on the variable itself rather than as a set of GraphQL
+    # names beside it, so no layer has to re-join the two by string -- a join
+    # that would keep type-checking and silently stop matching the day a
+    # variable is identified by anything but its raw GraphQL name.
+    var: CollectedOperationVar
+    # Whether a caller may leave this one out of `with_args`: every position
+    # it fills declares a schema default, and an absent variable is the only
+    # spelling that lets that default apply (see
+    # `bindings.SynthesizedVar.omittable`). Every other fragment variable is a
+    # required keyword whose `None` is sent as an explicit null, exactly like
+    # an operation variable of `execute`.
+    omittable: bool
 
-    @property
-    def signature_part(self) -> str:
-        # Erased to the widest model: the kwarg constrains which fragments the
-        # slot accepts, and the handle's own model parameter is what `read`
-        # gives back to its owner.
-        handle = f"{self.base_name}[pydantic.BaseModel]"
-        return f"{self.python_name}: {handle} | Sequence[{handle}]"
 
-    @property
-    def fragments_entry(self) -> str:
-        return f'"{self.name}": slots.as_handles({self.python_name})'
+def result_model_name(class_name: str) -> str:
+    # The one statement of the rule. The model collector names the artifact
+    # with it, both IR kinds report it back under `result_type`, and `execute`
+    # renders that into `client.query(...)`; a second spelling of it would
+    # surface as a NameError in the generated module, not as a generation
+    # error.
+    return f"{class_name}Result"
 
 
 @dataclass(kw_only=True, frozen=True)
@@ -286,39 +322,78 @@ class CollectedOperation:
     # the exact literal, so each spelling needs its own entry.
     stmt_texts: tuple[str, ...]
     class_name: str
-    result_type: str
-    # The printed exec source pre-split at each @slot occurrence: the text up
-    # to the first gap, then one (slot response key, following text) pair per
-    # gap — a slotless operation is the head alone. See
-    # `codegen/slots.build_exec_parts`.
-    exec_head: str
-    exec_splices: tuple[tuple[str, str], ...]
+    # The printed operation text: static, sent as-is by `execute` — a plain
+    # operation never has a slot to expand at bind time (see
+    # `collect.collect_package_ir`: one with `@slot` is a template instead).
+    exec_source: str
     variables: tuple[CollectedOperationVar, ...]
-    slots: tuple[CollectedSlot, ...]
     is_subscription: bool
+    # Every call site that discovered this operation, in discovery order.
     locations: tuple[str, ...]
 
     @property
-    def signature_parts(self) -> tuple[str, ...]:
-        parts = [var.signature_part for var in self.variables]
-        parts.extend(slot.signature_part for slot in self.slots)
-        if not parts:
-            return ("self",)
-        return ("self", "*", *parts)
+    def location(self) -> str:
+        return ", ".join(self.locations)
 
     @property
-    def variables_expr(self) -> str:
-        return "{" + ", ".join(var.variable_entry for var in self.variables) + "}"
+    def result_type(self) -> str:
+        return result_model_name(self.class_name)
+
+
+@dataclass(kw_only=True, frozen=True)
+class CollectedTemplateSlot:
+    # A slot carries two names, and which one a layer uses is not a detail:
+    # `python_name` is the whole public side (the `bind()` keyword, the type
+    # parameter, the dispatch key), while `name` is the wire side (the JSON
+    # response key, the point `_SlotFiller` splices at, the key of the
+    # runtime's fragments context). `expand_binding` is the one place that
+    # translates between them.
+    name: str  # response key
+    python_name: str  # snake_case kwarg / dispatch key
+    type_name: str  # the slot field's GraphQL type; what a fragment spreads into
+    # The slot's node models, in walk order -- every model whose `slot_name`
+    # is this slot's, which is where that fact is actually recorded; this is a
+    # re-keying of it, not a second copy. One key routinely reaches several
+    # models: a polymorphic slot type gives it one per variant (the union
+    # alias over them is not a node model and is reached from them through the
+    # dependency graph), and the key may also be selected under two parents.
+    # All of them carry the same spliced fragments, so every one of them is
+    # readable through those fragments' own `read(node)`.
+    node_types: tuple[str, ...]
 
     @property
-    def slot_fragments_expr(self) -> str:
-        return "{" + ", ".join(slot.fragments_entry for slot in self.slots) + "}"
+    def type_param(self) -> str:
+        # The name of the type parameter this slot contributes (e.g.
+        # "TAttachment"), derived from `python_name`. Rendered on the
+        # template's bound base and on every result artifact from which this
+        # slot's node is reachable; a binding fills it with the union of the
+        # fragment classes readable at the slot.
+        return f"T{field_name_to_pascal(self.python_name)}"
+
+
+@dataclass(kw_only=True, frozen=True)
+class CollectedTemplate:
+    # Same contract as CollectedOperation.stmt_texts: one dispatch entry per
+    # distinct literal spelling.
+    stmt_texts: tuple[str, ...]
+    class_name: str  # operation name, e.g. "GetAttachment"
+    variables: tuple[CollectedOperationVar, ...]
+    slots: tuple[CollectedTemplateSlot, ...]
+    is_subscription: bool
+    # Every call site that discovered this template, in discovery order.
+    locations: tuple[str, ...]
 
     @property
-    def client_method(self) -> str:
-        if self.is_subscription:
-            return "subscribe"
-        return "query"
+    def location(self) -> str:
+        return ", ".join(self.locations)
+
+    @property
+    def bound_base_name(self) -> str:
+        return f"{self.class_name}Bound"
+
+    @property
+    def result_type(self) -> str:
+        return result_model_name(self.class_name)
 
 
 @dataclass(kw_only=True, frozen=True)
@@ -326,17 +401,121 @@ class CollectedFragment:
     # Same contract as CollectedOperation.stmt_texts: one dispatch entry per
     # distinct literal spelling.
     stmt_texts: tuple[str, ...]
-    location: str
+    # Every call site that discovered this fragment, in discovery order -- the
+    # same contract as CollectedOperation.locations, for the same reason: one
+    # name may be written in several modules (dedup keeps the first and checks
+    # the rest agree), and a diagnosis that quotes one of them sends the
+    # developer to a file that may not be the one they have to edit.
+    locations: tuple[str, ...]
     class_name: str
     singleton_name: str
     fragment_name: str
     model_name: str
-    definition_text: str
-    base_names: tuple[str, ...]
-    # The handle's accepted-typename snapshot: `read` answers None for a
-    # payload of any type outside it. Attached after name validation, because
-    # the walk resolves NamedRefs through the collected names.
-    covered_typenames: frozenset[str] = frozenset()
+
+    @property
+    def location(self) -> str:
+        return ", ".join(self.locations)
+
+
+@dataclass(kw_only=True, frozen=True)
+class CollectedSlotHandle:
+    fragment: CollectedFragment
+    # Sorted, so the rendered literal does not depend on set iteration order.
+    typenames: tuple[str, ...]
+    # Whether the bind named this fragment for this slot; see
+    # `bindings.ReadableFragment.direct`, which is where it is decided.
+    direct: bool
+
+
+@dataclass(kw_only=True, frozen=True)
+class CollectedBindingSlot:
+    slot: CollectedTemplateSlot
+    # Every fragment readable at this slot's root -- what the bind named plus
+    # whatever those fragments spread at their own root level -- sorted by
+    # fragment name, each with the typenames it is reachable at and whether
+    # the bind named it. Renders as `slot_handles__`: the whole set is offered
+    # to `validate_slot__` so each one reads independently and is
+    # boundary-validated.
+    readable_handles: tuple[CollectedSlotHandle, ...]
+
+    @property
+    def direct_fragments(self) -> tuple[CollectedFragment, ...]:
+        # Exactly the set the caller passed to `bind()` for this slot, sorted by
+        # GraphQL fragment name; () = empty slot. Drives the binding's
+        # overloads, its class name and the runtime dispatch key. Read off the
+        # readable set rather than stored beside it: a bind's own fragment is
+        # always readable at the slot it was passed to
+        # (`bindings._validate_slot_args` rejects one whose type cannot
+        # overlap), so a second tuple would only be the same fact written twice
+        # and kept in step by nothing.
+        #
+        # The order of the `bind()` call is not preserved, and could not be:
+        # `bindings._readable_fragments` reaches these through a graph walk that
+        # unions each fragment's typenames over every path to it and emits the
+        # result by name -- a fragment reached along two paths has no single
+        # call position to keep, and one reached transitively has none at all.
+        # Nor would keeping it help: a binding *is* its combination, so the two
+        # consumers that turn this into an identity (the class name, the
+        # dispatch key) sort for themselves through `slots.bind_key_shape`, and
+        # two call sites listing the same fragments in different orders must
+        # land on one class. What is left is the rendered text of `bind()`'s
+        # overloads, which only needs to be deterministic.
+        return tuple(
+            handle.fragment for handle in self.readable_handles if handle.direct
+        )
+
+
+@dataclass(kw_only=True, frozen=True)
+class CollectedBinding:
+    # Named after the combination it is, never after the name a call site
+    # happened to assign it to: `{Template}With{Slot}{Fragments…}` per filled
+    # slot, slots and fragments in the canonical order of `slots.bind_key`
+    # (see `collect.binding_class_name`). That is what lets the same
+    # combination be written in several places, and in any scope, and still
+    # mean one class.
+    class_name: str
+    template: CollectedTemplate
+    exec_source: str
+    slots: tuple[CollectedBindingSlot, ...]  # every template slot, template order
+    arg_vars: tuple[CollectedBindingArg, ...]  # fragment variables (for with_args)
+    # Every call site that binds this combination, in discovery order.
+    locations: tuple[str, ...]
+
+    @property
+    def location(self) -> str:
+        return ", ".join(self.locations)
+
+    @property
+    def required_arg_names(self) -> tuple[str, ...]:
+        return tuple(
+            sorted(arg.var.gql_name for arg in self.arg_vars if not arg.omittable)
+        )
+
+
+def bindings_by_template(
+    bindings: list[CollectedBinding],
+) -> dict[str, list[CollectedBinding]]:
+    # Bindings stay in their overall (file, lineno) discovery order within each
+    # group.
+    grouped: dict[str, list[CollectedBinding]] = {}
+    for binding in bindings:
+        grouped.setdefault(binding.template.class_name, []).append(binding)
+    return grouped
+
+
+def renders_inline_bind_body(template_bindings: list[CollectedBinding]) -> bool:
+    # Whether a template's `bind()` is rendered as one real implementation
+    # rather than `@overload` stubs over a `**fragments` fallback. Stated once
+    # because two layers depend on it: `render.render_templates` picks the
+    # form, and `naming._signature_claims` reserves the one name only that
+    # form's body reads (`slots`).
+    #
+    # `@overload` requires two or more signatures -- pyright's
+    # reportInconsistentOverload rejects a lone one -- and with exactly one
+    # binding discovered for the template, every call the union parameters
+    # accept already maps to that same one return type, so there is nothing
+    # for a second overload to distinguish.
+    return len(template_bindings) == 1
 
 
 @dataclass(kw_only=True, frozen=True)
@@ -345,14 +524,39 @@ class CollectedPackageIR:
     input_artifacts: list[CollectedArtifact]
     operations: list[CollectedOperation]
     fragments: list[CollectedFragment]
-    # The slot-field types of the package, stored once: the compatibility
-    # bases (`{Type}Fragment`) are derived from these wherever needed — a slot
-    # kwarg is typed by its field type's base, and a handle inherits every
-    # base it is spread-compatible with.
-    slot_types: tuple[str, ...]
+    templates: list[CollectedTemplate]
+    bindings: list[CollectedBinding]
     enums: list[CollectedEnum]
     # Models validating inside a slot or fragment subtree: rendered on the
     # open (extra="ignore") base, because their payloads carry other readers'
     # fields next to their own, and excluded from the rename pass so an open
     # model can never converge with a strict one.
     open_model_names: frozenset[str]
+    # Every statement the scan discovered, in discovery order. Carried so
+    # `passthrough_texts` is derived here rather than beside the renderer:
+    # both halves of that subtraction are facts about this IR.
+    discovered_texts: tuple[str, ...]
+
+    @property
+    def passthrough_texts(self) -> tuple[str, ...]:
+        # Statements the scan discovered but nothing typed: fragment bundles
+        # and single fragments no bind accepts. Their fragments are spread
+        # statically by name, and the call site legitimately receives the
+        # untyped catch-all -- only a statement the generator has never seen
+        # is an error there.
+        #
+        # The typed side is enumerated here, where the artifact kinds that own
+        # a `stmt_texts` are declared -- a hand-written list of them elsewhere
+        # would go stale the day a fourth kind is added, and the statement it
+        # forgot would be sent to a server verbatim. A template's text is
+        # typed for a reason of its own: `render_templates` renders it, and
+        # passing it through would ship the never-stripped `@slot` directive.
+        typed = frozenset(
+            text
+            for artifacts in (self.operations, self.fragments, self.templates)
+            for artifact in artifacts
+            for text in artifact.stmt_texts
+        )
+        return tuple(
+            dict.fromkeys(text for text in self.discovered_texts if text not in typed)
+        )

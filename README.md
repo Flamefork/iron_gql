@@ -117,9 +117,11 @@ Custom scalar types must be Pydantic-compatible. That is, Pydantic must know how
 
 ## Fragment Slots
 
-Shared infrastructure code often owns a GraphQL operation, but it does not know which fields each caller needs on some field of that operation. A fragment slot lets each caller supply its own fragment for that field at call time. The operation does not have to name the fragments of its consumers in advance.
+Shared infrastructure code often owns a GraphQL operation, but it does not know in advance which fields each caller needs on some field of that operation. A fragment slot lets each caller supply its own fragment for that field. The generator resolves every slot at codegen time, so each caller ends up with its own fully static operation — no query text is assembled at call time.
 
-Mark a field with `@slot` in a query, mutation, or subscription. Do not use `@slot` inside a fragment definition. Give the field a static selection that selects `__typename` at the top level of its own selection set. This `__typename` must be unaliased and must have no directives. It must not come through an inline fragment or a fragment spread. The slot field itself cannot have `@skip` or `@include`: the operation always requests the slot field. If a caller wants no fragment data, it passes an empty list.
+Mark a field with `@slot` in a query, mutation, or subscription. Do not use `@slot` inside a fragment definition, and do not nest a slot inside another slot's own selection. Give the field a static selection that selects `__typename` at the top level of its own selection set. This `__typename` must be unaliased and must have no directives. It must not come through an inline fragment or a fragment spread. The slot field itself cannot have `@skip` or `@include`.
+
+An operation that contains a `@slot` is a **template**. It has no `execute` of its own, only `bind`. Write it wherever you write any other statement — a module-level name is how you share one template between modules, not a condition of using it:
 
 ```python
 get_post_attachment = api_gql("""
@@ -132,62 +134,162 @@ get_post_attachment = api_gql("""
 """)
 ```
 
-A statement that holds exactly one fragment definition becomes a typed **handle** when some slot in the package can accept the fragment. A slot can accept a fragment when the fragment is spread-compatible with the type of the slot field. You can still spread the same fragment by name into other operations. For two kinds of statement, the helper returns a plain `runtime.GQLOperation`:
-
-- a statement with one fragment definition that no slot accepts,
-- a statement with several fragment definitions and no operation.
-
-The fragments of these statements continue to work as building blocks for name spreads. They carry none of the obligations of a handle: self-containedness, a `__typename` of its own on polymorphic selections, and a non-empty selection. For a statement that contains an operation, the helper returns the class of that operation, as always.
+A statement that holds exactly one fragment definition becomes a typed **fragment handle** once some `bind()` call reaches it, directly or through another fragment's own spread. A fragment that no `bind()` reaches keeps its plain meaning: spread it by name into other operations, as you always could.
 
 ```python
-IMAGE_URL = api_gql("""
+image_url = api_gql("""
     fragment ImageUrl on ImageAttachment {
         url
     }
 """)
+
+link_url = api_gql("""
+    fragment LinkUrl on LinkAttachment {
+        href
+    }
+""")
 ```
 
-Pass a handle, or a sequence of handles, into `execute`. The keyword argument is the snake_case form of the name of the slot field, or of its alias. For example, `mainAttachment @slot` becomes `main_attachment=`. Then read the typed model of each fragment from the slot node with `handle.read(node)`:
+### Binding fragments to a template
+
+Link a template to the fragments it should carry with `bind()`:
 
 ```python
-result = await get_post_attachment.execute(id="p-1", attachment=IMAGE_URL)
-if result.post is not None:
-    image = IMAGE_URL.read(result.post.attachment)
-    if image is not None:
-        print(image.url)
+get_post_attachment_image = get_post_attachment.bind(attachment=image_url)
+get_post_attachment_link = get_post_attachment.bind(attachment=link_url)
 ```
 
-`read` returns `None` in exactly two situations:
+The keyword argument is the snake_case form of the slot field's name, or of its alias if it has one.
 
-- The node is `None` because the server sent `null`.
-- The runtime type of the node is outside the fragment's own selection.
-
-If you read with a handle that you never passed to that slot, `read` raises an error. It does not return `None`, because a wiring bug must not look like a legitimate mismatch.
-
-Fragments are isolated from each other. Each fragment reads exactly its own selection. It never receives the fields that the fragment of another caller selected.
-
-You can reach slot data only through `read`. The data is not part of the fields of the result model, so `model_dump()` does not include it. A dumped result does not round-trip. To validate the dump again, you must supply a fragments context. Without one, validation fails with an error. With or without one, the data of the fragments is gone.
-
-For each slot field type, the generator writes one compatibility base class, named `{FieldType}Fragment`. With this class, shared code can be generic over any fragment that is compatible with that field. The shared code does not have to know the concrete shape of the fragment:
+A bind is an ordinary expression. It can sit in a function body next to the code that executes it, and the template and fragments it names can be local there too — or written straight into the call:
 
 ```python
-async def read_attachment[T: pydantic.BaseModel](
-    post_id: str, fragment: AttachmentFragment[T]
-) -> T | None:
-    result = await get_post_attachment.execute(id=post_id, attachment=fragment)
-    if result.post is None:
-        return None
-    return fragment.read(result.post.attachment)
+async def show_attachment(post_id: str) -> None:
+    bound = get_post_attachment.bind(attachment=api_gql("""
+        fragment ImageAlt on ImageAttachment {
+            alt
+        }
+    """))
+    result = await bound.execute(id=post_id)
 ```
 
-A fragment that is not spread-compatible with the slot causes a type error. The type checker finds the mismatch before you ship your code.
+Each name a bind reads — the template and every fragment — has to be resolvable where it is written: a name bound exactly once, in the scope the call sees, by a single `api_gql("...")` statement. That is what a module-level name, a local one, a walrus target and a directly imported one all have in common. A name bound twice — two assignments, two imports, or a mix — is not, and neither is one reached through an attribute chain (`infra.template`, `Registry.template`).
 
-The runtime validates every fragment that you pass into a slot at the response boundary. For queries and mutations, validation occurs inside `execute`. For subscriptions, validation occurs on each received message. Malformed data causes an immediate error. The malformed data never surfaces later from `read`.
+A slot can also take a list of fragments. Their covered runtime types may overlap — each fragment reads its own slice of the payload independently. What the generator still rejects is a field-merge conflict in the expanded operation (the same response key selected with different arguments), reported by standard GraphQL validation. A fragment bound alone to a slot in one bind can also appear inside a list bind of that same slot in another bind — a registry bind and a single-reader bind of the same slot coexist, each with its own generated class:
 
-Three rules apply:
-- A handle must be self-contained. It cannot spread other fragments, and it cannot reference variables (`$name`). The handle travels to the server as its own text, next to an operation that declares nothing for it. Fragments that no slot accepts are free of both rules. They can spread other fragments by name, and they take their variables from the operations that spread them.
-- An operation that declares a compatible slot cannot define or spread any fragment name that a handle ships. This covers the handle's own name and its transitive dependencies. The generator rejects the combination as soon as the handle exists, whether or not anyone passes the handle. To remove the conflict, rename one of the two. Operations without a compatible slot are outside this rule. The same fragment can work in both roles across different operations.
-- The slot keyword argument in `execute` is mandatory, and there is no default. To send no fragments, pass an empty list explicitly.
+```python
+image_caption = api_gql("""
+    fragment ImageCaption on ImageAttachment {
+        caption
+    }
+""")
+
+link_summary = api_gql("""
+    fragment LinkSummary on LinkAttachment {
+        href
+    }
+""")
+
+get_post_attachment_any = get_post_attachment.bind(
+    attachment=[image_caption, link_summary]
+)
+```
+
+Slots you do not name in `bind()` stay unfilled: the operation still requests their static `__typename` selection, but no fragment data comes back for them. Omitting a slot and passing it an explicit empty list (`attachment=[]`) mean the same thing. The same fragment can be bound into any number of templates, and a template can have any number of binds.
+
+A binding **is** its combination — the template plus the fragments in each slot — and the generated class is named after that combination, never after the variable a call site assigns it to:
+
+| bind | generated class |
+|------|-----------------|
+| `get_post_attachment.bind(attachment=image_url)` | `GetPostAttachmentWithAttachmentImageUrl` |
+| `get_post_attachment.bind(attachment=[image_caption, link_summary])` | `GetPostAttachmentWithAttachmentImageCaptionLinkSummary` |
+| `get_post_attachment.bind()` | `GetPostAttachmentWithNothing` |
+
+One `With{Slot}{Fragments…}` group per filled slot, slots and fragments in sorted order, unfilled slots left out. Two call sites that write the same combination therefore mean one class, however each spells it and wherever each sits — which is what lets shared code and its caller bind the same fragments without knowing about each other. Adding a new slot to a template renames no binding that leaves it unfilled.
+
+### Executing and reading
+
+The generator writes one generic base per template, `{Operation}Bound[...]`, with one type parameter per slot in document order. The parameter is the *fragment class* (or a union of them) readable in that slot — `Never` for a slot left unfilled — and `execute` returns the result model parametrized by it, so the type of `result.post.attachment` records which fragments were offered. The base carries `execute` and `with_headers`; each `bind()` gets its own class deriving from it with those parameters filled in:
+
+```python
+async def fetch[TFrag](post_id: str, bound: GetPostAttachmentBound[TFrag]) -> GetPostAttachmentResult[TFrag]:
+    return await bound.execute(id=post_id)
+
+result = await fetch("1", get_post_attachment_image)
+image = image_url.read(result.post.attachment) if result.post else None
+```
+
+`execute` takes only the template's own variables. There is no slot keyword argument: the fragment selection already happened at `bind()` time.
+
+Read a slot with the fragment handle itself: `image_caption.read(result.post.attachment)` returns that fragment's own model, or `None` when the node is `None` or its runtime type is outside the fragment's coverage. Any fragment whose fields land on the slot's own payload is readable this way — a fragment bound into the slot, or one another bound fragment spreads next to its own fields:
+
+```python
+result = await get_post_attachment_any.execute(id="p-1")
+attachment = image_caption.read(result.post.attachment)
+```
+
+`fragment.read(node)` is statically checked: the node's type records which fragments its binding offered at that slot, so reading a fragment that binding never offered there — including any read of a node whose slot was left unfilled, which offers nothing at all — is a type error. The same wiring mistakes raise `ValueError` at runtime on type-erased paths — `ValueError` rather than `None`, so a wiring bug cannot look like a legitimate type mismatch.
+
+That check only works where the concrete fragment handle is in scope, as a literal handle or a tuple of them — reading with a handle already erased to `GQLFragment[pydantic.BaseModel]` (a heterogeneous registry, say) is a type error against any node the generator writes, because the erased handle names no fragment the node lists as offered. Only the check is lost, not the data: a handle is an identity token at runtime, so an erased handle its binding really was given still reads back its own model, and the `ValueError` above stays reserved for a handle that binding never offered. Code that is itself generic over which fragments a binding offers has no concrete handle to read with either; it returns the parametrized result and leaves the read to a caller who does know the concrete handles.
+
+A fragment reached through a *narrower* type condition — an interface brick spread inside a per-type fragment — reads back as `None` for the types that condition excludes, exactly like any other type mismatch.
+
+A fragment spread inside a *nested field* of a bound fragment is a different matter: its fields arrive under that field, not on the slot's payload, so the slot cannot read them. Its data comes back through the enclosing fragment's own model (`image_parts.read(node).thumb.alt`), and its handle is not part of the node's offered set, so such a read is a static type error as well (and still a `ValueError` at runtime).
+
+Fragments are isolated from each other — each one reads exactly its own selection, never the fields another caller's fragment selected. The data is not part of the fields of the result model, so `model_dump()` does not include it; re-validating a dump without a fragments context fails immediately.
+
+### Fragment variables
+
+Fragments may spread other fragments and declare their own variables; the generator merges the spread definitions and variable declarations into the expanded operation. Bind the fragment as usual:
+
+```python
+image_thumbnail = api_gql("""
+    fragment ImageThumbnail on ImageAttachment {
+        thumbnail(width: $width)
+    }
+""")
+
+get_post_attachment_thumbnail = get_post_attachment.bind(attachment=image_thumbnail)
+```
+
+Then supply values for the fragment's own variables through `with_args`, a typed method the generator writes on a binding class whenever its fragments declare variables. Call it where the value is known, not as part of the bind:
+
+```python
+bound = get_post_attachment_thumbnail.with_args(width=800)
+result = await bound.with_headers({"Authorization": "..."}).execute(id="1")
+```
+
+`execute` still takes only the template's own variables. Calling it without a value for a required fragment variable raises, naming the variable.
+
+A fragment variable behaves like an operation variable of `execute`: it is a required keyword and passing `None` sends an explicit `null`. The exception is a variable used only in positions the schema gives a default to — the generator relaxes those to optional, gives them a `None` default, and leaves them out of the request entirely when you do, so the schema's default applies. Each `with_args` call states the whole set: a variable you leave out of a later call is left out of the request, whatever an earlier call passed for it.
+
+A fragment the template already spreads by name is a different case: its variables are the template's own, declared by the operation and supplied through `execute`. Binding such a fragment into a slot adds no `with_args`.
+
+### Validation
+
+The runtime validates every fragment readable at each slot at the response boundary — including a slot nobody read and a fragment reached only through another fragment's spread. For queries and mutations, validation happens inside `execute`. For subscriptions, it happens on every received message.
+
+### What the generator rejects
+
+Generation fails, naming the file and line, for:
+- a `.bind()` call the scan cannot read statically: a positional or `**kwargs` argument, a repeated slot keyword, a slot value that is neither a name nor an inline `api_gql("...")` call nor a list of those, or a template reached through an attribute chain into the scanned tree (`import infra` then `infra.template.bind(...)`) instead of a directly imported name;
+- a name a bind reads that is bound more than once in the scope it resolves in — two assignments, two imports, or a mix; which of them it means is a question the scan will not guess at;
+- a slot value that does not resolve to a discovered fragment statement. The template a bind hangs off is judged differently, because `.bind()` is an ordinary method name that sockets and widgets carry too: a base that resolves to nothing at all leaves the call alone, and only a base whose name the scanned tree does hold as a statement is an error — reported with that statement's own address, since a template written where no resolution reaches it (a class body, a star import) is ours all the same. A name something else *does* bind where the call stands is answered by that binding and left alone: a same-named statement elsewhere in the tree is a coincidence, and two generator runs over one tree produce it routinely;
+- a source file the scan cannot parse that mentions the gql function or `bind` — it may hold statements or binds, and dropping it would rewrite the package without them. A file that names neither owns nothing the package could lose and is skipped, unless some bind's name resolution has to travel through it;
+- a fragment that is not spread-compatible with the slot — the same mismatch is also a type error at the `bind()` call site, so most callers see it in the editor before they even regenerate;
+- two combinations whose slot and fragment names derive the same class name — rare, and the fix is to alias the slot field or rename one of the fragments (writing the *same* combination twice is not an error: it is one binding, one class, and both call sites are listed on it);
+- a fragment readable at a slot's root reached under `@skip`/`@include` — whether the directive sits on the spread or on an inline fragment around it — at any runtime type where that conditional path is the only way it reaches the root, since such a fragment is requested and validated on every response and so cannot be conditionally absent. Reaching it unconditionally as well — bound directly, or spread again without a directive — covers the types reached that way, and only the types left over are rejected. The same directive on a spread inside a nested field is fine;
+- a bound fragment whose name a template also defines locally, with a different definition — one name is one definition in the expanded document;
+- two slots of one template whose names collapse to the same Python name or to the same type parameter — a slot's name is its `bind()` keyword and the type parameter it contributes to the operation's bound base and result model;
+- `@slot` inside a fragment definition, or a slot nested inside another slot's own selection.
+
+One slot name selected under two parents is not an error: both positions carry the same spliced fragments, so every fragment reachable from either position reads the same way through its own handle. A slot on a polymorphic parent works the same way — one node model per variant.
+
+A stale bind — a fragment combination the generator never saw — raises `LookupError` where the `bind()` call runs: at import for a module-level bind, at call time for one inside a function. Some calls can even pass type-checking without matching any discovered bind — types cannot count list elements, so a list bind that uses a strict subset of another list's fragments looks like a valid call statically. Such a call raises the same `LookupError` at import; regenerating after fixing it resolves it.
+
+Passing the same fragment to one slot twice is rejected at generation instead, naming the call site: a slot spreads each of its fragments once, so `bind(slot=[f, f])` asks for a combination that cannot exist.
+
+A `.bind()` the scan leaves alone builds no binding class, so its call site raises that same `LookupError`. Two kinds land there: a third-party `.bind()`, which is none of the generator's business, and one of ours written on an expression no scan can read — `TEMPLATES["q"].bind(...)`, where the value under the key is a runtime question. Both are recorded with the reason they were left alone; `debug_path` writes them to `ignored_binds.json` alongside the other debug artifacts, so "left alone on purpose" and "lost" stay distinguishable.
 
 ## Customization Hooks
 - **Naming conventions.** Supply `to_camel_fn_full_name` (a module:path string) and a `to_snake_fn` callable. These functions align the casing with your own `alias_generator`.

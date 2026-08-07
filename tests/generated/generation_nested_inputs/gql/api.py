@@ -7,14 +7,21 @@ from __future__ import annotations
 
 import datetime
 from collections.abc import AsyncGenerator
+from collections.abc import Sequence
 from contextlib import AbstractAsyncContextManager
 from typing import Annotated
+from typing import Any
+from typing import ClassVar
 from typing import Literal
+from typing import Never
+from typing import Self
 from typing import overload
+from typing import override
 
 import pydantic
 
 from iron_gql import runtime
+from iron_gql import slots
 
 import pydantic.alias_generators
 
@@ -39,6 +46,16 @@ class GQLModel(pydantic.BaseModel):
         extra="forbid",
         validate_default=True,
     )
+
+    # A template's result model is subscripted with its slots' offered
+    # fragments (e.g. `GetAttachmentResult[ImageParts | NodeId]`), which
+    # builds and caches a genuine subclass rather than reusing the base -- the
+    # override below keeps that subclass's name, and so every ValidationError
+    # title raised through it, on the plain model name.
+    @classmethod
+    @override
+    def model_parametrized_name(cls, params: tuple[type[Any], ...]) -> str:
+        return cls.__name__
 
 
 class UpdateUserResult(GQLModel):

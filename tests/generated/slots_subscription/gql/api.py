@@ -10,9 +10,13 @@ from collections.abc import AsyncGenerator
 from collections.abc import Sequence
 from contextlib import AbstractAsyncContextManager
 from typing import Annotated
+from typing import Any
 from typing import ClassVar
 from typing import Literal
+from typing import Never
+from typing import Self
 from typing import overload
+from typing import override
 
 import pydantic
 
@@ -43,81 +47,96 @@ class GQLModel(pydantic.BaseModel):
         validate_default=True,
     )
 
+    # A template's result model is subscripted with its slots' offered
+    # fragments (e.g. `GetAttachmentResult[ImageParts | NodeId]`), which
+    # builds and caches a genuine subclass rather than reusing the base -- the
+    # override below keeps that subclass's name, and so every ValidationError
+    # title raised through it, on the plain model name.
+    @classmethod
+    @override
+    def model_parametrized_name(cls, params: tuple[type[Any], ...]) -> str:
+        return cls.__name__
+
 
 class GQLOpenModel(GQLModel):
     model_config = pydantic.ConfigDict(extra="ignore")
 
 
-class GQLSlotModel(GQLOpenModel, slots.GQLSlotNode):
+class GQLSlotModel[TOffered](GQLOpenModel, slots.GQLSlotNode[TOffered]):
     pass
 
 
-class AttachmentFragment[TModel: pydantic.BaseModel](slots.GQLFragment[TModel]): ...
-
-
-class WatchAttachmentResultAttachmentChangedAttachmentSlotImageAttachment(GQLSlotModel):
+class WatchAttachmentResultAttachmentChangedAttachmentSlotImageAttachment[TAttachment](GQLSlotModel[TAttachment]):
     slot_name__: ClassVar[str] = "attachment"
     typename__: Annotated[Literal["ImageAttachment"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
 
 
-class WatchAttachmentResultAttachmentChangedAttachmentSlotLinkAttachment(GQLSlotModel):
+class WatchAttachmentResultAttachmentChangedAttachmentSlotLinkAttachment[TAttachment](GQLSlotModel[TAttachment]):
     slot_name__: ClassVar[str] = "attachment"
     typename__: Annotated[Literal["LinkAttachment"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
 
 
-type WatchAttachmentResultAttachmentChangedAttachmentSlot = Annotated[WatchAttachmentResultAttachmentChangedAttachmentSlotImageAttachment | WatchAttachmentResultAttachmentChangedAttachmentSlotLinkAttachment, pydantic.Field(discriminator="typename__")]
+type WatchAttachmentResultAttachmentChangedAttachmentSlot[TAttachment] = Annotated[WatchAttachmentResultAttachmentChangedAttachmentSlotImageAttachment[TAttachment] | WatchAttachmentResultAttachmentChangedAttachmentSlotLinkAttachment[TAttachment], pydantic.Field(discriminator="typename__")]
 
 
-class Post(GQLModel):
+class Post[TAttachment](GQLModel):
     id: builtins.str
-    attachment: WatchAttachmentResultAttachmentChangedAttachmentSlot | None
+    attachment: WatchAttachmentResultAttachmentChangedAttachmentSlot[TAttachment] | None
 
 
-class WatchAttachmentResult(GQLModel):
-    attachment_changed: Post
+class WatchAttachmentResult[TAttachment](GQLModel):
+    attachment_changed: Post[TAttachment]
 
 
 class ImageUrlData(GQLOpenModel):
     url: str
 
 
-class WatchAttachment(runtime.GQLOperation):
-    # See: queries.py:11
-    def execute(self, *, id: builtins.str, attachment: AttachmentFragment[pydantic.BaseModel] | Sequence[AttachmentFragment[pydantic.BaseModel]]) -> AbstractAsyncContextManager[AsyncGenerator[WatchAttachmentResult]]:
-        slot_fragments = {"attachment": slots.as_handles(attachment)}
+class ImageUrl(slots.GQLFragment[ImageUrlData]):
+    pass
+
+
+IMAGE_URL = ImageUrl(
+    fragment_name='ImageUrl',
+    adapter=pydantic.TypeAdapter(ImageUrlData),
+)
+
+
+class WatchAttachmentBound[TAttachment](runtime.GQLBoundOperation):
+    def execute(self, *, id: builtins.str) -> AbstractAsyncContextManager[AsyncGenerator[WatchAttachmentResult[TAttachment]]]:
         return API_CLIENT.subscribe(
-            WatchAttachmentResult,
-            slots.build_slot_source('subscription WatchAttachment($id: ID!) {\n  attachmentChanged(id: $id) {\n    id\n    attachment {\n      __typename\n      ', (('attachment', '\n    }\n  }\n}'),), slot_fragments),
-            variables={"id": id},
+            WatchAttachmentResult[TAttachment],
+            self.exec_source__,
+            variables={"id": id, **self.fragment_args__()},
             headers=self.headers,
-            slot_fragments=slot_fragments,
+            slot_handles=self.slot_handles__,
         )
 
 
-class ImageUrl(AttachmentFragment[ImageUrlData]):
-    def __init__(self) -> None:
-        super().__init__(
-            fragment_name='ImageUrl',
-            fragment_def='fragment ImageUrl on ImageAttachment {\n  url\n}',
-            covered_typenames=frozenset({'ImageAttachment'}),
-            adapter=pydantic.TypeAdapter(ImageUrlData),
-        )
+class WatchAttachmentWithAttachmentImageUrl(WatchAttachmentBound[ImageUrl]):
+    # See: queries.py:22
+    exec_source__ = 'subscription WatchAttachment($id: ID!) {\n  attachmentChanged(id: $id) {\n    id\n    attachment {\n      __typename\n      ...ImageUrl\n    }\n  }\n}\n\nfragment ImageUrl on ImageAttachment {\n  url\n}'
+    slot_handles__ = {"attachment": (slots.SlotHandle(IMAGE_URL, frozenset({'ImageAttachment'})),)}
 
 
-IMAGE_URL = ImageUrl()
+class WatchAttachment(runtime.GQLTemplate):
+    def bind(self, *, attachment: ImageUrl | Sequence[ImageUrl]) -> WatchAttachmentWithAttachmentImageUrl:
+        if _API_GQL_BIND_DISPATCH.get(slots.bind_key('WatchAttachment', {'attachment': attachment})) is None:
+            raise LookupError("unknown bind combination for WatchAttachment; every fragment a bind passes must be a discovered statement - check the call site, then regenerate the package")
+        return WatchAttachmentWithAttachmentImageUrl()
 
 
-@overload
-def api_gql(stmt: Literal['\n    subscription WatchAttachment($id: ID!) {\n        attachmentChanged(id: $id) {\n            id\n            attachment @slot { __typename }\n        }\n    }\n    ']) -> WatchAttachment: ...
+_API_GQL_BIND_DISPATCH: dict[slots.BindKey, type[runtime.GQLBoundOperation]] = {
+    ('WatchAttachment', (('attachment', ('ImageUrl',)),)): WatchAttachmentWithAttachmentImageUrl,
+}
+
+
 @overload
 def api_gql(stmt: Literal['\n    fragment ImageUrl on ImageAttachment {\n        url\n    }\n    ']) -> ImageUrl: ...
 @overload
-def api_gql(stmt: str) -> runtime.GQLOperation | slots.GQLFragment[pydantic.BaseModel]: ...
-
-
-_API_GQL_DISPATCH: dict[str, type[runtime.GQLOperation]] = {
-    '\n    subscription WatchAttachment($id: ID!) {\n        attachmentChanged(id: $id) {\n            id\n            attachment @slot { __typename }\n        }\n    }\n    ': WatchAttachment,
-}
+def api_gql(stmt: Literal['\n    subscription WatchAttachment($id: ID!) {\n        attachmentChanged(id: $id) {\n            id\n            attachment @slot { __typename }\n        }\n    }\n    ']) -> WatchAttachment: ...
+@overload
+def api_gql(stmt: str) -> runtime.GQLOperation | slots.GQLFragment[pydantic.BaseModel] | runtime.GQLTemplate: ...
 
 
 _API_GQL_FRAGMENTS: dict[str, slots.GQLFragment[pydantic.BaseModel]] = {
@@ -125,13 +144,18 @@ _API_GQL_FRAGMENTS: dict[str, slots.GQLFragment[pydantic.BaseModel]] = {
 }
 
 
-def api_gql(stmt: str) -> runtime.GQLOperation | slots.GQLFragment[pydantic.BaseModel]:
-    query_cls = _API_GQL_DISPATCH.get(stmt)
-    if query_cls is not None:
-        return query_cls()
+_API_GQL_TEMPLATES: dict[str, type[runtime.GQLTemplate]] = {
+    '\n    subscription WatchAttachment($id: ID!) {\n        attachmentChanged(id: $id) {\n            id\n            attachment @slot { __typename }\n        }\n    }\n    ': WatchAttachment,
+}
+
+
+def api_gql(stmt: str) -> runtime.GQLOperation | slots.GQLFragment[pydantic.BaseModel] | runtime.GQLTemplate:
     fragment = _API_GQL_FRAGMENTS.get(stmt)
     if fragment is not None:
         return fragment
+    template_cls = _API_GQL_TEMPLATES.get(stmt)
+    if template_cls is not None:
+        return template_cls()
     msg = "unknown GraphQL statement passed to api_gql; "
     msg += "the generator only discovers bare-name calls with a "
     msg += "single string literal - check the call site, then "

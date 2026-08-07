@@ -1,0 +1,18 @@
+type Query {
+    post(id: ID!): Post
+}
+
+type Post {
+    id: ID!
+    attachment: Attachment
+}
+
+union Attachment = ImageAttachment | LinkAttachment
+
+type ImageAttachment {
+    url(width: Int!): String!
+}
+
+type LinkAttachment {
+    href: String!
+}

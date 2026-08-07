@@ -41,3 +41,21 @@ merged_board = api_gql(
     }
     """
 )
+
+board_id = api_gql(
+    """
+    fragment BoardId on Board {
+        id
+    }
+    """
+)
+
+ping_main_bare = ping_main.bind()
+# A template whose only binding is the all-unfilled one renders a single
+# `@overload` for `bind()`, which basedpyright always flags
+# (reportInconsistentOverload -- it requires 2+ overload variants); this
+# second, otherwise-unused binding keeps the overload count at 2 so the
+# bare one below stays checkable.
+ping_main_typed = ping_main.bind(main=board_id)
+merged_board_bare = merged_board.bind()
+merged_board_typed = merged_board.bind(merged=board_id)
