@@ -304,7 +304,22 @@ A `.bind()` the scan leaves alone builds no binding class, so its call site rais
 
 ## Example
 
-The [`example/`](example/) directory contains a complete working setup. It has a GraphQL schema with queries, mutations, enums, interfaces, unions, and fragments. It also has the generation script and sample query definitions. See [`example/generate.py`](example/generate.py) for the codegen calls of both modes, [`example/main.py`](example/main.py) for async query usage, and [`example/main_sync.py`](example/main_sync.py) for the synchronous form.
+The [`example/`](example/) directory reads as chapters. Each one adds what the one before it did not need:
+
+| Chapter | What it adds |
+|---|---|
+| [`ch01_queries.py`](example/ch01_queries.py) | a query, a fragment, nested fields, `with_headers` |
+| [`ch02_mutations.py`](example/ch02_mutations.py) | a generated input model and an enum |
+| [`ch03_polymorphism.py`](example/ch03_polymorphism.py) | a union and an interface, matched by generated class |
+| [`ch04_variables.py`](example/ch04_variables.py) | `@include`/`@skip`, and a `@oneOf` input |
+| [`ch05_scalars.py`](example/ch05_scalars.py) | a `DateTime` that arrives as `datetime`, an `Upload` sent as a `FileVar` |
+| [`ch06_slots.py`](example/ch06_slots.py) | a template, `bind`, `read`, and fragment variables through `with_args` |
+| [`ch07_subscriptions.py`](example/ch07_subscriptions.py) | a subscription stream |
+| [`ch08_sync.py`](example/ch08_sync.py) | the basics again, against a synchronous package |
+
+A real project picks one mode; the example shows both, and [`generate.py`](example/generate.py) writes both packages from the one schema.
+
+The chapters are written to be read and type-checked, not run: they point at a server that this repository does not ship. [`test_example.py`](example/test_example.py) is the exception. It runs chapters against [`fake_app.py`](example/fake_app.py) with the helpers from [Testing](#testing).
 
 ## Testing
 

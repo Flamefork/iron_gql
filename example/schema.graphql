@@ -1,9 +1,13 @@
+scalar DateTime
+scalar Upload
+
 type Query {
   user(id: ID!): User
   users(role: Role): [User!]!
   search(query: String!): [SearchItem!]!
   findUser(by: FindUserBy!): User
   post(id: ID!): Post
+  node(id: ID!): Node
 }
 
 input FindUserBy @oneOf {
@@ -13,6 +17,7 @@ input FindUserBy @oneOf {
 
 type Mutation {
   createUser(input: CreateUserInput!): User!
+  uploadAvatar(userId: ID!, file: Upload!): User!
 }
 
 type Subscription {
@@ -41,6 +46,7 @@ type Post implements Node {
   id: ID!
   title: String!
   body: String!
+  createdAt: DateTime!
   author: User!
   attachment: Attachment
 }
@@ -58,6 +64,7 @@ union Attachment = ImageAttachment | LinkAttachment
 type ImageAttachment {
   url: String!
   caption: String!
+  thumbnail(width: Int!): String!
 }
 
 type LinkAttachment {

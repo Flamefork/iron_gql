@@ -89,10 +89,10 @@ ignore = [
 # path the tests themselves produced. Listed rule by rule rather than through
 # `test_*.py`'s blanket "S": this is the only subprocess call in conftest.
 "tests/conftest.py" = ["S404", "S603"]
-# C901: the example's `main` is one demonstration per paragraph, read top to
-# bottom; splitting it further to satisfy a complexity budget buys nothing a
-# reader wants and scatters each query away from the code that uses it
-"example/*.py" = ["C901", "E501", "PGH004", "T201"]
+# T201: the chapters print what they fetched -- that is what a reader runs them for
+"example/*.py" = ["T201"]
+# PGH004: the generated module opens with a blanket `# ruff: noqa` of its own
+"example/gql/*.py" = ["PGH004"]
 "tests/generated/**/*.py" = ["C901", "E501", "T201", "PGH004"]
 
 [tool.ruff.lint.isort]
@@ -106,7 +106,7 @@ ban-relative-imports = "all"
 
 [tool.pytest.ini_options]
 strict = true
-testpaths = ["tests"]
+testpaths = ["tests", "example"]
 filterwarnings = ["error"]
 addopts = [
     "--import-mode=importlib",
@@ -121,8 +121,9 @@ branch = true
 # `*/sample_app/*` covers the packages tests build under `tmp_path`: their
 # `queries.py` is fixture text, not library code, and leaving it in the report
 # mixes another run's line numbers into the file list this project reads for
-# real gaps.
-omit = ["tests/*.py", "*/gql/*.py", "*/sample_app/*"]
+# real gaps. `example/*.py` is the same case: the chapters are written to be
+# read, and the generator plus basedpyright are what prove them, not coverage.
+omit = ["tests/*.py", "example/*.py", "*/gql/*.py", "*/sample_app/*"]
 data_file = ".coverage/db.sqlite"
 
 [tool.coverage.html]

@@ -87,6 +87,14 @@ class GetUserResult(GQLModel):
     user: UserWithEmailIdNamePhonePostsRole | None
 
 
+class UserWithName(GQLModel):
+    name: str
+
+
+class GetUserNameResult(GQLModel):
+    user: UserWithName | None
+
+
 class UserWithEmailIdNameRole(GQLModel):
     id: builtins.str
     name: str
@@ -96,10 +104,6 @@ class UserWithEmailIdNameRole(GQLModel):
 
 class CreateUserResult(GQLModel):
     create_user: UserWithEmailIdNameRole
-
-
-class UserWithName(GQLModel):
-    name: str
 
 
 class PostWithAuthorIdTitleTypename(GQLModel):
@@ -123,6 +127,25 @@ class SearchResult(GQLModel):
     search: list[SearchResultSearch]
 
 
+class PostWithIdTitleTypename(GQLModel):
+    typename__: Annotated[Literal["Post"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
+    id: builtins.str
+    title: str
+
+
+class UserWithIdNameTypename(GQLModel):
+    typename__: Annotated[Literal["User"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
+    id: builtins.str
+    name: str
+
+
+type GetNodeResultNode = Annotated[PostWithIdTitleTypename | UserWithIdNameTypename, pydantic.Field(discriminator="typename__")]
+
+
+class GetNodeResult(GQLModel):
+    node: GetNodeResultNode | None
+
+
 class UserWithEmailIdNamePhoneRole(GQLModel):
     id: builtins.str
     name: str
@@ -143,6 +166,25 @@ class UserWithEmailIdName(GQLModel):
 
 class FindUserResult(GQLModel):
     find_user: UserWithEmailIdName | None
+
+
+class PostWithCreatedAtIdTitle(GQLModel):
+    id: builtins.str
+    title: str
+    created_at: datetime.datetime
+
+
+class GetPostResult(GQLModel):
+    post: PostWithCreatedAtIdTitle | None
+
+
+class UserWithIdName(GQLModel):
+    id: builtins.str
+    name: str
+
+
+class UploadAvatarResult(GQLModel):
+    upload_avatar: UserWithIdName
 
 
 class PostWithAuthorBodyIdTitle(GQLModel):
@@ -186,6 +228,10 @@ class LinkUrlData(GQLOpenModel):
     href: str
 
 
+class ImageThumbnailData(GQLOpenModel):
+    thumbnail: str
+
+
 class CreateUserInput(GQLModel):
     name: str
     email: str
@@ -204,7 +250,7 @@ type FindUserBy = FindUserById | FindUserByEmail
 
 
 class GetUser(runtime.GQLOperation):
-    # See: main.py:52
+    # See: ch01_queries.py:5
     async def execute(self, *, id: builtins.str) -> GetUserResult:
         return await API_CLIENT.query(
             GetUserResult,
@@ -214,8 +260,19 @@ class GetUser(runtime.GQLOperation):
         )
 
 
+class GetUserName(runtime.GQLOperation):
+    # See: ch01_queries.py:32
+    async def execute(self, *, id: builtins.str) -> GetUserNameResult:
+        return await API_CLIENT.query(
+            GetUserNameResult,
+            'query GetUserName($id: ID!) {\n  user(id: $id) {\n    name\n  }\n}',
+            variables={"id": id},
+            headers=self.headers,
+        )
+
+
 class CreateUser(runtime.GQLOperation):
-    # See: main.py:74
+    # See: ch02_mutations.py:6
     async def execute(self, *, input: CreateUserInput) -> CreateUserResult:
         return await API_CLIENT.query(
             CreateUserResult,
@@ -226,7 +283,7 @@ class CreateUser(runtime.GQLOperation):
 
 
 class Search(runtime.GQLOperation):
-    # See: main.py:89
+    # See: ch03_polymorphism.py:9
     async def execute(self, *, query: str) -> SearchResult:
         return await API_CLIENT.query(
             SearchResult,
@@ -236,8 +293,19 @@ class Search(runtime.GQLOperation):
         )
 
 
+class GetNode(runtime.GQLOperation):
+    # See: ch03_polymorphism.py:36
+    async def execute(self, *, id: builtins.str) -> GetNodeResult:
+        return await API_CLIENT.query(
+            GetNodeResult,
+            'query GetNode($id: ID!) {\n  node(id: $id) {\n    __typename\n    id\n    ... on User {\n      name\n    }\n    ... on Post {\n      title\n    }\n  }\n}',
+            variables={"id": id},
+            headers=self.headers,
+        )
+
+
 class GetProfile(runtime.GQLOperation):
-    # See: main.py:114
+    # See: ch04_variables.py:7
     async def execute(self, *, id: builtins.str, with_email: bool, skip_phone: bool) -> GetProfileResult:
         return await API_CLIENT.query(
             GetProfileResult,
@@ -248,7 +316,7 @@ class GetProfile(runtime.GQLOperation):
 
 
 class FindUser(runtime.GQLOperation):
-    # See: main.py:133, main.py:146
+    # See: ch04_variables.py:30
     async def execute(self, *, by: FindUserBy) -> FindUserResult:
         return await API_CLIENT.query(
             FindUserResult,
@@ -258,8 +326,30 @@ class FindUser(runtime.GQLOperation):
         )
 
 
+class GetPost(runtime.GQLOperation):
+    # See: ch05_scalars.py:8
+    async def execute(self, *, id: builtins.str) -> GetPostResult:
+        return await API_CLIENT.query(
+            GetPostResult,
+            'query GetPost($id: ID!) {\n  post(id: $id) {\n    id\n    title\n    createdAt\n  }\n}',
+            variables={"id": id},
+            headers=self.headers,
+        )
+
+
+class UploadAvatar(runtime.GQLOperation):
+    # See: ch05_scalars.py:24
+    async def execute(self, *, user_id: builtins.str, file: runtime.FileVar) -> UploadAvatarResult:
+        return await API_CLIENT.query(
+            UploadAvatarResult,
+            'mutation UploadAvatar($userId: ID!, $file: Upload!) {\n  uploadAvatar(userId: $userId, file: $file) {\n    id\n    name\n  }\n}',
+            variables={"userId": user_id, "file": file},
+            headers=self.headers,
+        )
+
+
 class PostAdded(runtime.GQLOperation):
-    # See: main.py:161
+    # See: ch07_subscriptions.py:5
     def execute(self, *, user_id: builtins.str) -> AbstractAsyncContextManager[AsyncGenerator[PostAddedResult]]:
         return API_CLIENT.subscribe(
             PostAddedResult,
@@ -289,6 +379,16 @@ LINK_URL = LinkUrl(
 )
 
 
+class ImageThumbnail(slots.GQLFragment[ImageThumbnailData]):
+    pass
+
+
+IMAGE_THUMBNAIL = ImageThumbnail(
+    fragment_name='ImageThumbnail',
+    adapter=pydantic.TypeAdapter(ImageThumbnailData),
+)
+
+
 class GetPostAttachmentBound[TAttachment](runtime.GQLBoundOperation):
     async def execute(self, *, id: builtins.str) -> GetPostAttachmentResult[TAttachment]:
         return await API_CLIENT.query(
@@ -300,23 +400,26 @@ class GetPostAttachmentBound[TAttachment](runtime.GQLBoundOperation):
         )
 
 
-class GetPostAttachmentWithAttachmentImageUrl(GetPostAttachmentBound[ImageUrl]):
-    # See: main.py:36
-    exec_source__ = 'query GetPostAttachment($id: ID!) {\n  post(id: $id) {\n    id\n    attachment {\n      __typename\n      ...ImageUrl\n    }\n  }\n}\n\nfragment ImageUrl on ImageAttachment {\n  url\n}'
-    slot_handles__ = {"attachment": (slots.SlotHandle(IMAGE_URL, frozenset({'ImageAttachment'})),)}
+class GetPostAttachmentWithAttachmentImageUrlLinkUrl(GetPostAttachmentBound[ImageUrl | LinkUrl]):
+    # See: ch06_slots.py:32
+    exec_source__ = 'query GetPostAttachment($id: ID!) {\n  post(id: $id) {\n    id\n    attachment {\n      __typename\n      ...ImageUrl\n      ...LinkUrl\n    }\n  }\n}\n\nfragment ImageUrl on ImageAttachment {\n  url\n}\n\nfragment LinkUrl on LinkAttachment {\n  href\n}'
+    slot_handles__ = {"attachment": (slots.SlotHandle(IMAGE_URL, frozenset({'ImageAttachment'})), slots.SlotHandle(LINK_URL, frozenset({'LinkAttachment'})))}
 
 
-class GetPostAttachmentWithAttachmentLinkUrl(GetPostAttachmentBound[LinkUrl]):
-    # See: main.py:43
-    exec_source__ = 'query GetPostAttachment($id: ID!) {\n  post(id: $id) {\n    id\n    attachment {\n      __typename\n      ...LinkUrl\n    }\n  }\n}\n\nfragment LinkUrl on LinkAttachment {\n  href\n}'
-    slot_handles__ = {"attachment": (slots.SlotHandle(LINK_URL, frozenset({'LinkAttachment'})),)}
+class GetPostAttachmentWithAttachmentImageThumbnail(GetPostAttachmentBound[ImageThumbnail]):
+    # See: ch06_slots.py:44
+    exec_source__ = 'query GetPostAttachment($id: ID!, $width: Int!) {\n  post(id: $id) {\n    id\n    attachment {\n      __typename\n      ...ImageThumbnail\n    }\n  }\n}\n\nfragment ImageThumbnail on ImageAttachment {\n  thumbnail(width: $width)\n}'
+    slot_handles__ = {"attachment": (slots.SlotHandle(IMAGE_THUMBNAIL, frozenset({'ImageAttachment'})),)}
+    required_arg_names__ = frozenset({'width'})
+    def with_args(self, *, width: int) -> Self:
+        return self.with_args__({"width": width})
 
 
 class GetPostAttachment(runtime.GQLTemplate):
     @overload
-    def bind(self, *, attachment: ImageUrl | Sequence[ImageUrl]) -> GetPostAttachmentWithAttachmentImageUrl: ...
+    def bind(self, *, attachment: ImageThumbnail | Sequence[ImageThumbnail]) -> GetPostAttachmentWithAttachmentImageThumbnail: ...
     @overload
-    def bind(self, *, attachment: LinkUrl | Sequence[LinkUrl]) -> GetPostAttachmentWithAttachmentLinkUrl: ...
+    def bind(self, *, attachment: Sequence[ImageUrl | LinkUrl]) -> GetPostAttachmentWithAttachmentImageUrlLinkUrl: ...
     def bind(
         self,
         **fragments: slots.GQLFragment[pydantic.BaseModel] | Sequence[slots.GQLFragment[pydantic.BaseModel]],
@@ -328,27 +431,37 @@ class GetPostAttachment(runtime.GQLTemplate):
 
 
 _API_GQL_BIND_DISPATCH: dict[slots.BindKey, type[runtime.GQLBoundOperation]] = {
-    ('GetPostAttachment', (('attachment', ('ImageUrl',)),)): GetPostAttachmentWithAttachmentImageUrl,
-    ('GetPostAttachment', (('attachment', ('LinkUrl',)),)): GetPostAttachmentWithAttachmentLinkUrl,
+    ('GetPostAttachment', (('attachment', ('ImageUrl', 'LinkUrl')),)): GetPostAttachmentWithAttachmentImageUrlLinkUrl,
+    ('GetPostAttachment', (('attachment', ('ImageThumbnail',)),)): GetPostAttachmentWithAttachmentImageThumbnail,
 }
 
 
 @overload
 def api_gql(stmt: Literal['\n        query GetUser($id: ID!) {\n            user(id: $id) {\n                ...UserFields\n                posts { id title }\n            }\n        }\n\n        fragment UserFields on User {\n            id\n            name\n            email\n            phone\n            role\n        }\n    ']) -> GetUser: ...
 @overload
+def api_gql(stmt: Literal['\n        query GetUserName($id: ID!) {\n            user(id: $id) {\n                name\n            }\n        }\n    ']) -> GetUserName: ...
+@overload
 def api_gql(stmt: Literal['\n        mutation CreateUser($input: CreateUserInput!) {\n            createUser(input: $input) {\n                id\n                name\n                email\n                role\n            }\n        }\n    ']) -> CreateUser: ...
 @overload
 def api_gql(stmt: Literal['\n        query Search($query: String!) {\n            search(query: $query) {\n                __typename\n                ... on User {\n                    id\n                    name\n                    role\n                }\n                ... on Post {\n                    id\n                    title\n                    author { name }\n                }\n            }\n        }\n    ']) -> Search: ...
 @overload
+def api_gql(stmt: Literal['\n        query GetNode($id: ID!) {\n            node(id: $id) {\n                __typename\n                id\n                ... on User { name }\n                ... on Post { title }\n            }\n        }\n    ']) -> GetNode: ...
+@overload
 def api_gql(stmt: Literal['\n        query GetProfile($id: ID!, $withEmail: Boolean!, $skipPhone: Boolean!) {\n            user(id: $id) {\n                id\n                name\n                email @include(if: $withEmail)\n                phone @skip(if: $skipPhone)\n                role\n            }\n        }\n    ']) -> GetProfile: ...
 @overload
 def api_gql(stmt: Literal['\n        query FindUser($by: FindUserBy!) {\n            findUser(by: $by) {\n                id\n                name\n                email\n            }\n        }\n    ']) -> FindUser: ...
+@overload
+def api_gql(stmt: Literal['\n        query GetPost($id: ID!) {\n            post(id: $id) {\n                id\n                title\n                createdAt\n            }\n        }\n    ']) -> GetPost: ...
+@overload
+def api_gql(stmt: Literal['\n            mutation UploadAvatar($userId: ID!, $file: Upload!) {\n                uploadAvatar(userId: $userId, file: $file) {\n                    id\n                    name\n                }\n            }\n        ']) -> UploadAvatar: ...
 @overload
 def api_gql(stmt: Literal['\n        subscription PostAdded($userId: ID!) {\n            postAdded(userId: $userId) {\n                id\n                title\n                body\n                author { name }\n            }\n        }\n    ']) -> PostAdded: ...
 @overload
 def api_gql(stmt: Literal['\n        fragment ImageUrl on ImageAttachment {\n            url\n        }\n    ']) -> ImageUrl: ...
 @overload
 def api_gql(stmt: Literal['\n        fragment LinkUrl on LinkAttachment {\n            href\n        }\n    ']) -> LinkUrl: ...
+@overload
+def api_gql(stmt: Literal['\n        fragment ImageThumbnail on ImageAttachment {\n            thumbnail(width: $width)\n        }\n    ']) -> ImageThumbnail: ...
 @overload
 def api_gql(stmt: Literal['\n        query GetPostAttachment($id: ID!) {\n            post(id: $id) {\n                id\n                attachment @slot { __typename }\n            }\n        }\n    ']) -> GetPostAttachment: ...
 @overload
@@ -357,10 +470,14 @@ def api_gql(stmt: str) -> runtime.GQLOperation | slots.GQLFragment[pydantic.Base
 
 _API_GQL_DISPATCH: dict[str, type[runtime.GQLOperation]] = {
     '\n        query GetUser($id: ID!) {\n            user(id: $id) {\n                ...UserFields\n                posts { id title }\n            }\n        }\n\n        fragment UserFields on User {\n            id\n            name\n            email\n            phone\n            role\n        }\n    ': GetUser,
+    '\n        query GetUserName($id: ID!) {\n            user(id: $id) {\n                name\n            }\n        }\n    ': GetUserName,
     '\n        mutation CreateUser($input: CreateUserInput!) {\n            createUser(input: $input) {\n                id\n                name\n                email\n                role\n            }\n        }\n    ': CreateUser,
     '\n        query Search($query: String!) {\n            search(query: $query) {\n                __typename\n                ... on User {\n                    id\n                    name\n                    role\n                }\n                ... on Post {\n                    id\n                    title\n                    author { name }\n                }\n            }\n        }\n    ': Search,
+    '\n        query GetNode($id: ID!) {\n            node(id: $id) {\n                __typename\n                id\n                ... on User { name }\n                ... on Post { title }\n            }\n        }\n    ': GetNode,
     '\n        query GetProfile($id: ID!, $withEmail: Boolean!, $skipPhone: Boolean!) {\n            user(id: $id) {\n                id\n                name\n                email @include(if: $withEmail)\n                phone @skip(if: $skipPhone)\n                role\n            }\n        }\n    ': GetProfile,
     '\n        query FindUser($by: FindUserBy!) {\n            findUser(by: $by) {\n                id\n                name\n                email\n            }\n        }\n    ': FindUser,
+    '\n        query GetPost($id: ID!) {\n            post(id: $id) {\n                id\n                title\n                createdAt\n            }\n        }\n    ': GetPost,
+    '\n            mutation UploadAvatar($userId: ID!, $file: Upload!) {\n                uploadAvatar(userId: $userId, file: $file) {\n                    id\n                    name\n                }\n            }\n        ': UploadAvatar,
     '\n        subscription PostAdded($userId: ID!) {\n            postAdded(userId: $userId) {\n                id\n                title\n                body\n                author { name }\n            }\n        }\n    ': PostAdded,
 }
 
@@ -368,6 +485,7 @@ _API_GQL_DISPATCH: dict[str, type[runtime.GQLOperation]] = {
 _API_GQL_FRAGMENTS: dict[str, slots.GQLFragment[pydantic.BaseModel]] = {
     '\n        fragment ImageUrl on ImageAttachment {\n            url\n        }\n    ': IMAGE_URL,
     '\n        fragment LinkUrl on LinkAttachment {\n            href\n        }\n    ': LINK_URL,
+    '\n        fragment ImageThumbnail on ImageAttachment {\n            thumbnail(width: $width)\n        }\n    ': IMAGE_THUMBNAIL,
 }
 
 
