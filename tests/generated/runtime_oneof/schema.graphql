@@ -1,8 +1,0 @@
-type Query {
-    search(criteria: SearchCriteria!): String!
-}
-
-input SearchCriteria @oneOf {
-    name: String
-    email: String
-}

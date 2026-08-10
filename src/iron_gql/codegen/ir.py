@@ -2,7 +2,6 @@ import dataclasses
 from collections.abc import Callable
 from collections.abc import Iterable
 from collections.abc import Iterator
-from collections.abc import Mapping
 from dataclasses import dataclass
 
 from iron_gql.codegen.util import capitalize_first
@@ -88,37 +87,19 @@ class ListRef:
 type TypeRef = ScalarRef | NamedRef | ListRef
 
 
-# The empty parameter index: nothing a call renders takes type parameters, so
-# every reference is written bare. One shared instance rather than a `{}`
-# default, so no caller can be handed a mapping another call could grow.
-_NO_PARAMS: Mapping[str, tuple[str, ...]] = {}
-
-
-def render_parametrized(name: str, params: tuple[str, ...]) -> str:
-    # An artifact's name written with its type parameters, or bare when it
-    # declares none. One spelling for both sides of the threading rule: the
-    # declaration a renderer writes and every reference to it below.
-    if not params:
-        return name
-    return f"{name}[{', '.join(params)}]"
-
-
-def render_type_expr(
-    typ: TypeRef, params_of: Mapping[str, tuple[str, ...]] = _NO_PARAMS
-) -> str:
+def render_type_expr(typ: TypeRef) -> str:
+    # Every reference is written bare: no artifact this generator emits takes
+    # type parameters. A slot's offered fragments reach its node model as a
+    # concrete base (`GQLSlotModel[ImageParts]`), stamped per binding by
+    # `collect.specialize_bindings`, so nothing has to be threaded through the
+    # references on the way there.
     match typ:
         case ScalarRef(expr=expr):
             body = expr
         case NamedRef(name=name):
-            # `params_of` indexes only the artifacts that declare type
-            # parameters; absent means none, and the reference is written
-            # bare. An artifact that does declare them is always referenced
-            # with them, and the referring artifact declares the very same
-            # ones -- `_stamp_slot_params` reached it through this reference --
-            # so passing them straight through is the whole threading rule.
-            body = render_parametrized(name, params_of.get(name, ()))
+            body = name
         case ListRef(element=element):
-            body = f"list[{render_type_expr(element, params_of)}]"
+            body = f"list[{render_type_expr(element)}]"
     if typ.nullable:
         body += " | None"
     return body
@@ -186,10 +167,13 @@ class CollectedModel:
     fields: list[CollectedField]
     graphql_type_name: str | None = None
     slot_name: str | None = None
-    # Ordered type-parameter names this artifact declares because a slot node
-    # is reachable from it (template slot document order); () outside slot
-    # paths. A slot node model carries exactly its own slot's parameter.
-    slot_params: tuple[str, ...] = ()
+    # The fragment handle classes readable on this node, written into its base
+    # as the offered-fragments phantom. Stamped by
+    # `collect.specialize_bindings`, which copies a template's result models
+    # once per binding; empty is `Never` -- nothing is readable there, because
+    # the binding left the slot unfilled or because no bind names the template
+    # at all. Only a node model (`slot_name` set) carries a phantom.
+    offered_fragments: tuple[str, ...] = ()
     dependencies: tuple[str, ...] = dataclasses.field(init=False, compare=False)
 
     def __post_init__(self) -> None:
@@ -222,14 +206,11 @@ class CollectedUnionAlias:
     name: str
     variants: tuple[str, ...]
     discriminator: str | None = None
-    # Same contract as CollectedModel.slot_params: the parameters this alias
-    # declares and passes through to every variant.
-    slot_params: tuple[str, ...] = ()
 
-    def type_expr_with(self, params_of: Mapping[str, tuple[str, ...]]) -> str:
+    @property
+    def type_expr(self) -> str:
         union_expr = " | ".join(
-            render_type_expr(NamedRef(name=variant), params_of)
-            for variant in self.variants
+            render_type_expr(NamedRef(name=variant)) for variant in self.variants
         )
         if self.discriminator is None:
             return union_expr
@@ -361,15 +342,6 @@ class CollectedTemplateSlot:
     # readable through those fragments' own `read(node)`.
     node_types: tuple[str, ...]
 
-    @property
-    def type_param(self) -> str:
-        # The name of the type parameter this slot contributes (e.g.
-        # "TAttachment"), derived from `python_name`. Rendered on the
-        # template's bound base and on every result artifact from which this
-        # slot's node is reachable; a binding fills it with the union of the
-        # fragment classes readable at the slot.
-        return f"T{field_name_to_pascal(self.python_name)}"
-
 
 @dataclass(kw_only=True, frozen=True)
 class CollectedTemplate:
@@ -491,6 +463,25 @@ class CollectedBinding:
             sorted(arg.var.gql_name for arg in self.arg_vars if not arg.omittable)
         )
 
+    def specialized_name(self, name: str) -> str:
+        # The name of this binding's own copy of one of its template's result
+        # artifacts: the binding's name where the template's stood, so
+        # `GetAttachmentResultPostAttachmentSlot` becomes
+        # `GetAttachmentWithAttachmentImagePartsResultPostAttachmentSlot`. A
+        # name the rename pass shortened out of that prefix (`Post`) simply
+        # takes the binding's name in front; every binding class name starts
+        # with its template's, so both cases are the one rule.
+        #
+        # One statement of it, used by `specialize_bindings` for the models it
+        # writes and by `result_type` below for the one `execute` names -- a
+        # second spelling would surface as a NameError in the generated module
+        # rather than as a generation error.
+        return self.class_name + name.removeprefix(self.template.class_name)
+
+    @property
+    def result_type(self) -> str:
+        return self.specialized_name(self.template.result_type)
+
 
 def bindings_by_template(
     bindings: list[CollectedBinding],
@@ -503,24 +494,17 @@ def bindings_by_template(
     return grouped
 
 
-def renders_inline_bind_body(template_bindings: list[CollectedBinding]) -> bool:
-    # Whether a template's `bind()` is rendered as one real implementation
-    # rather than `@overload` stubs over a `**fragments` fallback. Stated once
-    # because two layers depend on it: `render.render_templates` picks the
-    # form, and `naming._signature_claims` reserves the one name only that
-    # form's body reads (`slots`).
-    #
-    # `@overload` requires two or more signatures -- pyright's
-    # reportInconsistentOverload rejects a lone one -- and with exactly one
-    # binding discovered for the template, every call the union parameters
-    # accept already maps to that same one return type, so there is nothing
-    # for a second overload to distinguish.
-    return len(template_bindings) == 1
-
-
 @dataclass(kw_only=True, frozen=True)
 class CollectedPackageIR:
     result_artifacts: list[CollectedArtifact]
+    # A binding's own result models: the artifacts on the path to one of its
+    # template's slot nodes, copied per binding with the offered fragments
+    # written in (see `collect.specialize_bindings`). Kept apart from the
+    # shared ones because a node model names fragment handle *classes* in its
+    # base, and a base -- unlike every other reference the module makes -- is
+    # evaluated where it is written: these are rendered after the handles,
+    # the rest before them. Empty until specialization runs.
+    binding_artifacts: list[CollectedArtifact]
     input_artifacts: list[CollectedArtifact]
     operations: list[CollectedOperation]
     fragments: list[CollectedFragment]

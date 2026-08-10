@@ -1,6 +1,5 @@
 import inspect
 import json
-from typing import Never
 
 import pydantic
 import pytest
@@ -1208,14 +1207,72 @@ def test_variable_named_self_is_rejected(test_project: ProjectBuilder):
         test_project.generate()
 
 
-# An input type spelled exactly like the `attachment` slot's type parameter.
-_T_ATTACHMENT_INPUT = """
-input TAttachment { q: String }
+# An input type spelled exactly like the type parameter of a bound base, and
+# used as a template's variable so the name reaches the one scope that base
+# writes.
+BOUND_PARAM_SCHEMA = """
+type Query {
+    post(filter: TResult!): Post
+}
 
-extend type Query { search(f: TAttachment): String }
+input TResult {
+    id: ID!
+}
+
+type Post {
+    id: ID!
+    attachment: Attachment
+}
+
+union Attachment = ImageAttachment | LinkAttachment
+
+type ImageAttachment {
+    url: String!
+}
+
+type LinkAttachment {
+    href: String!
+}
 """
 
 
+def test_input_named_after_the_bound_base_parameter_is_rejected(
+    test_project: ProjectBuilder,
+):
+    # The parameter lives inside the base, where it shadows the module-level
+    # input model: `execute(*, filter: TResult)` reads as the parameter there
+    # -- pinned to the binding's result by `Bound[Result]` -- and as the model
+    # in the binding's override, which is an incompatible override rather than
+    # anything the generator would notice on its own.
+    test_project.prepare(
+        schema=BOUND_PARAM_SCHEMA,
+        queries="""
+        from sample_app.gql.api import api_gql
+
+        url = api_gql(
+            '''
+            fragment Url on ImageAttachment { url }
+            '''
+        )
+
+        get_attachment = api_gql(
+            '''
+            query GetAttachment($filter: TResult!) {
+                post(filter: $filter) {
+                    attachment @slot { __typename }
+                }
+            }
+            '''
+        )
+
+        bound = get_attachment.bind(attachment=url)
+        """,
+    )
+    with pytest.raises(GraphQLGenerationError, match="'TResult' is claimed by"):
+        test_project.generate()
+
+
+# An input type spelled exactly like the `attachment` slot's type parameter.
 ENUM_IN_SLOT_SCHEMA = """
 type Query {
     post(id: ID!): Post
@@ -1288,45 +1345,12 @@ def test_a_bound_fragment_selecting_an_enum_generates(test_project: ProjectBuild
     assert "type Kind = Literal['PHOTO', 'VIDEO']" in generated
 
 
-def test_model_named_like_a_slot_type_parameter_is_rejected(
-    test_project: ProjectBuilder,
-):
-    # A slot's PEP 695 type parameter is scoped to the bound base and to every
-    # generic result artifact the slot reaches, where it shadows the
-    # module-level model of the same name -- so `execute`'s own `$f` argument
-    # was annotated with the offered-fragments phantom instead of the input
-    # model, silently and with no diagnosis.
-    test_project.prepare(
-        schema=SCHEMA + _T_ATTACHMENT_INPUT,
-        queries="""
-        from sample_app.gql.api import api_gql
-
-        url = api_gql(
-            '''
-            fragment Url on ImageAttachment { url }
-            '''
-        )
-
-        with_slot = api_gql(
-            '''
-            query WithSlot($id: ID!, $f: TAttachment) {
-                search(f: $f)
-                post(id: $id) { attachment @slot { __typename } }
-            }
-            '''
-        )
-
-        bound = with_slot.bind(attachment=url)
-        """,
-    )
-    with pytest.raises(GraphQLGenerationError, match="'TAttachment' is claimed by"):
-        test_project.generate()
-
-
 def test_two_templates_may_name_a_slot_alike(test_project: ProjectBuilder):
-    # The mirror: each type parameter is scoped to its own class, so two
-    # templates with an `attachment` slot both render `TAttachment` without
-    # ever sharing a namespace.
+    # A slot's name is scoped to its own template: it is a `bind()` keyword of
+    # that template's class and nothing else, and every model it reaches is
+    # named after the template or the binding that produced it. So two
+    # templates with an `attachment` slot share no namespace, and the
+    # module-name rules must not claim otherwise.
     test_project.prepare(
         schema=SCHEMA,
         queries="""
@@ -1480,7 +1504,7 @@ def test_slot_subtree_models_are_open_and_the_rest_stay_strict():
     assert (
         "class GetBoardResultBoardSlotActivityCommentAuthor(GQLOpenModel):" in generated
     )
-    assert "class GetBoardResult[TBoard](GQLModel):" in generated
+    assert "class GetBoardResult(GQLModel):" in generated
     assert GetBoardResultBoardSlot.model_config.get("extra") == "ignore"
     assert GetBoardResult.model_config.get("extra") == "forbid"
 
@@ -1490,14 +1514,20 @@ def test_slots_with_equal_static_selections_are_not_deduplicated():
     # on the same type, so the name-dedup pass would collapse them into a
     # single class whose one `slot_name__` would then have to speak for three
     # slots. GetBoard's richer selection makes the fourth.
+    #
+    # Each binding's own copy is a fifth way two of these could have converged
+    # -- `PingMain` and `MergedBoard` are bound twice each, and the two copies
+    # of one slot differ in nothing but the fragment their node offers.
     generated = generated_source("slots_isolation")
-    for name, param in (
-        ("GetBoardResultBoardSlot", "TBoard"),
-        ("PingBoardResultBoardSlot", "TBoard"),
-        ("PingMainResultMainSlot", "TMain"),
-        ("MergedBoardResultMergedSlot", "TMerged"),
+    for name, offered in (
+        ("GetBoardResultBoardSlot", "Never"),
+        ("PingBoardResultBoardSlot", "Never"),
+        ("PingMainWithNothingResultMainSlot", "Never"),
+        ("PingMainWithMainBoardIdResultMainSlot", "BoardId"),
+        ("MergedBoardWithNothingResultMergedSlot", "Never"),
+        ("MergedBoardWithMergedBoardIdResultMergedSlot", "BoardId"),
     ):
-        assert f"class {name}[{param}](GQLSlotModel[{param}]):" in generated
+        assert f"class {name}(GQLSlotModel[{offered}]):" in generated
 
 
 def test_slot_is_detected_on_any_node_of_a_merged_response_key():
@@ -1516,10 +1546,11 @@ def test_slot_subtree_ignores_foreign_fields_at_every_depth():
     # so a node in the slot subtree sees fields it never asked for. The open
     # config ignores those, while the models expose exactly their own
     # selection. An empty handle tuple stands in for the fragments that would
-    # have selected `email`/`position`/`authorId`.
-    # `Never`: no fragment was offered to this slot (the empty handle tuple
-    # below), so nothing is readable on its node.
-    result = GetBoardResult[Never].model_validate(
+    # have selected `email`/`position`/`authorId`. `GetBoard` is a template
+    # nothing binds, so its result models are the shared ones and its slot
+    # node's phantom is `Never` -- nothing is readable there, which the empty
+    # handle tuple below is the runtime half of.
+    result = GetBoardResult.model_validate(
         {
             "board": {
                 "__typename": "Board",
@@ -2571,38 +2602,6 @@ def test_two_slots_mapping_to_one_python_name_are_rejected(
         test_project.generate()
 
 
-def test_two_slots_mapping_to_one_type_parameter_are_rejected(
-    test_project: ProjectBuilder,
-):
-    # `aB` and `_aB` snake to two distinct Python names, so the `bind()`
-    # keyword namespace stays injective -- but PascalCase drops the leading
-    # underscore again and both claim `TAB`, the type parameter namespace
-    # reserved for the slot's own type variable.
-    test_project.prepare(
-        schema=TWO_ATTACHMENT_SCHEMA,
-        queries="""
-        from sample_app.gql.api import api_gql
-
-        q = api_gql(
-            '''
-            query GetBoth($id: ID!) {
-                post(id: $id) { aB: attachment @slot { __typename } }
-                comment(id: $id) { _aB: attachment @slot { __typename } }
-            }
-            '''
-        )
-        """,
-    )
-    with pytest.raises(
-        GraphQLGenerationError,
-        match=(
-            r"Slots 'aB', '_aB' of template 'GetBoth'"
-            r".*map to the type parameter 'TAB'"
-        ),
-    ):
-        test_project.generate()
-
-
 def test_one_slot_name_under_two_parents_collects_both_positions_models(
     test_project: ProjectBuilder,
 ):
@@ -2626,8 +2625,8 @@ def test_one_slot_name_under_two_parents_collects_both_positions_models(
     )
     test_project.generate()
     generated = (test_project.root / "sample_app/gql/api.py").read_text()
-    assert "type GetBothResultPostAttachmentSlot[TAttachment] = " in generated
-    assert "type GetBothResultCommentAttachmentSlot[TAttachment] = " in generated
+    assert "type GetBothResultPostAttachmentSlot = " in generated
+    assert "type GetBothResultCommentAttachmentSlot = " in generated
 
 
 POLYMORPHIC_SLOT_PARENT_SCHEMA = """
@@ -2685,5 +2684,5 @@ def test_a_slot_under_a_polymorphic_parent_collects_each_variants_model(
     )
     test_project.generate()
     generated = (test_project.root / "sample_app/gql/api.py").read_text()
-    assert "class FeedResultItemPostDetailSlot[TDetail](" in generated
-    assert "class FeedResultItemItemDetailSlot[TDetail](" in generated
+    assert "class FeedResultItemPostDetailSlot(" in generated
+    assert "class FeedResultItemItemDetailSlot(" in generated

@@ -1,6 +1,5 @@
 import dataclasses
 from collections import defaultdict
-from collections.abc import Callable
 from collections.abc import Iterable
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -46,6 +45,7 @@ from iron_gql.codegen.ir import NamedRef
 from iron_gql.codegen.ir import ScalarRef
 from iron_gql.codegen.ir import StrTransform
 from iron_gql.codegen.ir import TypeRef
+from iron_gql.codegen.ir import bindings_by_template
 from iron_gql.codegen.ir import field_name_to_pascal
 from iron_gql.codegen.ir import make_optional
 from iron_gql.codegen.ir import result_model_name
@@ -72,6 +72,7 @@ from iron_gql.codegen.util import reachable
 from iron_gql.codegen.warnings import GraphQLDeprecationWarning
 from iron_gql.codegen.warnings import UnknownGQLTypeWarning
 from iron_gql.codegen.warnings import warn_deprecated_field
+from iron_gql.slots import BindKey
 from iron_gql.slots import bind_key_shape
 
 
@@ -184,10 +185,17 @@ class PackageCollector:
     ) -> TypeRef:
         match gql_type:
             case graphql.GraphQLScalarType(name=name):
+                # The name hint travels with every scalar, mapped or builtin:
+                # it is what `naming._model_type_name_tokens` distinguishes two
+                # shapes of one GraphQL type by, and a scalar that contributed
+                # no token made `User{id, name}` and `User{id, name | None}`
+                # collide under one detailed name.
                 if name in self.scalars:
-                    return ScalarRef(expr=self.scalars[name].dotted_path)
+                    return ScalarRef(
+                        expr=self.scalars[name].dotted_path, name_hint=name
+                    )
                 if name in BUILTIN_SCALARS:
-                    return ScalarRef(expr=BUILTIN_SCALARS[name])
+                    return ScalarRef(expr=BUILTIN_SCALARS[name], name_hint=name)
                 warn(
                     f"Unknown scalar type: {name}, mapped to 'object'",
                     category=UnknownGQLTypeWarning,
@@ -197,7 +205,7 @@ class PackageCollector:
             case graphql.GraphQLInputObjectType(name=name):
                 return NamedRef(name=name)
             case graphql.GraphQLEnumType():
-                self._collect_enum(gql_type)
+                self.collect_enum(gql_type)
                 return NamedRef(name=gql_type.name)
             case _:
                 # Internal invariant: what is left of the named types are the
@@ -209,7 +217,7 @@ class PackageCollector:
                 msg = f"Unsupported named GraphQL type: {gql_type}"
                 raise AssertionError(msg)
 
-    def _collect_enum(
+    def collect_enum(
         self,
         gql_type: graphql.GraphQLEnumType,
     ) -> None:
@@ -844,7 +852,38 @@ def _expand_binds(
         )
     if errors:
         raise GraphQLGenerationError(errors)
-    return expanded_binds
+    return _merge_expanded(expanded_binds)
+
+
+def _merge_expanded(expanded_binds: list[_ExpandedBind]) -> list[_ExpandedBind]:
+    # One binding per combination, merged *here* rather than in the scan: the
+    # generated class is named after the combination and the runtime dispatches
+    # on it, so two call sites that reach the same one are the same binding.
+    # The scan cannot do this merge, because the normalisation it needs --
+    # dropping slots passed nothing -- also erases a keyword that names no slot
+    # of the template. By this point `expand_binding` has checked every keyword
+    # against the template's slots, so normalising is safe.
+    merged: dict[BindKey, _ExpandedBind] = {}
+    for expanded_bind in expanded_binds:
+        key = bind_key_shape(
+            expanded_bind.template_query.name,
+            (
+                (slot, (statement.hash_str for statement in statements))
+                for slot, statements in expanded_bind.bind.slot_args
+            ),
+        )
+        seen = merged.get(key)
+        if seen is None:
+            merged[key] = expanded_bind
+            continue
+        merged[key] = dataclasses.replace(
+            seen,
+            bind=dataclasses.replace(
+                seen.bind,
+                locations=(*seen.bind.locations, *expanded_bind.bind.locations),
+            ),
+        )
+    return list(merged.values())
 
 
 def _collect_input_artifacts_with_binds(
@@ -859,11 +898,27 @@ def _collect_input_artifacts_with_binds(
         for expanded_bind in expanded_binds
         for gql_var in expanded_bind.arg_gql_vars
     ]
-    return collect_input_artifacts(
+    artifacts = collect_input_artifacts(
         collect_input_type_closure(queries, extra_types=extra_var_types),
         to_snake_fn=collector.to_snake_fn,
         collect_type=collector.collect_type,
     )
+    # The closure above answers with input *objects*, so an enum a fragment
+    # variable names on its own -- reached through no input object and through
+    # no query variable -- would never be collected here. It is collected once
+    # more when the bindings themselves are built, but that happens after the
+    # package's enum list is taken, and the module then names a type it never
+    # declares.
+    #
+    # Only the enums, not the whole type: `collect_type` also diagnoses -- an
+    # unconfigured custom scalar warns from it -- and `_collect_bindings` walks
+    # these very types again, so anything else asked for here is asked twice
+    # and the developer reads the same warning twice.
+    for gql_type in extra_var_types:
+        named = graphql.get_named_type(gql_type)
+        if isinstance(named, graphql.GraphQLEnumType):
+            collector.collect_enum(named)
+    return artifacts
 
 
 def collect_package_ir(
@@ -954,7 +1009,10 @@ def collect_package_ir(
     )
 
     return CollectedPackageIR(
-        result_artifacts=_stamp_slot_params(result_artifacts, collected_templates),
+        result_artifacts=result_artifacts,
+        # Filled by `specialize_bindings`, which runs after the rename pass:
+        # the names a binding's copies are built from are only final there.
+        binding_artifacts=[],
         input_artifacts=input_artifacts,
         operations=collected_operations,
         fragments=fragments,
@@ -966,46 +1024,93 @@ def collect_package_ir(
     )
 
 
-def _stamp_slot_params(
-    artifacts: list[CollectedArtifact],
-    templates: list[CollectedTemplate],
-) -> list[CollectedArtifact]:
-    # Every artifact from which a slot's node model is reachable (through
-    # CollectedModel/CollectedUnionAlias dependencies) declares that slot's
-    # type parameter, so the phantom a binding pins on the bound base reaches
-    # the node the caller finally reads; parameters follow the template's slot
-    # document order. Node models are their own roots. Slot-path artifacts are
-    # per-template by construction (their shapes reference template-specific
-    # slot model names), so one artifact never collects parameters from two
-    # templates.
+def specialize_bindings(ir: CollectedPackageIR) -> CollectedPackageIR:
+    # One set of result models per binding, in place of one generic set per
+    # template. Which fragments are readable at a slot is the binding's own
+    # fact, and threading it as a type parameter made every model on the way
+    # to a node generic -- see `render.render_template_bases` for what that
+    # cost. Copied per binding instead, with the fragments written into the
+    # node's own base, so every model this generator writes is a plain class.
     #
-    # Runs before the rename pass, which preserves the field and only merges
-    # artifacts of identical post-rename shape -- and an identical shape
-    # references the same slot artifacts, hence carries the same parameters.
-    # The dependency edges reversed, once for the whole package: `dependencies`
-    # points at what an artifact references, and every walk below goes the
-    # other way -- up from a slot's node models to everything that reaches
-    # them.
+    # Copied are exactly the artifacts a slot node is reachable from, the node
+    # itself included: what sits *below* a node is the slot's static
+    # selection, which no binding varies, so every binding's copy points at
+    # the one shared set. A template nothing binds keeps its models as they
+    # are -- no fragment is readable at any of its slots, which is what an
+    # empty `offered_fragments` already says.
+    #
+    # Runs after `apply_rename` (the names the copies are built from must be
+    # final) and after `slots.validate_no_nested_slots` (which walks a
+    # template's own result subtree, and a template's subtree is what this
+    # replaces).
     dependents: dict[str, list[str]] = {}
-    for artifact in artifacts:
+    for artifact in ir.result_artifacts:
         for dep in artifact.dependencies:
             dependents.setdefault(dep, []).append(artifact.name)
-    params: dict[str, dict[str, None]] = {}
-    for template in templates:
-        for slot in template.slots:
-            # Unioned with the roots because `reachable` counts only what an
-            # edge leads to, and a node model is its own root here.
-            reaching = set(slot.node_types) | reachable(
-                slot.node_types, lambda name: dependents.get(name, ())
+    grouped = bindings_by_template(ir.bindings)
+    copied: set[str] = set()
+    binding_artifacts: list[CollectedArtifact] = []
+    open_names = set(ir.open_model_names)
+    for template in ir.templates:
+        bindings = grouped.get(template.class_name, [])
+        if not bindings:
+            continue
+        # Unioned with the roots because `reachable` counts only what an edge
+        # leads to, and a node model is its own root here. Slot paths are
+        # per-template by construction -- their shapes reference the
+        # template's own slot model names, which no rename moves -- so one
+        # artifact is never claimed by two templates.
+        seeds = [name for slot in template.slots for name in slot.node_types]
+        path = set(seeds) | reachable(seeds, lambda name: dependents.get(name, ()))
+        copied |= path
+        # A copy is open exactly when what it was copied from is -- the node
+        # models are, everything above them is not -- so the rule needs no
+        # second walk to say so.
+        open_path = path & ir.open_model_names
+        for binding in bindings:
+            binding_artifacts.extend(
+                _specialized_artifacts(binding, path, ir.result_artifacts)
             )
-            for name in reaching:
-                params.setdefault(name, {})[slot.type_param] = None
-    return [
-        dataclasses.replace(artifact, slot_params=tuple(params[artifact.name]))
-        if artifact.name in params
-        else artifact
-        for artifact in artifacts
-    ]
+            open_names.update(binding.specialized_name(name) for name in open_path)
+    return dataclasses.replace(
+        ir,
+        result_artifacts=[
+            artifact for artifact in ir.result_artifacts if artifact.name not in copied
+        ],
+        binding_artifacts=binding_artifacts,
+        open_model_names=frozenset(open_names - copied),
+    )
+
+
+def _specialized_artifacts(
+    binding: CollectedBinding,
+    path: set[str],
+    artifacts: list[CollectedArtifact],
+) -> list[CollectedArtifact]:
+    # This binding's copy of the path, in the order the shared artifacts
+    # stand in: a model is written after the models it references, which is
+    # what pydantic wants of a module it builds at import.
+    rename = {name: binding.specialized_name(name) for name in path}
+    offered = {
+        binding_slot.slot.name: tuple(
+            handle.fragment.class_name for handle in binding_slot.readable_handles
+        )
+        for binding_slot in binding.slots
+    }
+    copies: list[CollectedArtifact] = []
+    for artifact in artifacts:
+        if artifact.name not in path:
+            continue
+        copy = artifact.renamed(rename)
+        # The phantom, the one thing a copy carries that the shared artifact
+        # could not: the classes of every fragment readable at this slot in
+        # this binding -- what the bind named, plus what those fragments
+        # spread at their own root level. Empty stays empty and renders
+        # `Never`: an unfilled slot's node is statically unreadable.
+        if isinstance(copy, CollectedModel) and copy.slot_name is not None:
+            copy = dataclasses.replace(copy, offered_fragments=offered[copy.slot_name])
+        copies.append(copy)
+    return copies
 
 
 def _open_model_names(
@@ -1140,46 +1245,32 @@ def _excluded_slot_error(slot_name: str, query: Template) -> str:
     )
 
 
-# A template's slots are addressed by names derived from the response key, and
-# every namespace they land in takes a name only once: `python_name` is the
-# `bind()` keyword and the dispatch key, while `type_param` is the type
-# parameter the slot contributes to the template's bound base and to every
-# result artifact reaching its node. Both are derived through transforms that
-# are not injective: `python_name` comes from `to_snake_fn`, and `type_param`
-# PascalCases that same output, dropping the underscores `to_snake_fn` just
-# produced — so each namespace is checked on its own here, where it is
-# derived; every later layer may key by either without re-checking. Checked in
-# order, because a `python_name` collision implies a `type_param` one and
-# reporting both would say the same thing twice.
-_SLOT_NAMESPACES: tuple[tuple[str, Callable[[CollectedTemplateSlot], str]], ...] = (
-    ("Python name", lambda slot: slot.python_name),
-    ("type parameter", lambda slot: slot.type_param),
-)
-
-
 def _reject_slot_name_collisions(
     slots: tuple[CollectedTemplateSlot, ...], query: Template
 ) -> None:
-    for namespace, derive in _SLOT_NAMESPACES:
-        claims: dict[str, list[str]] = defaultdict(list)
-        for slot in slots:
-            claims[derive(slot)].append(slot.name)
-        errors = [
-            _slot_name_collision_error(namespace, derived, names, query)
-            for derived, names in sorted(claims.items())
-            if len(names) > 1
-        ]
-        if errors:
-            raise GraphQLGenerationError(errors)
+    # A slot's `python_name` is the `bind()` keyword and the dispatch key, and
+    # it comes off `to_snake_fn`, which is not injective -- so the one
+    # namespace a template's slots share is checked here, where it is derived;
+    # every later layer may key by it without re-checking.
+    claims: dict[str, list[str]] = defaultdict(list)
+    for slot in slots:
+        claims[slot.python_name].append(slot.name)
+    errors = [
+        _slot_name_collision_error(derived, names, query)
+        for derived, names in sorted(claims.items())
+        if len(names) > 1
+    ]
+    if errors:
+        raise GraphQLGenerationError(errors)
 
 
 def _slot_name_collision_error(
-    namespace: str, derived: str, response_keys: list[str], query: Template
+    derived: str, response_keys: list[str], query: Template
 ) -> str:
     keys = ", ".join(repr(name) for name in response_keys)
     return (
         f"Slots {keys} of template '{query.name}' at {query.stmt.location} all "
-        f"map to the {namespace} '{derived}'; alias one of the fields so their "
+        f"map to the Python name '{derived}'; alias one of the fields so their "
         "names differ"
     )
 

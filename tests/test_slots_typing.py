@@ -43,19 +43,19 @@ def test_phantom_typing_of_slot_reads(tmp_path: Path):
             from tests.generated.bindings_closure_shape import queries as closure_gql
             from tests.generated.bindings_composition import queries as composition_gql
             from tests.generated.bindings_overlap import queries as overlap_gql
-            from tests.generated.bindings_overlap.gql import api as overlap_api
+            from tests.generated.bindings_overlap.gql.api import (
+                GetAttachmentWithAttachmentImageCaptionImageSizeResult,
+            )
             from tests.generated.bindings_two_templates import queries as two_tpl_gql
             from tests.generated.slots_multi import queries
 
 
             def use_erased(
                 handle: slots.GQLFragment[pydantic.BaseModel],
-                node: overlap_api.GetAttachmentResultPostAttachmentSlot[
-                    overlap_api.ImageCaption | overlap_api.ImageSize
-                ]
-                | None,
+                result: GetAttachmentWithAttachmentImageCaptionImageSizeResult,
             ) -> None:
-                _err_type_erased = handle.read(node)
+                assert result.post is not None
+                _err_type_erased = handle.read(result.post.attachment)
 
 
             async def main() -> None:
@@ -87,7 +87,7 @@ def test_phantom_typing_of_slot_reads(tmp_path: Path):
                     overlap_read = frag.read(overlap_node)
                     reveal_type(overlap_read)
 
-                use_erased(overlap_gql.image_caption, overlap_node)
+                use_erased(overlap_gql.image_caption, overlap_result)
 
                 composed = await composition_gql.bound.execute(id="1")
                 assert composed.post is not None

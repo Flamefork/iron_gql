@@ -1,6 +1,5 @@
 import pytest
 
-from iron_gql.codegen.ir import CollectedArtifact
 from iron_gql.codegen.ir import CollectedField
 from iron_gql.codegen.ir import CollectedModel
 from iron_gql.codegen.ir import CollectedPackageIR
@@ -120,6 +119,7 @@ def test_different_graphql_types_are_independent():
 def _pkg(artifacts: list[CollectedModel | CollectedUnionAlias]) -> CollectedPackageIR:
     return CollectedPackageIR(
         result_artifacts=list(artifacts),
+        binding_artifacts=[],
         input_artifacts=[],
         operations=[],
         fragments=[],
@@ -131,37 +131,29 @@ def _pkg(artifacts: list[CollectedModel | CollectedUnionAlias]) -> CollectedPack
     )
 
 
-def test_apply_rename_collision_on_different_shapes_fails(
-    monkeypatch: pytest.MonkeyPatch,
+def test_two_selections_deriving_one_name_are_diagnosed(
+    test_project: ProjectBuilder,
 ):
-    # Invariant: if build_rename_map ever produces the same final name for
-    # models with differing shapes, apply_rename must surface it loudly.
-    # Simulate a broken rename map to exercise the defensive branch.
-    first = CollectedModel(
-        name="Foo_1",
-        graphql_type_name="Foo",
-        fields=[_field("a", _scalar("str"))],
-    )
-    second = CollectedModel(
-        name="Foo_2",
-        graphql_type_name="Foo",
-        fields=[_field("b", _scalar("int"))],
-    )
-    ir = _pkg([first, second])
-    bad_rename = {"Foo_1": "Foo", "Foo_2": "Foo"}
+    # The detailed name concatenates field names and type tokens with nothing
+    # between them, and `field_name_to_pascal` strips underscores -- so
+    # `{a_b, c}` and `{a, b_c}` both spell `ABC`, and two different shapes of
+    # `T` ask for one class. Ordinary schema, ordinary queries: the generator
+    # cannot name them apart, and that is the user's to hear rather than a
+    # crash marked unreachable.
+    test_project.prepare(
+        schema="""
+        type T { a_b: String, c: String, a: String, b_c: String }
+        type Query { t: T }
+        """,
+        queries="""
+        from sample_app.gql.api import api_gql
 
-    def bad_build_rename_map(
-        _artifacts: list[CollectedArtifact],
-        _pinned_names: frozenset[str],
-        _reserved_names: frozenset[str],
-    ) -> dict[str, str]:
-        return bad_rename
-
-    monkeypatch.setattr(
-        "iron_gql.codegen.naming.build_rename_map", bad_build_rename_map
+        q1 = api_gql("query Q1 { t { a_b c } }")
+        q2 = api_gql("query Q2 { t { a b_c } }")
+        """,
     )
-    with pytest.raises(AssertionError, match="differing shapes"):
-        apply_rename(ir, frozenset())
+    with pytest.raises(GraphQLGenerationError, match="derive the same generated name"):
+        _ = test_project.generate()
 
 
 def test_apply_rename_collapses_identical_shapes():
@@ -205,7 +197,8 @@ def test_generated_name_colliding_with_a_fixed_name_is_diagnosed(
     # is a real collision and the only honest answer is a diagnosis.
     #
     # Reached with an operation named after the model its own selection
-    # generates (`Post` + field `id` + no type token = `PostWithId_`). The
+    # generates: `Post`, field `id`, and the tokens of that field's
+    # rendered type (`PostWithId_Opt_String`). The
     # aliased `id: child` is what keeps the collapse phases off that model: two
     # selections of `Post` then share the field name `id` with different
     # shapes, so neither the short form nor the bare type name is taken.
@@ -223,14 +216,14 @@ def test_generated_name_colliding_with_a_fixed_name_is_diagnosed(
         queries="""
         from sample_app.gql.api import api_gql
 
-        q = api_gql("query PostWithId_ { post { id: child { id } } }")
+        q = api_gql("query PostWithId_Opt_String { post { id: child { id } } }")
         """,
     )
     with pytest.raises(GraphQLGenerationError) as exc_info:
         test_project.generate()
 
     [error] = exc_info.value.errors
-    assert "Generated model name(s) 'PostWithId_' collide" in error
+    assert "Generated model name(s) 'PostWithId_Opt_String' collide" in error
     assert "alias the colliding field or rename the fragment" in error
 
 

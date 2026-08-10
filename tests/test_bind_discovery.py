@@ -10,6 +10,9 @@ from iron_gql.codegen.discovery import DiscoveredPackage
 from iron_gql.codegen.discovery import discover_package
 from tests.conftest import ProjectBuilder
 from tests.conftest import write_text
+from tests.corpus.recorder import forget_modules
+from tests.corpus.scoping import BINDER_FORMS
+from tests.corpus.scoping import PREAMBLE
 
 
 def _write(root: Path, rel: str, text: str) -> None:
@@ -152,44 +155,14 @@ def test_a_name_bound_by_another_runs_gql_call_stays_silent(tmp_path: Path):
 # the two see the same source. `ctx`/`loaders`/`load` stand in for whatever a
 # real call site would use: the walker reads the binding form, and the oracle
 # needs it to actually execute.
-_BINDER_PREAMBLE = """\
-import contextlib
-def ctx(): return contextlib.nullcontext(object())
-def loaders(): return [object(), object()]
-def load(): return object()
-"""
+_BINDER_PREAMBLE = "".join(line + "\n" for line in PREAMBLE)
 
-_BINDER_FORMS = [
-    "    for tmpl in loaders():\n        pass\n",
-    "    with ctx() as tmpl:\n        pass\n",
-    "    try:\n        pass\n    except ValueError as tmpl:\n        pass\n",
-    "    match load():\n        case object() as tmpl:\n            pass\n",
-    "    match load():\n        case [*tmpl]:\n            pass\n",
-    "    match load():\n        case {'k': 1, **tmpl}:\n            pass\n",
-    "    tmpls = [tmpl for tmpl in loaders()]\n",
-    "    tmpls = {tmpl for tmpl in loaders()}\n",
-    "    tmpls = {tmpl: 1 for tmpl in loaders()}\n",
-    "    tmpls = tuple(tmpl for tmpl in loaders())\n",
-    "    tmpls = [tmpl for _a in loaders() for tmpl in loaders()]\n",
-    "    tmpl, _other = loaders()\n",
-    "    *tmpl, _other = loaders()\n",
-    "    tmpl = loaders()\n    del tmpl\n",
-    "    type tmpl = int\n",
-    "    from app.other import tmpl\n",
-    "    import tmpl\n",
-    # PEP 526: a bare annotation in a function body binds the name even though
-    # it assigns nothing, so the module-level template is unreachable from
-    # there. Reading it as a declaration that binds nothing generated a class
-    # for a call that raises UnboundLocalError.
-    "    tmpl: object\n",
-    # PEP 572: a walrus binds in the scope the comprehension is written in, not
-    # in the comprehension's own — the mirror image of the `for` target one
-    # line up, which does not leak.
-    "    tmpls = [(tmpl := load()) for _ in loaders()]\n",
-    "    tmpls = {(tmpl := load()) for _ in loaders()}\n",
-    "    tmpls = tuple((tmpl := load()) for _ in loaders())\n",
-    "    tmpls = [_ for _ in loaders() if (tmpl := load())]\n",
-]
+# The forms themselves live in the corpus, which crosses them with the scope
+# and order axes; here each is asked the narrower question this file has always
+# asked of it. One list, two questions -- a second copy would drift the day
+# Python grows another binding form.
+_BINDER_FORMS = ["".join(f"    {line}\n" for line in form) for form in BINDER_FORMS]
+
 
 # The same question asked of the definition's own header rather than its body:
 # a star parameter and a PEP 695 type parameter both bind inside the function
@@ -233,7 +206,11 @@ def _module_level_is_visible(binder: str, root: Path) -> bool:
         return False
     finally:
         sys.path.remove(str(root))
-        sys.modules.pop("tmpl", None)
+        # `from app.other import tmpl` and `import tmpl` are among the forms,
+        # so running one leaves this tree's modules behind under names every
+        # other tree uses too. Left there, the next tree's import answers with
+        # this one's source.
+        forget_modules()
 
 
 @pytest.mark.parametrize("binder", _BINDER_FORMS)
@@ -627,7 +604,7 @@ def test_the_same_combination_written_twice_is_one_bind(tmp_path: Path):
 
 
 # `global` and `nonlocal` say the name is not this scope's, so resolution has
-# to follow them out instead of reading the assignment it can see.
+# to follow them out instead of stopping at the declaring scope.
 def test_global_declaration_resolves_at_module_level(tmp_path: Path):
     _write(
         tmp_path,
@@ -637,13 +614,45 @@ def test_global_declaration_resolves_at_module_level(tmp_path: Path):
             f"frag = {FRAGMENT}\n"
             "def go():\n"
             "    global tmpl\n"
-            "    tmpl = load()\n"
             "    return tmpl.bind(f=frag)\n"
         ),
     )
     package = _discover(tmp_path)
     assert len(package.binds) == 1
     assert package.binds[0].template.raw_text == "query Q { f @slot { __typename } }"
+
+
+# The other half of the same rule, and the half that reading `global` as a
+# resolution-only redirect got wrong: a declaration governs *writing* the name
+# too, so an assignment under it binds the module's name, not the function's.
+# Counting it in the function left the module with one binding on the books
+# while the interpreter had already replaced it, and the bind was generated
+# for the template the call no longer reads.
+def test_a_name_a_function_rebinds_outward_is_left_alone(tmp_path: Path):
+    # A `global`/`nonlocal` assignment makes the name's value a question about
+    # whether that function has run, which no static walk answers. The scan
+    # used to record the assignment in the scope the declaration names, and
+    # that machinery -- a target that may not be filled yet, intermediate
+    # functions binding nothing, chains of `nonlocal` -- produced three
+    # separate defects. Refusing is sound where answering was not: the call is
+    # left alone with the reason on the record.
+    _write(
+        tmp_path,
+        "app/mod.py",
+        (
+            f"tmpl = {TEMPLATE}\n"
+            f"frag = {FRAGMENT}\n"
+            "def rebind():\n"
+            "    global tmpl\n"
+            "    tmpl = load()\n"
+            "def go():\n"
+            "    return tmpl.bind(f=frag)\n"
+        ),
+    )
+    package = _discover(tmp_path)
+    assert package.binds == []
+    [ignored] = package.ignored
+    assert "global or nonlocal declaration" in ignored.reason
 
 
 # A class body's names are invisible to its methods, so a method resolves past

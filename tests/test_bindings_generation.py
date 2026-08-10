@@ -7,6 +7,7 @@ from graphql import GraphQLResolveInfo
 from pytest_httpserver import HTTPServer
 
 from iron_gql.codegen import GraphQLGenerationError
+from iron_gql.codegen.render import BIND_BODY_FREE_NAMES
 from tests.conftest import ProjectBuilder
 from tests.conftest import basedpyright_errors
 from tests.conftest import basedpyright_report
@@ -163,7 +164,7 @@ def test_generated_source_strips_slot_and_renders_binding(test_project: ProjectB
     assert exec_source_lines, "exec_source__ assignment not found in generated api.py"
     assert all("@slot" not in line for line in exec_source_lines)
     assert "...ImageParts" in generated
-    bound_base = "GetAttachmentBound[ImageParts]"
+    bound_base = "GetAttachmentBound[GetAttachmentWithAttachmentImagePartsResult]"
     assert f"class GetAttachmentWithAttachmentImageParts({bound_base}):" in generated
 
 
@@ -272,8 +273,15 @@ def test_unfilled_slot_renders_never_and_the_partial_overload():
     generated = generated_source("bindings_shapes")
     # The unfilled slot's phantom is `Never`, so its node is statically
     # unreadable by any fragment -- the static half of the runtime rule that a
-    # handle no bind offered raises instead of returning None.
-    bound_base = "GetAttachmentBound[ImageParts, Never]"
+    # handle no bind offered raises instead of returning None. Both slots'
+    # nodes belong to this binding alone, so each carries its own answer in
+    # its base rather than a parameter the result model threads down.
+    node = "GetAttachmentWithAttachmentImagePartsResultPost"
+    assert f"class {node}PreviewSlotImageAttachment(GQLSlotModel[Never]):" in generated
+    assert (
+        f"class {node}AttachmentSlotImageAttachment(GQLSlotModel[ImageParts]):"
+    ) in generated
+    bound_base = "GetAttachmentBound[GetAttachmentWithAttachmentImagePartsResult]"
     partial_class = f"class GetAttachmentWithAttachmentImageParts({bound_base}):"
     assert partial_class in generated
     assert (
@@ -303,9 +311,8 @@ def test_all_unfilled_binding_renders_an_all_defaulted_overload():
     # this without a dedicated zero-kwarg form: every slot is unfilled, so
     # every parameter defaults to `()`, and `bind()` matches directly.
     generated = generated_source("bindings_shapes")
-    assert (
-        "class GetAttachmentWithNothing(GetAttachmentBound[Never, Never]):" in generated
-    )
+    bare_base = "GetAttachmentBound[GetAttachmentWithNothingResult]"
+    assert f"class GetAttachmentWithNothing({bare_base}):" in generated
     assert (
         "def bind(self, *, attachment: Sequence[Never] = (), "
         "preview: Sequence[Never] = ()) -> GetAttachmentWithNothing: ..."
@@ -656,7 +663,7 @@ def test_omitted_slot_and_explicit_empty_list_are_one_combination(
     generated = (test_project.root / "sample_app/gql/api.py").read_text(
         encoding="utf-8"
     )
-    bound_base = "GetAttachmentBound[ImageParts, Never]"
+    bound_base = "GetAttachmentBound[GetAttachmentWithAttachmentImagePartsResult]"
     partial_class = f"class GetAttachmentWithAttachmentImageParts({bound_base}):"
     assert generated.count(partial_class) == 1
     # Both call sites are recorded on the one class, so a reader of the
@@ -722,70 +729,54 @@ def _slot_name_queries(slot: str, *, binds: str) -> str:
     """
 
 
-def test_a_slot_named_after_the_slots_module_is_rejected(
-    test_project: ProjectBuilder,
+# Every name `bind()`'s namespace already holds, with what holds it. The
+# receiver is written by the renderer for every method; the rest is the list
+# `naming._signature_claims` reserves, read from where it is declared rather
+# than copied -- a copy would keep passing for names the claim list no longer
+# holds, and stay silent about the ones it grows.
+CLAIMED_BIND_NAMES = (("self", "the method receiver"), *BIND_BODY_FREE_NAMES)
+
+# Both shapes `bind()` is rendered in, as the binds a call site writes. The
+# answer must not depend on which one a tree happens to produce: it used to,
+# because the overloaded form's implementation took `**fragments` and nothing
+# could shadow anything through it, so a slot name was legal or not depending
+# on how many combinations the tree held.
+BIND_FORMS = {
+    "inline": "bound = get_attachment.bind({name}=image_parts)",
+    "overloaded": (
+        "with_image = get_attachment.bind({name}=image_parts)\n"
+        "    with_link = get_attachment.bind({name}=link_parts)"
+    ),
+}
+
+
+@pytest.mark.parametrize("form", BIND_FORMS.values(), ids=list(BIND_FORMS))
+@pytest.mark.parametrize(
+    ("name", "origin"), CLAIMED_BIND_NAMES, ids=[name for name, _ in CLAIMED_BIND_NAMES]
+)
+def test_a_slot_named_after_a_claimed_name_is_rejected(
+    test_project: ProjectBuilder, name: str, origin: str, form: str
 ):
-    # One binding, so `bind()` is rendered as a real body that reads
-    # `slots.bind_key(...)` -- a `slots` parameter would shadow the module and
-    # the generated call would fail at runtime with an AttributeError.
+    # A slot whose Python spelling is a name the generated `bind()` already
+    # holds has nowhere to go: `slots` would shadow the module the body calls
+    # into, `self` the receiver. Rejection is the only honest answer, and it is
+    # the same answer in both forms.
+    #
+    # The names a body *binds* are not here, and must not be: they are none.
+    # `assert_method_namespaces_are_closed` holds the renderer to that, so a
+    # legal GraphQL name never has to be spent on a local.
     test_project.prepare(
         schema=SLOT_NAME_SCHEMA,
-        queries=_slot_name_queries(
-            "slots", binds="bound = get_attachment.bind(slots=image_parts)"
-        ),
+        queries=_slot_name_queries(name, binds=form.format(name=name)),
     )
     with pytest.raises(
         GraphQLGenerationError,
         match=(
-            r"Parameter 'slots' of bind\(\) of template 'GetAttachment'"
-            r".*the iron_gql slots module"
+            rf"Parameter '{name}' of bind\(\) of template 'GetAttachment'"
+            rf".*{re.escape(origin)}"
         ),
     ):
         test_project.generate()
-
-
-def test_a_slot_named_after_the_slots_module_is_accepted_with_two_bindings(
-    test_project: ProjectBuilder,
-):
-    # The other side of the same claim: with two bindings the slots are
-    # parameters of `@overload` stubs whose body is `...`, over an
-    # implementation taking only `**fragments`, so nothing reads `slots` from
-    # a scope a parameter could shadow -- and refusing the name here would be
-    # a legal GraphQL name rejected for nothing.
-    test_project.prepare(
-        schema=SLOT_NAME_SCHEMA,
-        queries=_slot_name_queries(
-            "slots",
-            binds=(
-                "with_image = get_attachment.bind(slots=image_parts)\n"
-                "    with_link = get_attachment.bind(slots=link_parts)"
-            ),
-        ),
-    )
-    _api, queries = test_project.generate_and_import()
-
-    with_image: object = queries.with_image  # pyright: ignore[reportAny]
-    with_link: object = queries.with_link  # pyright: ignore[reportAny]
-    assert type(with_image).__name__ == "GetAttachmentWithSlotsImageParts"
-    assert type(with_link).__name__ == "GetAttachmentWithSlotsLinkParts"
-
-
-def test_a_slot_named_msg_is_accepted(test_project: ProjectBuilder):
-    # `bind()`'s body used to build its LookupError message in a local named
-    # `msg`, and the claim list reserved that name -- refusing a slot called
-    # `msg` even though a parameter shadowing a local the body assigns before
-    # reading breaks nothing. The message is one expression now, and the claim
-    # is gone with it.
-    test_project.prepare(
-        schema=SLOT_NAME_SCHEMA,
-        queries=_slot_name_queries(
-            "msg", binds="bound = get_attachment.bind(msg=image_parts)"
-        ),
-    )
-    _api, queries = test_project.generate_and_import()
-
-    bound: object = queries.bound  # pyright: ignore[reportAny]
-    assert type(bound).__name__ == "GetAttachmentWithMsgImageParts"
 
 
 def test_two_fragment_variables_mapping_to_one_python_name_are_rejected(

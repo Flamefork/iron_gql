@@ -11,7 +11,6 @@ from dataclasses import replace
 from pathlib import Path
 
 from iron_gql.slots import BindKey
-from iron_gql.slots import bind_key_shape
 
 
 @dataclass(kw_only=True, frozen=True)
@@ -141,10 +140,18 @@ class _OpaqueBinding:
     # Every other binding form: a parameter, a loop target, a `def`, a plain
     # assignment of something that is not a gql call. The name is bound, and
     # what it holds is not this scan's to know.
-    pass
+    #
+    # A bare PEP 526 annotation claims the name without giving it a value, and
+    # in a class body the difference is visible: the claim severs the closure,
+    # so an enclosing function's name of that spelling is unreachable, while
+    # the module's is still read (CPython falls back to globals). Recording it
+    # as an ordinary binding refused a call that Python answers from the
+    # module; ignoring it answered one that Python raises on.
+    annotation_only: bool = False
 
 
 _OPAQUE = _OpaqueBinding()
+_ANNOTATION = _OpaqueBinding(annotation_only=True)
 
 # How one scope binds one name, at the resolution it is recorded with. Four
 # cases rather than "a statement or None", because "bound by an import of a
@@ -157,13 +164,24 @@ def _assigned(statement: Statement | None) -> _Occurrence:
     return _OPAQUE if statement is None else _GqlAssign(statement=statement)
 
 
+@dataclass(kw_only=True, frozen=True, slots=True)
+class _Bound:
+    # One binding of one name, with the line that writes it. The line is what
+    # tells a binding a call site can read from one it cannot: a name bound
+    # only *below* the call is not the value that call sees -- Python raises
+    # there, or, in a class body, looks past the class entirely.
+    lineno: int
+    occurrence: _Occurrence
+
+
 @dataclass(kw_only=True, eq=False)
 class _Scope:
     # Every name this scope binds, in source order, and how. A name bound
-    # exactly once is the only shape a bind resolves through -- with a single
-    # binding there is only one value the name can hold, whichever branch or
-    # loop it sits in, so no flow analysis is needed to know what it is.
-    names: dict[str, list[_Occurrence]] = field(default_factory=dict)
+    # exactly once *above the call that reads it* is the only shape a bind
+    # resolves through -- with a single binding there is only one value the
+    # name can hold, whichever branch or loop it sits in, so no flow analysis
+    # is needed to know what it is.
+    names: dict[str, list[_Bound]] = field(default_factory=dict)
     global_names: set[str] = field(default_factory=set)
     nonlocal_names: set[str] = field(default_factory=set)
     # Class bodies are skipped when a nested scope looks outward, exactly as
@@ -176,13 +194,70 @@ class _Scope:
     # rather than into (PEP 572). The one binding form whose name outlives the
     # scope it is written in, so the one scope kind that has to say what it is.
     is_comprehension: bool = False
+    # A generator expression's body runs when the generator is *iterated*, not
+    # where it is written. So a call inside one reads whatever the surrounding
+    # names hold by then, exactly as a function body does -- and unlike a list,
+    # set or dict comprehension, which runs on the spot.
+    is_lazy: bool = False
 
-    def record(self, name: str, occurrence: _Occurrence) -> None:
-        self.names.setdefault(name, []).append(occurrence)
+    # A function body runs all at once, long after the module that defines it;
+    # a module body and a class body run line by line as they are read. So a
+    # call site sees every binding of the scopes it sits inside only when no
+    # function definition stands between the two -- which is what
+    # `_positional_depth` counts and this flag spells for one scope.
+    @property
+    def is_deferred(self) -> bool:
+        if self.is_lazy:
+            return True
+        return not (self.is_class or self.is_module or self.is_comprehension)
+
+    # Where a `nonlocal` can land. The declaration names an *enclosing
+    # function*: a class body, a comprehension and the module are all scopes
+    # it steps over, so a name they bind is never the one a `nonlocal` writes
+    # (see `_Module.nonlocal_rebound`).
+    @property
+    def is_function(self) -> bool:
+        return not (self.is_class or self.is_module or self.is_comprehension)
+
+    def record(self, name: str, occurrence: _Occurrence, *, lineno: int) -> None:
+        self.names.setdefault(name, []).append(
+            _Bound(lineno=lineno, occurrence=occurrence)
+        )
+
+    def visible_at(self, name: str, lineno: int | None) -> list[_Bound] | None:
+        # The bindings of `name` a call at `lineno` can read. `None` for a
+        # line means "no position to compare against" -- a call reached through
+        # a function definition, which runs after this scope's body is
+        # complete, so every binding counts.
+        bindings = self.names.get(name)
+        if bindings is None or lineno is None:
+            return bindings
+        return [bound for bound in bindings if bound.lineno <= lineno]
 
 
 @dataclass(kw_only=True, frozen=True)
 class _Module:
+    # Names some function in this module assigns through a `global` or a
+    # `nonlocal` declaration, kept apart by which declaration wrote them.
+    # Such a name has a value that depends on whether that function ran, which
+    # is a flow question -- so a bind reading it is refused rather than
+    # answered. Recording *where* the assignment lands instead (the scope the
+    # declaration names) is what the scan used to do, and it was the most
+    # delicate code here: the target may not be filled when the assignment is
+    # walked, an intermediate function that binds nothing must be stepped
+    # over, and a chain of `nonlocal` hands the search further out again.
+    # Three defects came out of those three sentences.
+    #
+    # Two sets rather than one, because the two declarations address different
+    # scopes and are therefore read at different places: `global` writes the
+    # module's name, so only the module walk asks about it, and `nonlocal`
+    # writes an enclosing *function*'s, so only the lexical walk does. One set
+    # read in one place is what left half the family open -- the module half
+    # refused while the enclosing-function half answered with a template the
+    # call no longer reads -- and, the other way round, refused a module-level
+    # name that only a `nonlocal` somewhere else in the file ever rebound.
+    global_rebound: frozenset[str] = frozenset()
+    nonlocal_rebound: frozenset[str] = frozenset()
     # The module scope's own bindings, in the same shape every other scope
     # uses. Names travelling between modules need no table of their own: an
     # import -- of a name or of a module -- is one of the binding forms a scope
@@ -330,13 +405,31 @@ class _ModuleGraph:
     statement_names: dict[str, list[Statement]]
 
     def resolve(
-        self, module: str, name: str, scopes: tuple[_Scope, ...], *, location: str
+        self,
+        module: str,
+        name: str,
+        scopes: tuple[_Scope, ...],
+        *,
+        location: str,
+        lineno: int,
     ) -> _Resolution:
         seen: _Seen = set()
-        match self._resolve_local(scopes, name, location=location, seen=seen):
+        local = self._resolve_local(
+            module, scopes, name, location=location, lineno=lineno, seen=seen
+        )
+        match local:
             case None:
                 return self._resolve_module(
-                    module, name, reported=name, location=location, seen=seen
+                    module,
+                    name,
+                    reported=name,
+                    location=location,
+                    # The module scope is the last one position speaks for, and
+                    # only while no function definition stands between it and
+                    # the call. Past the first hop the chain is other modules,
+                    # whose lines say nothing about this call.
+                    lineno=lineno if _positional_depth(scopes) >= len(scopes) else None,
+                    seen=seen,
                 )
             case _ImportedName(module=source, name=source_name):
                 # A local import names its source exactly, so it continues
@@ -349,14 +442,26 @@ class _ModuleGraph:
                 return resolution
 
     def _resolve_local(
-        self, scopes: tuple[_Scope, ...], name: str, *, location: str, seen: _Seen
+        self,
+        module: str,
+        scopes: tuple[_Scope, ...],
+        name: str,
+        *,
+        location: str,
+        lineno: int,
+        seen: _Seen,
     ) -> _Resolution | _ImportedName | None:
         # What the lexical chain has to say about a name a bind reads.
-        match self._lexical_occurrence(scopes, name, location=location, seen=seen):
+        occurrence = self._lexical_occurrence(
+            module, scopes, name, location=location, lineno=lineno, seen=seen
+        )
+        match occurrence:
             case None:
                 return None
             case _GqlAssign(statement=statement):
                 return statement
+            case _NotOurs() as not_ours:
+                return not_ours
             case _ImportedName() as imported:
                 # Handed back rather than followed here: the caller continues
                 # it into the graph under the name the developer wrote, which
@@ -381,8 +486,15 @@ class _ModuleGraph:
                 )
 
     def _lexical_occurrence(
-        self, scopes: tuple[_Scope, ...], name: str, *, location: str, seen: _Seen
-    ) -> _Occurrence | _AmbiguousName | None:
+        self,
+        module: str,
+        scopes: tuple[_Scope, ...],
+        name: str,
+        *,
+        location: str,
+        lineno: int | None,
+        seen: _Seen,
+    ) -> _Occurrence | _AmbiguousName | _NotOurs | None:
         # Walks the lexical chain the way Python does: the innermost scope
         # always counts, class bodies are skipped on the way out, `global` jumps
         # straight to the module and `nonlocal` skips the scope that declared
@@ -393,6 +505,8 @@ class _ModuleGraph:
         # asks whether the name is a gql statement and an attribute chain asks
         # whether it is a module, and only one walk can be the one that obeys
         # Python's scoping for both.
+        deferred = _positional_depth(scopes)
+        rebound = self.modules[module].nonlocal_rebound
         for depth, scope in enumerate(scopes):
             if scope.is_module:
                 return None
@@ -402,9 +516,38 @@ class _ModuleGraph:
                 return None
             if name in scope.nonlocal_names:
                 continue
-            occurrences = scope.names.get(name)
+            at = lineno if depth < deferred else None
+            occurrences = scope.visible_at(name, at)
             if occurrences is None:
                 continue
+            if scope.is_function and name in rebound:
+                # This scope holds the name, and some function in the file
+                # writes a name of that spelling into an enclosing function of
+                # its own. Which one is a question the scan does not ask (see
+                # `_Module.nonlocal_rebound`): whichever it is, what the name
+                # holds here depends on whether that function has run, and the
+                # walk stops rather than answering with the binding written
+                # above the call.
+                return _rebound_outward(name, location)
+            if not occurrences or (
+                scope.is_class
+                and all(
+                    isinstance(bound.occurrence, _OpaqueBinding)
+                    and bound.occurrence.annotation_only
+                    for bound in occurrences
+                )
+            ):
+                # The scope binds the name, but not in a way this call can
+                # read: below the line, or by an annotation that gives it no
+                # value. In a function or at module level the call raises. A
+                # class body is the one scope that looks past itself, and
+                # where it looks is the module -- a name claimed by the class
+                # body is loaded by name, not through the closure, so the
+                # enclosing function's binding of that spelling is not what
+                # runs here.
+                if scope.is_class:
+                    return None
+                return _bound_below_call(name, location)
             return self._lone_binding(
                 occurrences, name=name, location=location, seen=seen
             )
@@ -415,7 +558,7 @@ class _ModuleGraph:
         raise AssertionError(msg)
 
     def _lone_binding(
-        self, occurrences: list[_Occurrence], *, name: str, location: str, seen: _Seen
+        self, bindings: list[_Bound], *, name: str, location: str, seen: _Seen
     ) -> _Occurrence | _AmbiguousName:
         # A name a bind reads must be bound exactly once in the scope it
         # resolves in. More than once and the answer depends on control flow:
@@ -424,12 +567,12 @@ class _ModuleGraph:
         # name something else also binds, must not silently drop the binding --
         # and simply opaque otherwise, which is the same answer a third-party
         # name gets.
-        match occurrences:
+        match bindings:
             case [only]:
-                return only
+                return only.occurrence
             case _ if any(
-                self._leads_to_statement(occurrence, location=location, seen=seen)
-                for occurrence in occurrences
+                self._leads_to_statement(bound.occurrence, location=location, seen=seen)
+                for bound in bindings
             ):
                 return _AmbiguousName(
                     reason=(
@@ -463,9 +606,21 @@ class _ModuleGraph:
                 return False
 
     def _resolve_module(
-        self, module: str, name: str, *, reported: str, location: str, seen: _Seen
+        self,
+        module: str,
+        name: str,
+        *,
+        reported: str,
+        location: str,
+        lineno: int | None = None,
+        seen: _Seen,
     ) -> _Resolution:
+        # `lineno` speaks for the first module only, and only when the caller
+        # established that the call runs inside that module's own top-to-bottom
+        # body. Every hop after it is a different module, whose lines have no
+        # order relative to this call.
         current_module, current_name = module, name
+        current_lineno = lineno
         while True:
             if (current_module, current_name) in seen:
                 # Bound, and by the tree's own imports: they answer each other
@@ -497,11 +652,15 @@ class _ModuleGraph:
                     # this name its value.
                     bound=False,
                 )
-            occurrences = mod.scope.names.get(current_name)
-            if occurrences is None:
-                return _NotOurs(
-                    reason=_unresolved_reason(reported, location, mod), bound=False
-                )
+            occurrences = _module_bindings(
+                mod,
+                current_name,
+                current_lineno,
+                reported=reported,
+                location=location,
+            )
+            if isinstance(occurrences, _NotOurs):
+                return occurrences
             match self._lone_binding(
                 occurrences, name=current_name, location=location, seen=seen
             ):
@@ -509,6 +668,7 @@ class _ModuleGraph:
                     return statement
                 case _ImportedName(module=next_module, name=next_name):
                     current_module, current_name = next_module, next_name
+                    current_lineno = None
                 case _AmbiguousName() as ambiguous:
                     return ambiguous
                 case _ImportedModule() | _OpaqueBinding():
@@ -537,6 +697,7 @@ class _ModuleGraph:
         prefix: tuple[str, ...],
         *,
         location: str,
+        lineno: int,
     ) -> str | None:
         # The scanned module an attribute chain's dotted prefix names, or None
         # when it names no module of ours. `.bind(...)` is an ordinary method
@@ -546,7 +707,9 @@ class _ModuleGraph:
         # call site stands, and the whole prefix has to land on a file the scan
         # read.
         head, *rest = prefix
-        base = self._module_named(module, head, scopes, location=location)
+        base = self._module_named(
+            module, head, scopes, location=location, lineno=lineno
+        )
         if base is None:
             return None
         candidate = ".".join([base, *rest])
@@ -555,7 +718,13 @@ class _ModuleGraph:
         return None
 
     def _module_named(
-        self, module: str, name: str, scopes: tuple[_Scope, ...], *, location: str
+        self,
+        module: str,
+        name: str,
+        scopes: tuple[_Scope, ...],
+        *,
+        location: str,
+        lineno: int,
     ) -> str | None:
         # Which module a name is bound to where the call site stands, or None
         # when it is bound to something else. The lexical chain answers first
@@ -563,12 +732,14 @@ class _ModuleGraph:
         # local object spelled like an imported module hides that module here
         # exactly as it does at runtime.
         seen: _Seen = set()
+        deferred = _positional_depth(scopes)
         occurrence = self._lexical_occurrence(
-            scopes, name, location=location, seen=seen
+            module, scopes, name, location=location, lineno=lineno, seen=seen
         )
         if occurrence is None:
-            occurrences = self.modules[module].scope.names.get(name)
-            if occurrences is None:
+            at = lineno if deferred >= len(scopes) else None
+            occurrences = self.modules[module].scope.visible_at(name, at)
+            if not occurrences:
                 return None
             occurrence = self._lone_binding(
                 occurrences, name=name, location=location, seen=seen
@@ -595,6 +766,68 @@ def _dotted_parts(node: ast.expr) -> tuple[str, ...] | None:
         return None
     parts.append(current.id)
     return tuple(reversed(parts))
+
+
+def _rebound_outward(reported: str, location: str) -> _NotOurs:
+    # The one wording for "a function writes this name from the outside".
+    return _NotOurs(
+        reason=(
+            f"cannot resolve '{reported}' at {location}: a function assigns "
+            "that name through a global or nonlocal declaration, so which "
+            "value it holds depends on whether that function has run"
+        ),
+        bound=True,
+    )
+
+
+def _bound_below_call(reported: str, location: str) -> _NotOurs:
+    # The one wording for "the name is bound here, but not yet". Written once
+    # because the lexical walk and the module walk both reach it, and a call
+    # site cannot tell which of the two answered it.
+    return _NotOurs(
+        reason=(
+            f"cannot resolve '{reported}' at {location}: every binding of that "
+            "name visible here is written below the call, so the call runs "
+            "before the name has a value"
+        ),
+        bound=True,
+    )
+
+
+def _module_bindings(
+    mod: _Module,
+    name: str,
+    lineno: int | None,
+    *,
+    reported: str,
+    location: str,
+) -> list[_Bound] | _NotOurs:
+    # Only `global` is asked about here: it is the one declaration that writes
+    # the module's own name. A `nonlocal` of the same spelling addresses an
+    # enclosing function and is answered on the lexical walk.
+    if name in mod.global_rebound:
+        return _rebound_outward(reported, location)
+    bindings = mod.scope.visible_at(name, lineno)
+    if bindings is None:
+        return _NotOurs(reason=_unresolved_reason(reported, location, mod), bound=False)
+    if not bindings:
+        return _bound_below_call(reported, location)
+    return bindings
+
+
+def _positional_depth(scopes: tuple[_Scope, ...]) -> int:
+    # How far out from a call site the *line* of a binding still decides
+    # whether that call can read it. A module body and a class body run top to
+    # bottom while the call sits in them, so a binding written below the call
+    # has not happened yet; a function body runs later, by which time every
+    # binding of every scope around it has. So position counts from the call
+    # site outward up to and including the first deferred scope, and not past
+    # it -- `def go(): return tmpl.bind(...)` reads a module-level `tmpl`
+    # assigned after `go` is defined, because `go()` runs after that line.
+    for depth, scope in enumerate(scopes):
+        if scope.is_deferred:
+            return depth + 1
+    return len(scopes)
 
 
 def _walrus_scopes(scopes: tuple[_Scope, ...]) -> tuple[_Scope, ...]:
@@ -643,10 +876,20 @@ class _ModuleScan:
     statement_names: dict[str, list[Statement]] = field(default_factory=dict)
     ignored: list[IgnoredBind] = field(default_factory=list)
     star_imports: bool = False
+    # Names this module's functions assign through a `global` and through a
+    # `nonlocal` declaration, kept apart by the scope each addresses (see
+    # `_Module.global_rebound`).
+    global_rebound: set[str] = field(default_factory=set)
+    nonlocal_rebound: set[str] = field(default_factory=set)
 
     def run(self, tree: ast.Module) -> _Module:
         self._visit_all(tree.body, (self.module_scope,))
-        return _Module(scope=self.module_scope, star_imports=self.star_imports)
+        return _Module(
+            scope=self.module_scope,
+            star_imports=self.star_imports,
+            global_rebound=frozenset(self.global_rebound),
+            nonlocal_rebound=frozenset(self.nonlocal_rebound),
+        )
 
     def _gql_call(self, node: ast.AST | None) -> Statement | None:
         return _gql_call(
@@ -656,6 +899,33 @@ class _ModuleScan:
     def _visit_all(self, nodes: Iterable[ast.AST], scopes: tuple[_Scope, ...]) -> None:
         for node in nodes:
             self._visit(node, scopes)
+
+    def _bind_name(
+        self,
+        scopes: tuple[_Scope, ...],
+        name: str,
+        occurrence: _Occurrence,
+        *,
+        lineno: int,
+    ) -> None:
+        # The one door a name goes through to enter a scope. Whether a
+        # declaration redirects it is a question about the *scope* the binding
+        # lands in, not about the syntax that binds it: `def tmpl(): ...`,
+        # `import tmpl`, `except E as tmpl` and `case object() as tmpl` all
+        # write the module's name under a `global tmpl` exactly as `tmpl = ...`
+        # does. Asking that question at the assignment target alone left five
+        # other binding forms writing the declaring function's own scope, and a
+        # call site elsewhere then read a template the program had replaced.
+        #
+        # Parameters and PEP 695 type parameters do not come through here:
+        # they bind a scope this walk has just opened, where no declaration can
+        # have been written, and a `global` naming a parameter is a SyntaxError.
+        if name in scopes[0].global_names:
+            self.global_rebound.add(name)
+        elif name in scopes[0].nonlocal_names:
+            self.nonlocal_rebound.add(name)
+        else:
+            scopes[0].record(name, occurrence, lineno=lineno)
 
     def _record_target(
         self, target: ast.expr, scopes: tuple[_Scope, ...], occurrence: _Occurrence
@@ -667,7 +937,7 @@ class _ModuleScan:
         # binds nothing but still holds expressions to walk.
         match target:
             case ast.Name(id=name):
-                scopes[0].record(name, occurrence)
+                self._bind_name(scopes, name, occurrence, lineno=target.lineno)
                 if isinstance(occurrence, _GqlAssign):
                     self.statement_names.setdefault(name, []).append(
                         occurrence.statement
@@ -697,7 +967,7 @@ class _ModuleScan:
                     | ast.ParamSpec(name=name)
                     | ast.TypeVarTuple(name=name)
                 ):
-                    scope.record(name, _OPAQUE)
+                    scope.record(name, _OPAQUE, lineno=param.lineno)
                 case _:
                     # Internal invariant: PEP 695 has exactly these three
                     # kinds of type parameter, and the module parsed.
@@ -710,6 +980,8 @@ class _ModuleScan:
         elements: Sequence[ast.expr],
         generators: Sequence[ast.comprehension],
         scopes: tuple[_Scope, ...],
+        *,
+        lazy: bool = False,
     ) -> None:
         # A comprehension has a scope of its own, so its target never rebinds
         # a name the enclosing scope holds: this is the one binding form where
@@ -718,7 +990,7 @@ class _ModuleScan:
         # exist at runtime. Only the outermost iterable is evaluated outside.
         outermost, *rest = generators
         self._visit(outermost.iter, scopes)
-        inner = (_Scope(is_comprehension=True), *scopes)
+        inner = (_Scope(is_comprehension=True, is_lazy=lazy), *scopes)
         self._record_target(outermost.target, inner, _OPAQUE)
         self._visit_all(outermost.ifs, inner)
         for generator in rest:
@@ -733,7 +1005,15 @@ class _ModuleScan:
         # Decorators are written and read outside the definition entirely;
         # defaults and annotations sit inside its type-parameter scope but
         # outside the function's own, where only parameters and the body live.
-        scopes[0].record(node.name, _OPAQUE)
+        #
+        # The name is recorded before any of them, and the order is not what
+        # decides whether a call written *inside* the header can read the name
+        # this definition replaces: visibility is a comparison of line
+        # numbers, and a header shares its `def`'s line. So a
+        # `def tmpl(x=tmpl.bind(...))` sees two bindings of `tmpl` and is
+        # refused, exactly like any other name a scope binds twice --
+        # `tests/corpus/scoping_outcomes.txt` pins that under `placement`.
+        self._bind_name(scopes, node.name, _OPAQUE, lineno=node.lineno)
         self._visit_all(node.decorator_list, scopes)
         outer = self._with_type_params(node.type_params, scopes)
         self._visit_all(_defaults(node.args), outer)
@@ -748,7 +1028,7 @@ class _ModuleScan:
         self._visit_all(annotations, outer)
         inner = _Scope()
         for arg in _arguments(node.args):
-            inner.record(arg.arg, _OPAQUE)
+            inner.record(arg.arg, _OPAQUE, lineno=arg.lineno)
         self._visit_all(node.body, (inner, *outer))
 
     def _visit(self, node: ast.AST, scopes: tuple[_Scope, ...]) -> None:
@@ -777,7 +1057,7 @@ class _ModuleScan:
                 self._visit_all(_defaults(args), scopes)
                 inner = _Scope()
                 for arg in _arguments(args):
-                    inner.record(arg.arg, _OPAQUE)
+                    inner.record(arg.arg, _OPAQUE, lineno=arg.lineno)
                 self._visit(body, (inner, *scopes))
             case ast.ClassDef(
                 name=name,
@@ -787,7 +1067,7 @@ class _ModuleScan:
                 body=body,
                 type_params=type_params,
             ):
-                scopes[0].record(name, _OPAQUE)
+                self._bind_name(scopes, name, _OPAQUE, lineno=node.lineno)
                 self._visit_all(decorators, scopes)
                 outer = self._with_type_params(type_params, scopes)
                 self._visit_all([*bases, *keywords], outer)
@@ -798,10 +1078,11 @@ class _ModuleScan:
                 # lazily in a scope of its own, where `T` is visible.
                 self._record_target(name_node, scopes, _OPAQUE)
                 self._visit(value, self._with_type_params(type_params, scopes))
+            case ast.GeneratorExp(elt=element, generators=generators):
+                self._visit_comprehension([element], generators, scopes, lazy=True)
             case (
                 ast.ListComp(elt=element, generators=generators)
                 | ast.SetComp(elt=element, generators=generators)
-                | ast.GeneratorExp(elt=element, generators=generators)
             ):
                 self._visit_comprehension([element], generators, scopes)
             case ast.DictComp(key=key, value=value, generators=generators):
@@ -822,18 +1103,26 @@ class _ModuleScan:
                     self._record_target(target, scopes, _assigned(statement))
                 self._visit(value, scopes)
             case ast.AnnAssign(target=target, annotation=annotation, value=value):
-                # A bare annotation (`name: T`) declares rather than assigns --
-                # except in a function body, where PEP 526 makes the
-                # declaration alone bind the name, so the module-level name of
-                # that spelling is unreachable from there and the call site
-                # raises UnboundLocalError. Reading it as visible generated a
-                # binding class for a call that cannot run. A class body and
-                # the module scope keep the declaration-only meaning.
+                # A bare annotation (`name: T`) declares rather than assigns,
+                # but PEP 526 still makes the declaration alone claim the name
+                # for the scope it is written in -- in a function body and in a
+                # class body alike. So the outer name of that spelling is
+                # unreachable from there: reading `name` raises rather than
+                # finding the enclosing function's, which a scan reading the
+                # annotation as invisible answered with a binding for a call
+                # that cannot run.
+                #
+                # The module scope is the exception, and only because it has no
+                # outer scope to be shadowed from: a name annotated and not yet
+                # assigned raises there too, which is what the positional
+                # filter already says about every module-level binding.
                 if value is not None:
                     statement = self._gql_call(value)
                     self._record_target(target, scopes, _assigned(statement))
                     self._visit(value, scopes)
-                elif not (scopes[0].is_module or scopes[0].is_class):
+                elif scopes[0].is_class:
+                    self._record_target(target, scopes, _ANNOTATION)
+                elif not scopes[0].is_module:
                     self._record_target(target, scopes, _OPAQUE)
                 self._visit(annotation, scopes)
             case _:
@@ -846,14 +1135,15 @@ class _ModuleScan:
         # module. `import a.b.c` binds only `a` (the rest of the chain is
         # attribute access from there), `import a.b.c as x` binds `x` to the
         # whole path.
-        scope = scopes[0]
         match node:
             case ast.Import(names=names):
                 for alias in names:
                     head = alias.name.split(".", 1)[0]
-                    scope.record(
+                    self._bind_name(
+                        scopes,
                         alias.asname or head,
                         _ImportedModule(module=alias.name if alias.asname else head),
+                        lineno=alias.lineno,
                     )
             case ast.ImportFrom(level=level, module=source_module, names=names):
                 base = (
@@ -867,9 +1157,11 @@ class _ModuleScan:
                         # in names this scan cannot enumerate.
                         self.star_imports = True
                         continue
-                    scope.record(
+                    self._bind_name(
+                        scopes,
                         alias.asname or alias.name,
                         _ImportedName(module=base, name=alias.name),
+                        lineno=alias.lineno,
                     )
             case _:
                 return False
@@ -910,7 +1202,7 @@ class _ModuleScan:
             ):
                 # One shape, four spellings: the bound name is a plain string
                 # on the node, and everything under it is walked as usual.
-                scope.record(name, _OPAQUE)
+                self._bind_name(scopes, name, _OPAQUE, lineno=node.lineno)
                 self._visit_all(list(ast.iter_child_nodes(node)), scopes)
             case ast.Name(ctx=ast.Store() | ast.Del(), id=name):
                 # Where a loop target, a `with ... as`, a comprehension
@@ -918,7 +1210,7 @@ class _ModuleScan:
                 # all land. Recording it as "bound, not ours" is the safe
                 # answer: the alternative is resolving the name against a
                 # module-level template the call site cannot see.
-                scope.record(name, _OPAQUE)
+                self._bind_name(scopes, name, _OPAQUE, lineno=node.lineno)
             case _:
                 return False
         return True
@@ -992,7 +1284,11 @@ def _slot_statement(
             # that does not resolve is a defect in it, not a sign it belongs to
             # someone else.
             resolution = graph.resolve(
-                candidate.module, name, candidate.scopes, location=candidate.location
+                candidate.module,
+                name,
+                candidate.scopes,
+                location=candidate.location,
+                lineno=candidate.call.lineno,
             )
             match resolution:
                 case Statement():
@@ -1156,6 +1452,7 @@ def _resolve_base(
             candidate.scopes,
             tuple(prefix),
             location=candidate.location,
+            lineno=candidate.call.lineno,
         )
         if target is None:
             chain = ".".join(prefix)
@@ -1195,7 +1492,11 @@ def _resolve_base(
             case _NotOurs() as not_ours:
                 return _unreachable_here(graph, candidate, base_name, not_ours)
     resolution = graph.resolve(
-        candidate.module, base_name, candidate.scopes, location=candidate.location
+        candidate.module,
+        base_name,
+        candidate.scopes,
+        location=candidate.location,
+        lineno=candidate.call.lineno,
     )
     match resolution:
         case Statement():
@@ -1231,13 +1532,23 @@ def _resolve_binds(
 
 
 def _bind_combination_key(bind: BindDecl) -> BindKey:
-    # The same key the runtime computes and the renderer writes into the
-    # dispatch dict, built here from raw statements: slots sort, the fragments
-    # within a slot sort, and an empty slot drops out -- so two call sites that
-    # mean the same binding produce one key however each spells it.
-    return bind_key_shape(
+    # Every keyword the call actually wrote, empty ones included -- which is
+    # what makes this *not* the runtime's key. Dropping empty slots here (the
+    # normalisation `slots.bind_key_shape` does, rightly, for dispatch) merges
+    # a call that names a slot the template does not have into one that names
+    # nothing, and the misspelling then reaches no check at all: whether it was
+    # diagnosed depended on whether some other file happened to hold the empty
+    # bind it collapsed onto. Calls that mean one combination are merged after
+    # expansion instead (`collect._merge_expanded`), where the slot names have
+    # been checked against the template.
+    return (
         bind.template.hash_str,
-        ((key, (stmt.hash_str for stmt in stmts)) for key, stmts in bind.slot_args),
+        tuple(
+            sorted(
+                (key, tuple(sorted(stmt.hash_str for stmt in stmts)))
+                for key, stmts in bind.slot_args
+            )
+        ),
     )
 
 

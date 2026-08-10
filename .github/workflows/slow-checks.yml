@@ -1,0 +1,30 @@
+name: "Slow checks"
+
+# The two checks that cost minutes or hours instead of seconds: mutation
+# testing, which measures whether the oracles are strong, and the scoping
+# fuzzer, which searches for shapes no corpus author thought of. Both run on a
+# schedule rather than per push -- and they run here at all because a recipe
+# nothing executes is a recipe nobody notices is broken: `mutants-diff` was
+# written against a mutmut 2 option that mutmut 3 had already dropped, and
+# passed review as text.
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 3 * * 0"
+
+jobs:
+  slow:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+      - name: Install just
+        uses: extractions/setup-just@v3
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+      - name: Fuzz the scoping oracle
+        run: just fuzz-scoping 5000
+      - name: Run mutants
+        run: just mutants

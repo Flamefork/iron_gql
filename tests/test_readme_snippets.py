@@ -215,9 +215,10 @@ def _readme_fenced_blocks() -> list[str]:
 
 def test_readme_generic_bound_helper_type_checks(tmp_path: Path):
     # README's "Executing and reading" block writes a helper generic over the
-    # phantom -- `GetPostAttachmentBound[TFrag]` in, `GetPostAttachmentResult
-    # [TFrag]` out, then a `read` off the returned node. It is the one README
-    # snippet that depends on the whole phantom chain holding together, and
+    # result -- `GetPostAttachmentBound[TResult]` in, `TResult` out, then a
+    # `read` off the returned node, which only type-checks once the caller's
+    # binding has put its own result model in. It is the one README snippet
+    # that depends on the whole phantom chain holding together, and
     # (unlike the module-level gql/bind blocks) it cannot live in `queries.py`,
     # so it gets checked here instead. Taken from the README itself, so the
     # prose and the pin cannot drift.
@@ -227,7 +228,6 @@ def test_readme_generic_bound_helper_type_checks(tmp_path: Path):
         "\n".join([
             "from tests.generated.readme_fragment_slots.gql.api import (",
             "    GetPostAttachmentBound,",
-            "    GetPostAttachmentResult,",
             ")",
             "from tests.generated.readme_fragment_slots.queries import (",
             "    get_post_attachment_image,",

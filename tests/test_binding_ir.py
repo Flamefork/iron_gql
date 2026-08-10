@@ -199,7 +199,6 @@ def test_template_is_classified_not_an_operation(tmp_path: Path):
     [slot] = template.slots
     assert slot.name == "attachment"
     assert slot.python_name == "attachment"
-    assert slot.type_param == "TAttachment"
     # The generated slot node models this template's `attachment` field
     # collects into -- `_collect_typed_field`'s own naming. The slot's type is
     # a union, so the key reaches one node model per variant; the union alias
@@ -244,7 +243,7 @@ def test_binding_collected_with_spread_model_names_and_arg_vars(tmp_path: Path):
     [arg] = binding.arg_vars
     assert arg.var.gql_name == "limit"
     assert arg.var.python_name == "limit"
-    assert arg.var.type_info == ScalarRef(expr="int")
+    assert arg.var.type_info == ScalarRef(expr="int", name_hint="Int")
     assert arg.var.default_expr is None
     assert not arg.omittable
 

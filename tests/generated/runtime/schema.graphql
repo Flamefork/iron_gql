@@ -1,0 +1,39 @@
+scalar Upload
+scalar DateTime
+
+type Query {
+    ping: String!
+    fail: String!
+    ok: String!
+    user(id: ID!): User
+    numbers1: [Int]!
+    numbers2: [Int!]
+    posts(limit: Int = 5): [Int!]!
+    events(since: DateTime!): [Event!]!
+    search(criteria: SearchCriteria!): String!
+}
+
+type Mutation {
+    updateUser(input: UpdateUserInput!): User
+    uploadFile(file: Upload!, label: String): String!
+}
+
+type User {
+    id: ID!
+    name: String!
+}
+
+type Event {
+    name: String!
+    startedAt: DateTime!
+}
+
+input UpdateUserInput {
+    id: ID!
+    name: String!
+}
+
+input SearchCriteria @oneOf {
+    name: String
+    email: String
+}

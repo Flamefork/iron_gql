@@ -45,6 +45,13 @@ dev = [
     "pytest-httpserver>=1.1.3",
     "pytest-randomly>=4.0.1",
     "ruff>=0.14.1",
+    "hypothesis>=6.165.2",
+    # Pinned to a major, because the mutation recipes in the justfile are
+    # written against mutmut 3's CLI: 2.x scoped a run with `--paths-to-mutate`
+    # and 3.x dropped every such option, so an unpinned `--with mutmut` made
+    # whether `just mutants-diff` runs at all a question about what PyPI
+    # served that day.
+    "mutmut>=3.7.0,<4",
 ]
 
 [tool.basedpyright]
@@ -91,6 +98,9 @@ ignore = [
 "tests/conftest.py" = ["S404", "S603"]
 # T201: the chapters print what they fetched -- that is what a reader runs them for
 "example/*.py" = ["T201"]
+# The same reason, for the one test module that is a command rather than a
+# test: `just fuzz-scoping` is run for its report, and the report is its stdout.
+"tests/fuzz_scoping.py" = ["T201"]
 # PGH004: the generated module opens with a blanket `# ruff: noqa` of its own
 "example/gql/*.py" = ["PGH004"]
 "tests/generated/**/*.py" = ["C901", "E501", "T201", "PGH004"]
@@ -118,12 +128,14 @@ asyncio_default_fixture_loop_scope = "function"
 
 [tool.coverage.run]
 branch = true
-# `*/sample_app/*` covers the packages tests build under `tmp_path`: their
-# `queries.py` is fixture text, not library code, and leaving it in the report
-# mixes another run's line numbers into the file list this project reads for
-# real gaps. `example/*.py` is the same case: the chapters are written to be
-# read, and the generator plus basedpyright are what prove them, not coverage.
-omit = ["tests/*.py", "example/*.py", "*/gql/*.py", "*/sample_app/*"]
+# `*/pytest-of-*/*` covers every tree a test builds under `tmp_path` -- the
+# generated packages and the corpus modules the discovery oracle imports and
+# runs. That source is fixture text, not library code, and leaving it in the
+# report both mixes another run's line numbers into the file list this project
+# reads for real gaps and drowns the real total (937 corpus modules put the
+# figure under the floor). `example/*.py` is the same case: the chapters are
+# written to be read, and the generator plus basedpyright are what prove them.
+omit = ["tests/*.py", "example/*.py", "*/gql/*.py", "*/pytest-of-*/*"]
 data_file = ".coverage/db.sqlite"
 
 [tool.coverage.html]

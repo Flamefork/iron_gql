@@ -1,6 +1,8 @@
 import importlib
 import json
+import pickle
 from collections.abc import Callable
+from typing import cast
 
 import pydantic
 import pytest
@@ -722,6 +724,7 @@ generated_package(
 )
 
 from tests.generated.bindings_composition_boundary import queries as boundary_queries
+from tests.generated.bindings_composition_boundary.gql import api as boundary_api
 
 # Deliberately short of `NodeId`'s required `id`: a conforming server cannot
 # produce this, since the rule above rules out the conditional spread that used
@@ -731,6 +734,17 @@ BOUNDARY_BODY = {
         "post": {
             "id": "1",
             "attachment": {"__typename": "ImageAttachment", "url": "u1"},
+        }
+    }
+}
+
+# The same response with the closure-only brick's own field in place, so
+# boundary validation passes and the tests below get a result to look at.
+COMPLETE_BOUNDARY_BODY = {
+    "data": {
+        "post": {
+            "id": "1",
+            "attachment": {"__typename": "ImageAttachment", "url": "u", "id": "n"},
         }
     }
 }
@@ -761,15 +775,18 @@ async def test_unread_closure_only_brick_still_validates_eagerly(
     assert exc_info.value.errors()[0]["type"] == "missing"
 
 
-async def test_bound_operation_validation_error_keeps_bare_result_class_name(
+async def test_bound_operation_validation_error_names_the_bindings_result_class(
     httpserver: HTTPServer,
 ):
-    # `execute` validates against `GetAttachmentResult[ImageParts | NodeId]`,
-    # a real subclass pydantic builds and caches per parametrization -- not
-    # `GetAttachmentResult` itself. Without the `GQLModel` scaffold's
-    # `model_parametrized_name` override, that subclass's mangled `__name__`
-    # would leak into the ValidationError title instead of the bare result
-    # name a plain (non-bound) operation already shows.
+    # A binding validates against a model of its own -- a plain class written
+    # into the module, named after the combination that produced it -- so the
+    # ValidationError title is that class's own name, the way a plain (non
+    # bound) operation's title is its result model's. It used to be the
+    # template's bare `GetAttachmentResult`, which was not the class doing the
+    # validating: the model was generic over the offered fragments, and
+    # `execute` handed the client a pydantic-built parametrization whose
+    # mangled name a `model_parametrized_name` override in the scaffold had to
+    # hide.
     httpserver.expect_request("/graphql/", method="POST").respond_with_json(
         BOUNDARY_BODY
     )
@@ -779,7 +796,66 @@ async def test_bound_operation_validation_error_keeps_bare_result_class_name(
         with pytest.raises(pydantic.ValidationError) as exc_info:
             _ = await boundary_queries.bound.execute(id="1")
     title = str(exc_info.value).splitlines()[0]
-    assert title == "1 validation error for GetAttachmentResult"
+    assert title == (
+        "1 validation error for GetAttachmentWithAttachmentImagePartsResult"
+    )
+
+
+async def test_execute_validates_with_the_result_type_its_signature_promises(
+    httpserver: HTTPServer,
+):
+    # `execute` is written per binding for this reason. Inherited from the
+    # template's base, its body was evaluated with the base's own type
+    # parameter -- Python substitutes nothing when a method runs -- so the
+    # class handed to the client was not the one the signature named. The
+    # binding's result model is a plain class now, and identity is what says
+    # `execute` validated with it: two bindings of one template have models of
+    # the same shape, so anything weaker passes while the answer carries the
+    # other binding's offered fragments.
+    httpserver.expect_request("/graphql/", method="POST").respond_with_json(
+        COMPLETE_BOUNDARY_BODY
+    )
+    async with use_package_client(
+        "bindings_composition_boundary", httpserver.url_for("/graphql/")
+    ):
+        result = await boundary_queries.bound.execute(id="1")
+    assert type(result) is boundary_api.GetAttachmentWithAttachmentImagePartsResult
+
+
+async def test_a_bound_results_slot_data_survives_in_process_pickling(
+    httpserver: HTTPServer,
+):
+    # `slots.GQLSlotNode` promises that a validated node keeps its slot data
+    # through a pickle round-trip in one process; tests/test_slots_runtime.py
+    # pins that on hand-written models, and this pins it on the models the
+    # generator actually writes -- which is where it used to fail. pydantic
+    # registers a parametrization of a generic model in its module's globals
+    # only when the subscription itself runs at module scope, and a generated
+    # result's ran inside a class body (and recursively, inside pydantic, for
+    # every model below it): pickle then found no qualname for the class of
+    # the object it was handed, and every result raised `PicklingError`. One
+    # plain class per binding is what leaves nothing to look up.
+    #
+    # The pickle payload is produced and consumed inside this test, so
+    # unpickling is safe here.
+    httpserver.expect_request("/graphql/", method="POST").respond_with_json(
+        COMPLETE_BOUNDARY_BODY
+    )
+    async with use_package_client(
+        "bindings_composition_boundary", httpserver.url_for("/graphql/")
+    ):
+        result = await boundary_queries.bound.execute(id="1")
+    # `pickle.loads` answers `Any` -- a payload holds nothing to type it by --
+    # and the isinstance below is what turns it back into a type: the check
+    # this test wants anyway, made where the `Any` would otherwise spread.
+    restored = cast("object", pickle.loads(pickle.dumps(result)))
+    assert isinstance(
+        restored, boundary_api.GetAttachmentWithAttachmentImagePartsResult
+    )
+    assert restored.post is not None
+    image = boundary_queries.image_parts.read(restored.post.attachment)
+    assert image is not None
+    assert image.url == "u"
 
 
 # --- fragment variables ---------------------------------------------
@@ -796,8 +872,19 @@ type Post {
 
 union Attachment = ImageAttachment | LinkAttachment
 
+# `size` carries the one type a fragment variable can introduce that no other
+# position in the package mentions: an enum reaches the module only through
+# this binding's synthesized variable, so a collection order that reads
+# fragment variables after the enums are already listed emits `size: Size`
+# with no `Size` to go with it. Optional, so the variable stays a free rider
+# on the tests either side of it.
 type ImageAttachment {
-    url(width: Int!): String!
+    url(width: Int!, size: Size = SMALL): String!
+}
+
+enum Size {
+    SMALL
+    LARGE
 }
 
 type LinkAttachment {
@@ -825,7 +912,7 @@ generated_package(
     image_parts = api_gql(
         """
         fragment ImageParts on ImageAttachment {
-            url(width: $width)
+            url(width: $width, size: $size)
         }
         """
     )

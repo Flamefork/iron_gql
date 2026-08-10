@@ -6,11 +6,12 @@ from __future__ import annotations
 
 
 import datetime
+from abc import ABC
+from abc import abstractmethod
 from collections.abc import AsyncGenerator
 from collections.abc import Sequence
 from contextlib import AbstractAsyncContextManager
 from typing import Annotated
-from typing import Any
 from typing import ClassVar
 from typing import Literal
 from typing import Never
@@ -47,16 +48,6 @@ class GQLModel(pydantic.BaseModel):
         validate_default=True,
     )
 
-    # A template's result model is subscripted with its slots' offered
-    # fragments (e.g. `GetAttachmentResult[ImageParts | NodeId]`), which
-    # builds and caches a genuine subclass rather than reusing the base -- the
-    # override below keeps that subclass's name, and so every ValidationError
-    # title raised through it, on the plain model name.
-    @classmethod
-    @override
-    def model_parametrized_name(cls, params: tuple[type[Any], ...]) -> str:
-        return cls.__name__
-
 
 class GQLOpenModel(GQLModel):
     model_config = pydantic.ConfigDict(extra="ignore")
@@ -64,40 +55,6 @@ class GQLOpenModel(GQLModel):
 
 class GQLSlotModel[TOffered](GQLOpenModel, slots.GQLSlotNode[TOffered]):
     pass
-
-
-class ListPostsResultPostsAttachmentSlotImageAttachment[TAttachment](GQLSlotModel[TAttachment]):
-    slot_name__: ClassVar[str] = "attachment"
-    typename__: Annotated[Literal["ImageAttachment"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
-
-
-class ListPostsResultPostsAttachmentSlotLinkAttachment[TAttachment](GQLSlotModel[TAttachment]):
-    slot_name__: ClassVar[str] = "attachment"
-    typename__: Annotated[Literal["LinkAttachment"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
-
-
-type ListPostsResultPostsAttachmentSlot[TAttachment] = Annotated[ListPostsResultPostsAttachmentSlotImageAttachment[TAttachment] | ListPostsResultPostsAttachmentSlotLinkAttachment[TAttachment], pydantic.Field(discriminator="typename__")]
-
-
-class ListPostsResultPostsPreviewSlot[TPreview](GQLSlotModel[TPreview]):
-    slot_name__: ClassVar[str] = "preview"
-    typename__: Annotated[Literal['ImageAttachment'], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
-
-
-class ListPostsResultPostsOwnerSlot[TOwner](GQLSlotModel[TOwner]):
-    slot_name__: ClassVar[str] = "owner"
-    typename__: Annotated[Literal['TeamOwner', 'UserOwner'], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
-
-
-class Post[TAttachment, TPreview, TOwner](GQLModel):
-    id: builtins.str
-    attachment: ListPostsResultPostsAttachmentSlot[TAttachment] | None
-    preview: ListPostsResultPostsPreviewSlot[TPreview] | None
-    owner: ListPostsResultPostsOwnerSlot[TOwner]
-
-
-class ListPostsResult[TAttachment, TPreview, TOwner](GQLModel):
-    posts: list[Post[TAttachment, TPreview, TOwner]]
 
 
 class AlbumTitleDataAlbum(GQLOpenModel):
@@ -175,10 +132,156 @@ LINK_HREF = LinkHref(
 )
 
 
-class ListPostsBound[TAttachment, TPreview, TOwner](runtime.GQLBoundOperation):
-    async def execute(self) -> ListPostsResult[TAttachment, TPreview, TOwner]:
+class ListPostsWithAttachmentAlbumTitleWithOwnerOwnerIdentityWithPreviewAlbumCoverResultPostsAttachmentSlotImageAttachment(GQLSlotModel[AlbumTitle]):
+    slot_name__: ClassVar[str] = "attachment"
+    typename__: Annotated[Literal["ImageAttachment"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
+
+
+class ListPostsWithAttachmentAlbumTitleWithOwnerOwnerIdentityWithPreviewAlbumCoverResultPostsAttachmentSlotLinkAttachment(GQLSlotModel[AlbumTitle]):
+    slot_name__: ClassVar[str] = "attachment"
+    typename__: Annotated[Literal["LinkAttachment"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
+
+
+type ListPostsWithAttachmentAlbumTitleWithOwnerOwnerIdentityWithPreviewAlbumCoverResultPostsAttachmentSlot = Annotated[ListPostsWithAttachmentAlbumTitleWithOwnerOwnerIdentityWithPreviewAlbumCoverResultPostsAttachmentSlotImageAttachment | ListPostsWithAttachmentAlbumTitleWithOwnerOwnerIdentityWithPreviewAlbumCoverResultPostsAttachmentSlotLinkAttachment, pydantic.Field(discriminator="typename__")]
+
+
+class ListPostsWithAttachmentAlbumTitleWithOwnerOwnerIdentityWithPreviewAlbumCoverResultPostsPreviewSlot(GQLSlotModel[AlbumCover]):
+    slot_name__: ClassVar[str] = "preview"
+    typename__: Annotated[Literal['ImageAttachment'], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
+
+
+class ListPostsWithAttachmentAlbumTitleWithOwnerOwnerIdentityWithPreviewAlbumCoverResultPostsOwnerSlot(GQLSlotModel[OwnerIdentity]):
+    slot_name__: ClassVar[str] = "owner"
+    typename__: Annotated[Literal['TeamOwner', 'UserOwner'], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
+
+
+class ListPostsWithAttachmentAlbumTitleWithOwnerOwnerIdentityWithPreviewAlbumCoverPost(GQLModel):
+    id: builtins.str
+    attachment: ListPostsWithAttachmentAlbumTitleWithOwnerOwnerIdentityWithPreviewAlbumCoverResultPostsAttachmentSlot | None
+    preview: ListPostsWithAttachmentAlbumTitleWithOwnerOwnerIdentityWithPreviewAlbumCoverResultPostsPreviewSlot | None
+    owner: ListPostsWithAttachmentAlbumTitleWithOwnerOwnerIdentityWithPreviewAlbumCoverResultPostsOwnerSlot
+
+
+class ListPostsWithAttachmentAlbumTitleWithOwnerOwnerIdentityWithPreviewAlbumCoverResult(GQLModel):
+    posts: list[ListPostsWithAttachmentAlbumTitleWithOwnerOwnerIdentityWithPreviewAlbumCoverPost]
+
+
+class ListPostsWithAttachmentAlbumCoverLinkHrefWithOwnerOwnerIdentityWithPreviewAlbumCoverResultPostsAttachmentSlotImageAttachment(GQLSlotModel[AlbumCover | LinkHref]):
+    slot_name__: ClassVar[str] = "attachment"
+    typename__: Annotated[Literal["ImageAttachment"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
+
+
+class ListPostsWithAttachmentAlbumCoverLinkHrefWithOwnerOwnerIdentityWithPreviewAlbumCoverResultPostsAttachmentSlotLinkAttachment(GQLSlotModel[AlbumCover | LinkHref]):
+    slot_name__: ClassVar[str] = "attachment"
+    typename__: Annotated[Literal["LinkAttachment"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
+
+
+type ListPostsWithAttachmentAlbumCoverLinkHrefWithOwnerOwnerIdentityWithPreviewAlbumCoverResultPostsAttachmentSlot = Annotated[ListPostsWithAttachmentAlbumCoverLinkHrefWithOwnerOwnerIdentityWithPreviewAlbumCoverResultPostsAttachmentSlotImageAttachment | ListPostsWithAttachmentAlbumCoverLinkHrefWithOwnerOwnerIdentityWithPreviewAlbumCoverResultPostsAttachmentSlotLinkAttachment, pydantic.Field(discriminator="typename__")]
+
+
+class ListPostsWithAttachmentAlbumCoverLinkHrefWithOwnerOwnerIdentityWithPreviewAlbumCoverResultPostsPreviewSlot(GQLSlotModel[AlbumCover]):
+    slot_name__: ClassVar[str] = "preview"
+    typename__: Annotated[Literal['ImageAttachment'], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
+
+
+class ListPostsWithAttachmentAlbumCoverLinkHrefWithOwnerOwnerIdentityWithPreviewAlbumCoverResultPostsOwnerSlot(GQLSlotModel[OwnerIdentity]):
+    slot_name__: ClassVar[str] = "owner"
+    typename__: Annotated[Literal['TeamOwner', 'UserOwner'], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
+
+
+class ListPostsWithAttachmentAlbumCoverLinkHrefWithOwnerOwnerIdentityWithPreviewAlbumCoverPost(GQLModel):
+    id: builtins.str
+    attachment: ListPostsWithAttachmentAlbumCoverLinkHrefWithOwnerOwnerIdentityWithPreviewAlbumCoverResultPostsAttachmentSlot | None
+    preview: ListPostsWithAttachmentAlbumCoverLinkHrefWithOwnerOwnerIdentityWithPreviewAlbumCoverResultPostsPreviewSlot | None
+    owner: ListPostsWithAttachmentAlbumCoverLinkHrefWithOwnerOwnerIdentityWithPreviewAlbumCoverResultPostsOwnerSlot
+
+
+class ListPostsWithAttachmentAlbumCoverLinkHrefWithOwnerOwnerIdentityWithPreviewAlbumCoverResult(GQLModel):
+    posts: list[ListPostsWithAttachmentAlbumCoverLinkHrefWithOwnerOwnerIdentityWithPreviewAlbumCoverPost]
+
+
+class ListPostsWithAttachmentAlbumTitleWithOwnerOwnerIdentityWithPreviewAlbumTitleResultPostsAttachmentSlotImageAttachment(GQLSlotModel[AlbumTitle]):
+    slot_name__: ClassVar[str] = "attachment"
+    typename__: Annotated[Literal["ImageAttachment"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
+
+
+class ListPostsWithAttachmentAlbumTitleWithOwnerOwnerIdentityWithPreviewAlbumTitleResultPostsAttachmentSlotLinkAttachment(GQLSlotModel[AlbumTitle]):
+    slot_name__: ClassVar[str] = "attachment"
+    typename__: Annotated[Literal["LinkAttachment"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
+
+
+type ListPostsWithAttachmentAlbumTitleWithOwnerOwnerIdentityWithPreviewAlbumTitleResultPostsAttachmentSlot = Annotated[ListPostsWithAttachmentAlbumTitleWithOwnerOwnerIdentityWithPreviewAlbumTitleResultPostsAttachmentSlotImageAttachment | ListPostsWithAttachmentAlbumTitleWithOwnerOwnerIdentityWithPreviewAlbumTitleResultPostsAttachmentSlotLinkAttachment, pydantic.Field(discriminator="typename__")]
+
+
+class ListPostsWithAttachmentAlbumTitleWithOwnerOwnerIdentityWithPreviewAlbumTitleResultPostsPreviewSlot(GQLSlotModel[AlbumTitle]):
+    slot_name__: ClassVar[str] = "preview"
+    typename__: Annotated[Literal['ImageAttachment'], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
+
+
+class ListPostsWithAttachmentAlbumTitleWithOwnerOwnerIdentityWithPreviewAlbumTitleResultPostsOwnerSlot(GQLSlotModel[OwnerIdentity]):
+    slot_name__: ClassVar[str] = "owner"
+    typename__: Annotated[Literal['TeamOwner', 'UserOwner'], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
+
+
+class ListPostsWithAttachmentAlbumTitleWithOwnerOwnerIdentityWithPreviewAlbumTitlePost(GQLModel):
+    id: builtins.str
+    attachment: ListPostsWithAttachmentAlbumTitleWithOwnerOwnerIdentityWithPreviewAlbumTitleResultPostsAttachmentSlot | None
+    preview: ListPostsWithAttachmentAlbumTitleWithOwnerOwnerIdentityWithPreviewAlbumTitleResultPostsPreviewSlot | None
+    owner: ListPostsWithAttachmentAlbumTitleWithOwnerOwnerIdentityWithPreviewAlbumTitleResultPostsOwnerSlot
+
+
+class ListPostsWithAttachmentAlbumTitleWithOwnerOwnerIdentityWithPreviewAlbumTitleResult(GQLModel):
+    posts: list[ListPostsWithAttachmentAlbumTitleWithOwnerOwnerIdentityWithPreviewAlbumTitlePost]
+
+
+class ListPostsWithNothingResultPostsAttachmentSlotImageAttachment(GQLSlotModel[Never]):
+    slot_name__: ClassVar[str] = "attachment"
+    typename__: Annotated[Literal["ImageAttachment"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
+
+
+class ListPostsWithNothingResultPostsAttachmentSlotLinkAttachment(GQLSlotModel[Never]):
+    slot_name__: ClassVar[str] = "attachment"
+    typename__: Annotated[Literal["LinkAttachment"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
+
+
+type ListPostsWithNothingResultPostsAttachmentSlot = Annotated[ListPostsWithNothingResultPostsAttachmentSlotImageAttachment | ListPostsWithNothingResultPostsAttachmentSlotLinkAttachment, pydantic.Field(discriminator="typename__")]
+
+
+class ListPostsWithNothingResultPostsPreviewSlot(GQLSlotModel[Never]):
+    slot_name__: ClassVar[str] = "preview"
+    typename__: Annotated[Literal['ImageAttachment'], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
+
+
+class ListPostsWithNothingResultPostsOwnerSlot(GQLSlotModel[Never]):
+    slot_name__: ClassVar[str] = "owner"
+    typename__: Annotated[Literal['TeamOwner', 'UserOwner'], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
+
+
+class ListPostsWithNothingPost(GQLModel):
+    id: builtins.str
+    attachment: ListPostsWithNothingResultPostsAttachmentSlot | None
+    preview: ListPostsWithNothingResultPostsPreviewSlot | None
+    owner: ListPostsWithNothingResultPostsOwnerSlot
+
+
+class ListPostsWithNothingResult(GQLModel):
+    posts: list[ListPostsWithNothingPost]
+
+
+class ListPostsBound[TResult](runtime.GQLBoundOperation, ABC):
+    @abstractmethod
+    async def execute(self) -> TResult:
+        ...
+
+
+class ListPostsWithAttachmentAlbumTitleWithOwnerOwnerIdentityWithPreviewAlbumCover(ListPostsBound[ListPostsWithAttachmentAlbumTitleWithOwnerOwnerIdentityWithPreviewAlbumCoverResult]):
+    # See: queries.py:63
+    exec_source__ = 'query ListPosts {\n  posts {\n    id\n    attachment {\n      __typename\n      ...AlbumTitle\n    }\n    preview {\n      __typename\n      ...AlbumCover\n    }\n    owner {\n      __typename\n      ...OwnerIdentity\n    }\n  }\n}\n\nfragment AlbumCover on ImageAttachment {\n  album {\n    cover\n  }\n}\n\nfragment AlbumTitle on ImageAttachment {\n  album {\n    title\n  }\n}\n\nfragment OwnerIdentity on Owner {\n  __typename\n  id\n  ... on UserOwner {\n    email\n  }\n  ... on TeamOwner {\n    memberCount\n  }\n}'
+    slot_handles__ = {"attachment": (slots.SlotHandle(ALBUM_TITLE, frozenset({'ImageAttachment'})),), "preview": (slots.SlotHandle(ALBUM_COVER, frozenset({'ImageAttachment'})),), "owner": (slots.SlotHandle(OWNER_IDENTITY, frozenset({'TeamOwner', 'UserOwner'})),)}
+    @override
+    async def execute(self) -> ListPostsWithAttachmentAlbumTitleWithOwnerOwnerIdentityWithPreviewAlbumCoverResult:
         return await API_CLIENT.query(
-            ListPostsResult[TAttachment, TPreview, TOwner],
+            ListPostsWithAttachmentAlbumTitleWithOwnerOwnerIdentityWithPreviewAlbumCoverResult,
             self.exec_source__,
             variables={**self.fragment_args__()},
             headers=self.headers,
@@ -186,28 +289,49 @@ class ListPostsBound[TAttachment, TPreview, TOwner](runtime.GQLBoundOperation):
         )
 
 
-class ListPostsWithAttachmentAlbumTitleWithOwnerOwnerIdentityWithPreviewAlbumCover(ListPostsBound[AlbumTitle, AlbumCover, OwnerIdentity]):
-    # See: queries.py:63
-    exec_source__ = 'query ListPosts {\n  posts {\n    id\n    attachment {\n      __typename\n      ...AlbumTitle\n    }\n    preview {\n      __typename\n      ...AlbumCover\n    }\n    owner {\n      __typename\n      ...OwnerIdentity\n    }\n  }\n}\n\nfragment AlbumCover on ImageAttachment {\n  album {\n    cover\n  }\n}\n\nfragment AlbumTitle on ImageAttachment {\n  album {\n    title\n  }\n}\n\nfragment OwnerIdentity on Owner {\n  __typename\n  id\n  ... on UserOwner {\n    email\n  }\n  ... on TeamOwner {\n    memberCount\n  }\n}'
-    slot_handles__ = {"attachment": (slots.SlotHandle(ALBUM_TITLE, frozenset({'ImageAttachment'})),), "preview": (slots.SlotHandle(ALBUM_COVER, frozenset({'ImageAttachment'})),), "owner": (slots.SlotHandle(OWNER_IDENTITY, frozenset({'TeamOwner', 'UserOwner'})),)}
-
-
-class ListPostsWithAttachmentAlbumCoverLinkHrefWithOwnerOwnerIdentityWithPreviewAlbumCover(ListPostsBound[AlbumCover | LinkHref, AlbumCover, OwnerIdentity]):
+class ListPostsWithAttachmentAlbumCoverLinkHrefWithOwnerOwnerIdentityWithPreviewAlbumCover(ListPostsBound[ListPostsWithAttachmentAlbumCoverLinkHrefWithOwnerOwnerIdentityWithPreviewAlbumCoverResult]):
     # See: queries.py:80
     exec_source__ = 'query ListPosts {\n  posts {\n    id\n    attachment {\n      __typename\n      ...AlbumCover\n      ...LinkHref\n    }\n    preview {\n      __typename\n      ...AlbumCover\n    }\n    owner {\n      __typename\n      ...OwnerIdentity\n    }\n  }\n}\n\nfragment AlbumCover on ImageAttachment {\n  album {\n    cover\n  }\n}\n\nfragment LinkHref on LinkAttachment {\n  href\n}\n\nfragment OwnerIdentity on Owner {\n  __typename\n  id\n  ... on UserOwner {\n    email\n  }\n  ... on TeamOwner {\n    memberCount\n  }\n}'
     slot_handles__ = {"attachment": (slots.SlotHandle(ALBUM_COVER, frozenset({'ImageAttachment'})), slots.SlotHandle(LINK_HREF, frozenset({'LinkAttachment'}))), "preview": (slots.SlotHandle(ALBUM_COVER, frozenset({'ImageAttachment'})),), "owner": (slots.SlotHandle(OWNER_IDENTITY, frozenset({'TeamOwner', 'UserOwner'})),)}
+    @override
+    async def execute(self) -> ListPostsWithAttachmentAlbumCoverLinkHrefWithOwnerOwnerIdentityWithPreviewAlbumCoverResult:
+        return await API_CLIENT.query(
+            ListPostsWithAttachmentAlbumCoverLinkHrefWithOwnerOwnerIdentityWithPreviewAlbumCoverResult,
+            self.exec_source__,
+            variables={**self.fragment_args__()},
+            headers=self.headers,
+            slot_handles=self.slot_handles__,
+        )
 
 
-class ListPostsWithAttachmentAlbumTitleWithOwnerOwnerIdentityWithPreviewAlbumTitle(ListPostsBound[AlbumTitle, AlbumTitle, OwnerIdentity]):
+class ListPostsWithAttachmentAlbumTitleWithOwnerOwnerIdentityWithPreviewAlbumTitle(ListPostsBound[ListPostsWithAttachmentAlbumTitleWithOwnerOwnerIdentityWithPreviewAlbumTitleResult]):
     # See: queries.py:85
     exec_source__ = 'query ListPosts {\n  posts {\n    id\n    attachment {\n      __typename\n      ...AlbumTitle\n    }\n    preview {\n      __typename\n      ...AlbumTitle\n    }\n    owner {\n      __typename\n      ...OwnerIdentity\n    }\n  }\n}\n\nfragment AlbumTitle on ImageAttachment {\n  album {\n    title\n  }\n}\n\nfragment OwnerIdentity on Owner {\n  __typename\n  id\n  ... on UserOwner {\n    email\n  }\n  ... on TeamOwner {\n    memberCount\n  }\n}'
     slot_handles__ = {"attachment": (slots.SlotHandle(ALBUM_TITLE, frozenset({'ImageAttachment'})),), "preview": (slots.SlotHandle(ALBUM_TITLE, frozenset({'ImageAttachment'})),), "owner": (slots.SlotHandle(OWNER_IDENTITY, frozenset({'TeamOwner', 'UserOwner'})),)}
+    @override
+    async def execute(self) -> ListPostsWithAttachmentAlbumTitleWithOwnerOwnerIdentityWithPreviewAlbumTitleResult:
+        return await API_CLIENT.query(
+            ListPostsWithAttachmentAlbumTitleWithOwnerOwnerIdentityWithPreviewAlbumTitleResult,
+            self.exec_source__,
+            variables={**self.fragment_args__()},
+            headers=self.headers,
+            slot_handles=self.slot_handles__,
+        )
 
 
-class ListPostsWithNothing(ListPostsBound[Never, Never, Never]):
+class ListPostsWithNothing(ListPostsBound[ListPostsWithNothingResult]):
     # See: queries.py:88
     exec_source__ = 'query ListPosts {\n  posts {\n    id\n    attachment {\n      __typename\n    }\n    preview {\n      __typename\n    }\n    owner {\n      __typename\n    }\n  }\n}'
     slot_handles__ = {"attachment": (), "preview": (), "owner": ()}
+    @override
+    async def execute(self) -> ListPostsWithNothingResult:
+        return await API_CLIENT.query(
+            ListPostsWithNothingResult,
+            self.exec_source__,
+            variables={**self.fragment_args__()},
+            headers=self.headers,
+            slot_handles=self.slot_handles__,
+        )
 
 
 class ListPosts(runtime.GQLTemplate):
@@ -219,14 +343,10 @@ class ListPosts(runtime.GQLTemplate):
     def bind(self, *, attachment: AlbumTitle | Sequence[AlbumTitle], preview: AlbumTitle | Sequence[AlbumTitle], owner: OwnerIdentity | Sequence[OwnerIdentity]) -> ListPostsWithAttachmentAlbumTitleWithOwnerOwnerIdentityWithPreviewAlbumTitle: ...
     @overload
     def bind(self, *, attachment: Sequence[AlbumCover | LinkHref], preview: AlbumCover | Sequence[AlbumCover], owner: OwnerIdentity | Sequence[OwnerIdentity]) -> ListPostsWithAttachmentAlbumCoverLinkHrefWithOwnerOwnerIdentityWithPreviewAlbumCover: ...
-    def bind(
-        self,
-        **fragments: slots.GQLFragment[pydantic.BaseModel] | Sequence[slots.GQLFragment[pydantic.BaseModel]],
-    ) -> runtime.GQLBoundOperation:
-        cls = _API_GQL_BIND_DISPATCH.get(slots.bind_key('ListPosts', fragments))
-        if cls is None:
+    def bind(self, *, attachment: slots.GQLFragment[pydantic.BaseModel] | Sequence[slots.GQLFragment[pydantic.BaseModel]] = (), preview: slots.GQLFragment[pydantic.BaseModel] | Sequence[slots.GQLFragment[pydantic.BaseModel]] = (), owner: slots.GQLFragment[pydantic.BaseModel] | Sequence[slots.GQLFragment[pydantic.BaseModel]] = ()) -> runtime.GQLBoundOperation:
+        if _API_GQL_BIND_DISPATCH.get(slots.bind_key('ListPosts', {'attachment': attachment, 'preview': preview, 'owner': owner})) is None:
             raise LookupError("unknown bind combination for ListPosts; every fragment a bind passes must be a discovered statement - check the call site, then regenerate the package")
-        return cls()
+        return _API_GQL_BIND_DISPATCH[slots.bind_key('ListPosts', {'attachment': attachment, 'preview': preview, 'owner': owner})]()
 
 
 _API_GQL_BIND_DISPATCH: dict[slots.BindKey, type[runtime.GQLBoundOperation]] = {

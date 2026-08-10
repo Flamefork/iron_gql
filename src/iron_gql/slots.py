@@ -225,25 +225,17 @@ type BindKey = tuple[str, tuple[tuple[str, tuple[str, ...]], ...]]
 def bind_key_shape(
     template: str, slots: Iterable[tuple[str, Iterable[str]]]
 ) -> BindKey:
-    # The one definition of a bind key's shape. Three layers build a key from
-    # three different materials — this module from runtime handles, codegen's
-    # renderer from the IR, codegen's uniqueness check from raw discovered
-    # statements — and any disagreement between them is invisible until a
-    # dispatch entry silently overwrites another, so the shape lives here and
-    # each layer only supplies its own names.
+    # The one definition of a bind key's shape, built here from runtime
+    # handles and by codegen's renderer from the IR. A slot passed nothing --
+    # omitted, or given an empty sequence -- drops out entirely, so the two
+    # spellings of "no fragments here" are one key; slots and their fragments
+    # sort, so a call's own order never reaches the key.
     #
-    # A slot omitted from the call and one passed an explicit empty sequence
-    # both mean "no fragments for this slot", so an empty entry drops out of
-    # the key entirely -- and every layer needs that, because each hands this
-    # function its own mix of the two spellings: the scan reads the
-    # `.bind(...)` call's own keywords, where `slot=[]` is an empty entry and
-    # an omitted slot is nothing at all; the renderer walks every slot of the
-    # template, so a slot the binding leaves unfilled is always an empty
-    # entry; and the generated `bind()` passes on whichever its own form
-    # produces -- only the keywords the caller wrote (`**fragments`), or every
-    # slot with the unfilled ones defaulted to `()`. Slots and each slot's
-    # fragments are sorted, so the key never depends on the order a call or a
-    # scan happened to produce.
+    # What this normalisation must never be asked to do is tell a *misspelled*
+    # slot from a real one, since it erases exactly the evidence: names are
+    # checked before a key is taken, by the generated signature at runtime and
+    # by `expand_binding` at generation. `tests/test_bind_contract.py` pins
+    # both halves.
     entries = [(slot, tuple(sorted(names))) for slot, names in slots]
     return (template, tuple((slot, names) for slot, names in sorted(entries) if names))
 

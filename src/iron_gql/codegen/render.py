@@ -1,4 +1,3 @@
-from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Literal
 
@@ -18,9 +17,7 @@ from iron_gql.codegen.ir import CollectedTemplate
 from iron_gql.codegen.ir import CollectedUnionAlias
 from iron_gql.codegen.ir import ImportRef
 from iron_gql.codegen.ir import bindings_by_template
-from iron_gql.codegen.ir import render_parametrized
 from iron_gql.codegen.ir import render_type_expr
-from iron_gql.codegen.ir import renders_inline_bind_body
 from iron_gql.codegen.ir import slot_roots
 from iron_gql.codegen.util import indent_block
 from iron_gql.naming import client_binding_name
@@ -63,12 +60,15 @@ THIRD_PARTY_MODULE_NAMES = ("pydantic",)
 CONTEXTLIB_NAMES = ("AbstractAsyncContextManager", "AbstractContextManager")
 GENERATOR_NAMES = ("AsyncGenerator", "Generator")
 ABC_NAMES = (*GENERATOR_NAMES, "Sequence")
+# A template's bound base declares `execute` and leaves it to each binding,
+# which is what `abc` spells: without it the declaration reads as a method
+# ignoring its own parameters.
+ABC_MODULE_NAMES = ("ABC", "abstractmethod")
 # `Self` is the return type of a binding's `with_args`; an unfilled slot
-# spells `Never` twice over -- as its node's phantom (`_slot_type_arg`) and as
-# the element type of its `bind()` parameter (`_bind_param`).
+# spells `Never` twice over -- as its node's phantom (`render_slot_class`) and
+# as the element type of its `bind()` parameter (`_bind_param`).
 TYPING_NAMES = (
     "Annotated",
-    "Any",
     "ClassVar",
     "Literal",
     "Never",
@@ -77,6 +77,16 @@ TYPING_NAMES = (
     "override",
 )
 IRON_GQL_NAMES = ("runtime", "slots")
+# The one name in this block the module never binds: it is a PEP 695 parameter
+# written *inside* a template's bound base (`render_template_bases`), where it
+# shadows a module-level model or enum spelled the same. `execute`'s variable
+# annotations are rendered in that scope, so a schema with an `input TResult`
+# used as a template variable makes the base read `TResult` as its own
+# parameter while every binding's override reads the model -- a package that
+# generates cleanly and then fails to type-check. Reserved rather than renamed
+# out of the way: every name a parameter could take is a name a schema can
+# spell, so only a claim closes the case.
+BOUND_RESULT_PARAM = "TResult"
 
 
 def _module_dict_name(package_name: str, kind: str) -> str:
@@ -100,7 +110,8 @@ _SLOT_BASES = f"{OPEN_MODEL_BASE_NAME}, slots.GQLSlotNode[TOffered]"
 # `TOffered` is a PEP 695 parameter that does nothing but pass through to the
 # contravariant phantom of `slots.GQLSlotNode`, which is where its variance
 # comes from: a node offering more fragments stays acceptable where fewer are
-# expected.
+# expected. Unlike `BOUND_RESULT_PARAM` it claims nothing: this base's body is
+# `pass`, so there is no module-level name it could shadow.
 SLOT_BASE = f"""\
 class {SLOT_MODEL_BASE_NAME}[TOffered]({_SLOT_BASES}):
     pass"""
@@ -160,8 +171,10 @@ def scaffold_claims(
         *((module, f"import {module}") for module in THIRD_PARTY_MODULE_NAMES),
         *((name, f"from contextlib import {name}") for name in CONTEXTLIB_NAMES),
         *((name, f"from collections.abc import {name}") for name in ABC_NAMES),
+        *((name, f"from abc import {name}") for name in ABC_MODULE_NAMES),
         *((name, f"from typing import {name}") for name in TYPING_NAMES),
         *((name, f"from iron_gql import {name}") for name in IRON_GQL_NAMES),
+        (BOUND_RESULT_PARAM, "the type parameter of a template's bound base"),
         (gql_fn_name, "the generated gql function"),
         (client_binding_name(package_name), "the generated client binding"),
         *(
@@ -184,10 +197,8 @@ def scaffold_claims(
     return {name: tuple(origins) for name, origins in claims.items()}
 
 
-def render_field(
-    field: CollectedField, params_of: Mapping[str, tuple[str, ...]]
-) -> str:
-    rendered_type = render_type_expr(field.rendered_type, params_of)
+def render_field(field: CollectedField) -> str:
+    rendered_type = render_type_expr(field.rendered_type)
     default_expr = field.default_expr
     if field.is_conditional and default_expr is None:
         default_expr = "None"
@@ -203,27 +214,22 @@ def render_field(
     return f"{field.name}: {rendered_type}"
 
 
-def render_pydantic_class(
-    model: CollectedModel, base: str, params_of: Mapping[str, tuple[str, ...]]
-) -> str:
-    rendered_fields = "\n".join(
-        render_field(field, params_of) for field in model.fields
-    )
-    declaration = render_parametrized(model.name, model.slot_params)
-    return f"class {declaration}({base}):\n    {indent_block(rendered_fields, '    ')}"
+def render_pydantic_class(model: CollectedModel, base: str) -> str:
+    rendered_fields = "\n".join(render_field(field) for field in model.fields)
+    return f"class {model.name}({base}):\n    {indent_block(rendered_fields, '    ')}"
 
 
-def render_slot_class(
-    model: CollectedModel, params_of: Mapping[str, tuple[str, ...]]
-) -> str:
-    # A node model is the phantom's one destination, so it declares exactly its
-    # own slot's parameter and hands it to the slot base.
-    (param,) = model.slot_params
+def render_slot_class(model: CollectedModel) -> str:
+    # A node model is the phantom's one destination, and it is written as a
+    # concrete base: the fragment classes readable here in the binding this
+    # model was copied for. The union of none of them is `Never` -- an
+    # unfilled slot's node is statically unreadable.
+    offered = " | ".join(model.offered_fragments) or "Never"
     body = "\n".join([
         f'slot_name__: ClassVar[str] = "{model.slot_name}"',
-        *(render_field(field, params_of) for field in model.fields),
+        *(render_field(field) for field in model.fields),
     ])
-    header = f"class {model.name}[{param}]({SLOT_MODEL_BASE_NAME}[{param}]):"
+    header = f"class {model.name}({SLOT_MODEL_BASE_NAME}[{offered}]):"
     return f"{header}\n    {indent_block(body, '    ')}"
 
 
@@ -242,6 +248,7 @@ def render_imports(
     # `scaffold_claims` already reserves the same names unconditionally for
     # exactly that reason. Only the mode-owned pairs are a choice, and
     # `ModeConfig` is what chooses.
+    abstract_imports = "\n".join(f"from abc import {name}" for name in ABC_MODULE_NAMES)
     abc_imports = "\n".join(
         f"from collections.abc import {name}"
         for name in ABC_NAMES
@@ -258,6 +265,7 @@ def render_imports(
     )
     return f"""\
 {stdlib_imports}
+{abstract_imports}
 {abc_imports}
 {contextlib_imports}
 {typing_imports}
@@ -295,17 +303,7 @@ class {MODEL_BASE_NAME}(pydantic.BaseModel):
         ),
         extra="forbid",
         validate_default=True,
-    )
-
-    # A template's result model is subscripted with its slots' offered
-    # fragments (e.g. `GetAttachmentResult[ImageParts | NodeId]`), which
-    # builds and caches a genuine subclass rather than reusing the base -- the
-    # override below keeps that subclass's name, and so every ValidationError
-    # title raised through it, on the plain model name.
-    @classmethod
-    @override
-    def model_parametrized_name(cls, params: tuple[type[Any], ...]) -> str:
-        return cls.__name__"""
+    )"""
 
 
 def render_fragments(fragments: list[CollectedFragment]) -> list[str]:
@@ -524,8 +522,10 @@ def render_package(
     # itself is also what fragment handles derive from. The open base exists
     # exactly when some model validates inside a slot or fragment subtree. A
     # template always has at least one slot (that is what makes it a template),
-    # so its slot model(s) already make `uses_slot_models` true.
-    uses_slot_models = next(slot_roots(collected.result_artifacts), None) is not None
+    # so its slot model(s) already make `uses_slot_models` true -- whether they
+    # stand among the shared artifacts or among a binding's own copies.
+    rendered_artifacts = (*collected.result_artifacts, *collected.binding_artifacts)
+    uses_slot_models = next(slot_roots(rendered_artifacts), None) is not None
     uses_open_models = bool(collected.open_model_names)
     sections = [
         # The slot model base is the one multi-base shape a module can
@@ -546,10 +546,17 @@ def render_package(
             render_operations(collected.operations, package_name, mode_config)
         ),
         "\n\n\n".join(render_fragments(collected.fragments)),
+        # Between the handles and the bindings, the one section whose
+        # position is forced: a node model names its binding's fragment
+        # classes in its base, and a binding names its result model in its
+        # own -- and a base, unlike every other reference the module makes, is
+        # evaluated where it is written rather than left a string by
+        # `from __future__ import annotations`.
         "\n\n\n".join(
-            render_template_bases(collected.templates, package_name, mode_config)
+            render_artifacts(collected.binding_artifacts, collected.open_model_names)
         ),
-        "\n\n\n".join(render_bindings(collected.bindings)),
+        "\n\n\n".join(render_template_bases(collected.templates, mode_config)),
+        "\n\n\n".join(render_bindings(collected.bindings, package_name, mode_config)),
         "\n\n\n".join(
             render_templates(collected.templates, collected.bindings, package_name)
         ),
@@ -569,14 +576,6 @@ def render_package(
 def render_artifacts(
     artifacts: list[CollectedArtifact], open_model_names: frozenset[str]
 ) -> list[str]:
-    # One map for the whole group: an artifact declares its parameters in its
-    # own header and every reference to it -- from a field, from a union
-    # variant -- repeats them, so both sides read the same entry.
-    params_of = {
-        artifact.name: artifact.slot_params
-        for artifact in artifacts
-        if artifact.slot_params
-    }
     rendered: list[str] = []
     for artifact in artifacts:
         match artifact:
@@ -586,14 +585,11 @@ def render_artifacts(
                     if artifact.name in open_model_names
                     else MODEL_BASE_NAME
                 )
-                rendered.append(render_pydantic_class(artifact, base, params_of))
+                rendered.append(render_pydantic_class(artifact, base))
             case CollectedModel():
-                rendered.append(render_slot_class(artifact, params_of))
+                rendered.append(render_slot_class(artifact))
             case CollectedUnionAlias():
-                declaration = render_parametrized(artifact.name, artifact.slot_params)
-                rendered.append(
-                    f"type {declaration} = {artifact.type_expr_with(params_of)}"
-                )
+                rendered.append(f"type {artifact.name} = {artifact.type_expr}")
     return rendered
 
 
@@ -624,16 +620,8 @@ def _render_execute(
     # differ only in where the document text comes from, what fills `variables`
     # and whether a validation context rides along -- never in how a
     # subscription is shaped or which client method answers it.
-    if is_subscription:
-        # A subscription's execute hands back the context manager the client
-        # returns, so it is never awaited in either mode.
-        async_kw, await_kw = "", ""
-        return_type = f"{mode.stream_context}[{mode.generator}[{result_type}]]"
-        client_method = "subscribe"
-    else:
-        async_kw, await_kw = mode.async_kw, mode.await_kw
-        return_type = result_type
-        client_method = "query"
+    await_kw = "" if is_subscription else mode.await_kw
+    client_method = "subscribe" if is_subscription else "query"
     body = "\n".join([
         f"return {await_kw}{client_binding_name(package_name)}.{client_method}(",
         f"    {result_type},",
@@ -643,10 +631,37 @@ def _render_execute(
         *(f"    {kwarg}," for kwarg in extra_kwargs),
         ")",
     ])
+    return _render_execute_signature(
+        result_type=result_type,
+        is_subscription=is_subscription,
+        variables=variables,
+        mode=mode,
+        body=body,
+    )
+
+
+def _render_execute_signature(
+    *,
+    result_type: str,
+    is_subscription: bool,
+    variables: tuple[CollectedOperationVar, ...],
+    mode: ModeConfig,
+    body: str,
+    decorator: str = "",
+) -> str:
+    # A subscription's execute hands back the context manager the client
+    # returns, so it is never awaited and never declared async in either mode.
+    if is_subscription:
+        async_kw = ""
+        return_type = f"{mode.stream_context}[{mode.generator}[{result_type}]]"
+    else:
+        async_kw = mode.async_kw
+        return_type = result_type
     signature_line = (
         f"{async_kw}def execute({_execute_signature(variables)}) -> {return_type}:"
     )
-    return f"{signature_line}\n    {indent_block(body, '    ')}"
+    lines = [*([decorator] if decorator else []), signature_line]
+    return "\n".join([*lines[:-1], f"{lines[-1]}\n    {indent_block(body, '    ')}"])
 
 
 def render_operations(
@@ -675,54 +690,52 @@ def render_operations(
     return rendered
 
 
-def _template_type_params(template: CollectedTemplate) -> str:
-    return ", ".join(slot.type_param for slot in template.slots)
-
-
-def _render_template_execute(
-    template: CollectedTemplate, package_name: str, mode: ModeConfig
-) -> str:
-    return _render_execute(
-        # One expression serves as both the annotation and the class handed to
-        # the client: subscripting a generic result model with the base's own
-        # type parameters builds and caches a concrete subclass, not the base
-        # class itself — the `GQLModel` scaffold's `model_parametrized_name`
-        # override keeps that subclass's name, and validation with it, on the
-        # bare result name.
-        result_type=f"{template.result_type}[{_template_type_params(template)}]",
-        is_subscription=template.is_subscription,
-        variables=template.variables,
-        source_expr="self.exec_source__",
-        # A template's own variables plus whatever the binding's fragments
-        # required — pinned per binding via `with_args`/`with_args__`, read
-        # back here through the shared `fragment_args__()` accessor so
-        # `execute` stays identical across every binding of one template.
-        variables_expr=_variables_expr(template.variables, "**self.fragment_args__()"),
-        extra_kwargs=("slot_handles=self.slot_handles__",),
-        package_name=package_name,
-        mode=mode,
-    )
-
-
 def render_template_bases(
-    templates: list[CollectedTemplate], package_name: str, mode: ModeConfig
+    templates: list[CollectedTemplate], mode: ModeConfig
 ) -> list[str]:
-    # A template is not executable on its own — only a binding of it (below)
-    # pins `exec_source__`/`slot_handles__` to concrete values — but `execute`
-    # is identical across every binding of one template, so it lives once here
-    # and every binding subclasses this.
+    # A template is not executable on its own -- only a binding of it (below)
+    # pins `exec_source__`/`slot_handles__` and its own result type -- so what
+    # lives here is the shape every binding of one template shares: one type
+    # parameter, the result, and the `execute` signature written against it.
+    #
+    # The parameter is the *result*, not one phantom per slot. Slot phantoms
+    # belong to the models, which each binding pins concretely; a parameter per
+    # slot had to be threaded through every model on the way to a node, which
+    # is what made those models generic -- and a generic pydantic model is not
+    # picklable, leaks its parameter names into the JSON schema, and answers
+    # `isinstance` against a specialization nobody wrote. One parameter, at the
+    # level where callers actually need it: a helper generic over
+    # `{Operation}Bound[TResult]` still takes any binding of the template and
+    # hands its caller back the concrete result.
     rendered: list[str] = []
     for template in templates:
-        # One phantom parameter per slot, in document order: a binding fills
-        # each with the fragment classes readable at that slot, and `execute`
-        # hands them on to the result model.
+        # The parameter carries no bound: the base never validates anything
+        # itself -- `execute` is a declaration here -- and a bound would force
+        # every caller writing a helper over `{Operation}Bound[TResult]` to
+        # spell the generated model base in their own signature.
         header = (
-            f"class {template.bound_base_name}[{_template_type_params(template)}]"
-            "(runtime.GQLBoundOperation):"
+            f"class {template.bound_base_name}[{BOUND_RESULT_PARAM}]"
+            "(runtime.GQLBoundOperation, ABC):"
         )
-        body = _render_template_execute(template, package_name, mode)
+        body = _render_template_execute_stub(template, mode)
         rendered.append(f"{header}\n    {indent_block(body, '    ')}")
     return rendered
+
+
+def _render_template_execute_stub(template: CollectedTemplate, mode: ModeConfig) -> str:
+    # The signature a caller sees on the base, with the body left to each
+    # binding: only a binding knows which result model answers for it.
+    return _render_execute_signature(
+        result_type=BOUND_RESULT_PARAM,
+        is_subscription=template.is_subscription,
+        variables=template.variables,
+        mode=mode,
+        # `...` rather than a raise: this is a declaration, and `abstractmethod`
+        # is what tells a reader -- and the type checker -- that the parameters
+        # are named for the implementations rather than ignored here.
+        body="...",
+        decorator="@abstractmethod",
+    )
 
 
 def _slot_handle_expr(handle: CollectedSlotHandle) -> str:
@@ -800,24 +813,14 @@ def _render_with_args(binding: CollectedBinding) -> str | None:
     ])
 
 
-def _slot_type_arg(binding_slot: CollectedBindingSlot) -> str:
-    # The phantom: the classes of every fragment readable at this slot in this
-    # binding (what the bind named, plus what those fragments spread at their
-    # own root level). The union of zero readable fragments is Never -- an
-    # unfilled slot's node is statically unreadable.
-    if not binding_slot.readable_handles:
-        return "Never"
-    return " | ".join(
-        handle.fragment.class_name for handle in binding_slot.readable_handles
-    )
-
-
-def render_bindings(bindings: list[CollectedBinding]) -> list[str]:
+def render_bindings(
+    bindings: list[CollectedBinding], package_name: str, mode: ModeConfig
+) -> list[str]:
     rendered: list[str] = []
     for binding in bindings:
-        type_args = ", ".join(_slot_type_arg(bslot) for bslot in binding.slots)
         class_expr = (
-            f"{binding.class_name}({binding.template.bound_base_name}[{type_args}])"
+            f"{binding.class_name}"
+            f"({binding.template.bound_base_name}[{binding.result_type}])"
         )
         header = f"class {class_expr}:"
         body_lines = [
@@ -838,9 +841,36 @@ def render_bindings(bindings: list[CollectedBinding]) -> list[str]:
                 f"required_arg_names__ = frozenset({{{required_literal}}})",
                 with_args,
             ])
+        # `execute` is written per binding rather than once on the base: the
+        # class handed to the client is this binding's own result model, and a
+        # body inherited from a generic base is evaluated with the base's own
+        # type parameter -- Python substitutes nothing there, so the client
+        # would receive the TypeVar itself.
+        body_lines.append(
+            "@override\n" + _render_binding_execute(binding, package_name, mode)
+        )
         body = "\n".join(body_lines)
         rendered.append(f"{header}\n    {indent_block(body, '    ')}")
     return rendered
+
+
+def _render_binding_execute(
+    binding: CollectedBinding, package_name: str, mode: ModeConfig
+) -> str:
+    template = binding.template
+    return _render_execute(
+        result_type=binding.result_type,
+        is_subscription=template.is_subscription,
+        variables=template.variables,
+        source_expr="self.exec_source__",
+        # A template's own variables plus whatever the binding's fragments
+        # required -- pinned per binding via `with_args`/`with_args__`, read
+        # back here through the shared `fragment_args__()` accessor.
+        variables_expr=_variables_expr(template.variables, "**self.fragment_args__()"),
+        extra_kwargs=("slot_handles=self.slot_handles__",),
+        package_name=package_name,
+        mode=mode,
+    )
 
 
 def _bind_key_tuple(binding: CollectedBinding) -> BindKey:
@@ -974,18 +1004,35 @@ def _bind_lookup_error_line(template_class_name: str) -> str:
 
 
 def _bind_fallback(template: CollectedTemplate, package_name: str) -> str:
+    # The implementation under the overload stubs. Its parameters are the
+    # template's own slots, spelled out, rather than `**fragments`: a keyword
+    # that names no slot is then rejected by the interpreter itself, at the
+    # call, with the name it was written as. Collected into `**fragments` it
+    # reached `bind_key`, where a slot passed nothing is normalised away --
+    # so a misspelled slot passed nothing produced the key of a call that
+    # named nothing at all, and answered with whatever binding that is.
     dispatch_name = _module_dict_name(package_name, "BIND_DISPATCH")
     handle_type = "slots.GQLFragment[pydantic.BaseModel]"
-    bind_key_expr = f"slots.bind_key({template.class_name!r}, fragments)"
+    params = ", ".join(
+        f"{slot.python_name}: {handle_type} | Sequence[{handle_type}] = ()"
+        for slot in template.slots
+    )
+    fragments_dict = ", ".join(
+        f"{slot.python_name!r}: {slot.python_name}" for slot in template.slots
+    )
+    bind_key_expr = f"slots.bind_key({template.class_name!r}, {{{fragments_dict}}})"
+    # The lookup is written twice rather than kept in a local: a local joins
+    # this method's keyword namespace, where a slot that snakes to the same
+    # spelling would land on it (see `_bind_lookup_error_line`). It did -- a
+    # `cls` local took the parameter of a slot called `cls`, and the module
+    # still ran, because the key is built before the name is rewritten, while
+    # a type checker read the rest of the body against the parameter's type.
+    # The dispatch is a dict, so the second lookup costs a hash.
     return "\n".join([
-        "def bind(",
-        "    self,",
-        f"    **fragments: {handle_type} | Sequence[{handle_type}],",
-        ") -> runtime.GQLBoundOperation:",
-        f"    cls = {dispatch_name}.get({bind_key_expr})",
-        "    if cls is None:",
+        f"def bind(self, *, {params}) -> runtime.GQLBoundOperation:",
+        f"    if {dispatch_name}.get({bind_key_expr}) is None:",
         _bind_lookup_error_line(template.class_name),
-        "    return cls()",
+        f"    return {dispatch_name}[{bind_key_expr}]()",
     ])
 
 
@@ -1009,33 +1056,62 @@ BIND_BODY_FREE_NAMES: tuple[tuple[str, str], ...] = (
 )
 
 
-def _bind_single_binding_impl(binding: CollectedBinding, package_name: str) -> str:
-    # The one-binding form (see `ir.renders_inline_bind_body`): bind() is
-    # rendered as a single typed signature, with a real body in place of the
-    # `...` an overload stub would have.
+def _bind_overloads(
+    template: CollectedTemplate, bindings: list[CollectedBinding]
+) -> list[str]:
+    # Every discovered binding's signature, and -- when they do not add up to
+    # the two `@overload` needs -- the signature for the calls no binding
+    # matches, returning `Never` because such a call raises `LookupError`.
     #
-    # The body still looks the call up in the dispatch table rather than
-    # constructing `binding.class_name` unconditionally: the union
-    # parameters can't count list elements, so a call statically shaped like
-    # this binding but actually a subset or a duplicate inside a list slot
-    # (see the README's "what the generator rejects" residual) must still
-    # raise `LookupError`, not silently return a binding whose fragments the
-    # caller never asked for.
-    dispatch_name = _module_dict_name(package_name, "BIND_DISPATCH")
-    params = ", ".join(_bind_param(bslot) for bslot in binding.slots)
-    fragments_dict = ", ".join(
-        f"{bslot.slot.python_name!r}: {bslot.slot.python_name}"
-        for bslot in binding.slots
+    # Writing the missing signature is what lets `bind()` have one form.
+    # A template with a single binding used to be rendered as one plain
+    # signature instead, and the difference was not confined to typing: that
+    # binding's filled slots became required parameters, so `bind()` raised
+    # `TypeError` before reaching the dispatch while `bind(slot=[])` reached
+    # the documented `LookupError` -- two answers to what README.md calls one
+    # thing, and which one a call got depended on how many combinations the
+    # tree happened to hold.
+    #
+    # The empty-call signature is written whenever no binding leaves every
+    # slot unfilled, however many bindings there are: a bare `bind()` must
+    # answer the same way whether the tree holds one combination or five, and
+    # `Never` is that answer wherever the combination is missing. It goes
+    # first because it is the narrower -- overload resolution takes the first
+    # match, and a filled binding's `Sequence[Fragment]` would otherwise
+    # swallow `[]`.
+    #
+    # The filled-call signature is the mirror image, and is only ever needed
+    # to reach two signatures: it accepts anything, so it must come last, and
+    # writing it while a real binding's stub is also present would overlap
+    # that stub with an incompatible return type.
+    # `@overload` needs at least this many signatures; pyright rejects a lone
+    # one, which is the whole reason the second form used to exist.
+    minimum_overloads = 2
+    discovered = _bind_overload_lines(bindings)
+    binds_nothing_combination = any(
+        all(not bslot.direct_fragments for bslot in binding.slots)
+        for binding in bindings
     )
-    bind_key_expr = (
-        f"slots.bind_key({binding.template.class_name!r}, {{{fragments_dict}}})"
+    stubs = (
+        discovered
+        if binds_nothing_combination
+        else [
+            _never_stub(template, empty=True),
+            *discovered,
+        ]
     )
-    return "\n".join([
-        f"def bind(self, *, {params}) -> {binding.class_name}:",
-        f"    if {dispatch_name}.get({bind_key_expr}) is None:",
-        _bind_lookup_error_line(binding.template.class_name),
-        f"    return {binding.class_name}()",
-    ])
+    if len(stubs) >= minimum_overloads:
+        return stubs
+    return [*stubs, _never_stub(template, empty=False)]
+
+
+def _never_stub(template: CollectedTemplate, *, empty: bool) -> str:
+    # The signature for calls this template has no binding for: every slot
+    # left empty, or every slot filled by anything at all.
+    handle = "slots.GQLFragment[pydantic.BaseModel]"
+    spelling = "Sequence[Never] = ()" if empty else f"{handle} | Sequence[{handle}]"
+    params = ", ".join(f"{slot.python_name}: {spelling}" for slot in template.slots)
+    return f"@overload\ndef bind(self, *, {params}) -> Never: ..."
 
 
 def render_templates(
@@ -1043,17 +1119,16 @@ def render_templates(
     bindings: list[CollectedBinding],
     package_name: str,
 ) -> list[str]:
-    # The bare per-template dispatcher: `bind()`'s overloads, keyed off every
-    # binding discovered for this template.
+    # The bare per-template dispatcher: one `@overload` per discovered
+    # binding over one implementation, whatever the number of bindings. The
+    # signatures say which combinations exist; the implementation answers
+    # every call the same way, by looking the combination up.
     grouped = bindings_by_template(bindings)
     rendered: list[str] = []
     for template in templates:
         template_bindings = grouped.get(template.class_name, [])
-        if renders_inline_bind_body(template_bindings):
-            body = _bind_single_binding_impl(template_bindings[0], package_name)
-        else:
-            overload_lines = _bind_overload_lines(template_bindings)
-            body = "\n".join([*overload_lines, _bind_fallback(template, package_name)])
+        overload_lines = _bind_overloads(template, template_bindings)
+        body = "\n".join([*overload_lines, _bind_fallback(template, package_name)])
         header = f"class {template.class_name}(runtime.GQLTemplate):"
         rendered.append(f"{header}\n    {indent_block(body, '    ')}")
     return rendered

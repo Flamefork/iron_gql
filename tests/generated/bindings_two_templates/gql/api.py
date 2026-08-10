@@ -6,11 +6,12 @@ from __future__ import annotations
 
 
 import datetime
+from abc import ABC
+from abc import abstractmethod
 from collections.abc import AsyncGenerator
 from collections.abc import Sequence
 from contextlib import AbstractAsyncContextManager
 from typing import Annotated
-from typing import Any
 from typing import ClassVar
 from typing import Literal
 from typing import Never
@@ -47,16 +48,6 @@ class GQLModel(pydantic.BaseModel):
         validate_default=True,
     )
 
-    # A template's result model is subscripted with its slots' offered
-    # fragments (e.g. `GetAttachmentResult[ImageParts | NodeId]`), which
-    # builds and caches a genuine subclass rather than reusing the base -- the
-    # override below keeps that subclass's name, and so every ValidationError
-    # title raised through it, on the plain model name.
-    @classmethod
-    @override
-    def model_parametrized_name(cls, params: tuple[type[Any], ...]) -> str:
-        return cls.__name__
-
 
 class GQLOpenModel(GQLModel):
     model_config = pydantic.ConfigDict(extra="ignore")
@@ -64,50 +55,6 @@ class GQLOpenModel(GQLModel):
 
 class GQLSlotModel[TOffered](GQLOpenModel, slots.GQLSlotNode[TOffered]):
     pass
-
-
-class GetAttachmentResultPostAttachmentSlotImageAttachment[TAttachment](GQLSlotModel[TAttachment]):
-    slot_name__: ClassVar[str] = "attachment"
-    typename__: Annotated[Literal["ImageAttachment"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
-
-
-class GetAttachmentResultPostAttachmentSlotLinkAttachment[TAttachment](GQLSlotModel[TAttachment]):
-    slot_name__: ClassVar[str] = "attachment"
-    typename__: Annotated[Literal["LinkAttachment"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
-
-
-type GetAttachmentResultPostAttachmentSlot[TAttachment] = Annotated[GetAttachmentResultPostAttachmentSlotImageAttachment[TAttachment] | GetAttachmentResultPostAttachmentSlotLinkAttachment[TAttachment], pydantic.Field(discriminator="typename__")]
-
-
-class PostWithAttachmentId[TAttachment](GQLModel):
-    id: builtins.str
-    attachment: GetAttachmentResultPostAttachmentSlot[TAttachment] | None
-
-
-class GetAttachmentResult[TAttachment](GQLModel):
-    post: PostWithAttachmentId[TAttachment] | None
-
-
-class GetHighlightResultPostHighlightSlotImageAttachment[THighlight](GQLSlotModel[THighlight]):
-    slot_name__: ClassVar[str] = "highlight"
-    typename__: Annotated[Literal["ImageAttachment"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
-
-
-class GetHighlightResultPostHighlightSlotLinkAttachment[THighlight](GQLSlotModel[THighlight]):
-    slot_name__: ClassVar[str] = "highlight"
-    typename__: Annotated[Literal["LinkAttachment"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
-
-
-type GetHighlightResultPostHighlightSlot[THighlight] = Annotated[GetHighlightResultPostHighlightSlotImageAttachment[THighlight] | GetHighlightResultPostHighlightSlotLinkAttachment[THighlight], pydantic.Field(discriminator="typename__")]
-
-
-class PostWithHighlightId[THighlight](GQLModel):
-    id: builtins.str
-    highlight: GetHighlightResultPostHighlightSlot[THighlight] | None
-
-
-class GetHighlightResult[THighlight](GQLModel):
-    post: PostWithHighlightId[THighlight] | None
 
 
 class ImagePartsData(GQLOpenModel):
@@ -124,52 +71,112 @@ IMAGE_PARTS = ImageParts(
 )
 
 
-class GetAttachmentBound[TAttachment](runtime.GQLBoundOperation):
-    async def execute(self, *, id: builtins.str) -> GetAttachmentResult[TAttachment]:
-        return await API_CLIENT.query(
-            GetAttachmentResult[TAttachment],
-            self.exec_source__,
-            variables={"id": id, **self.fragment_args__()},
-            headers=self.headers,
-            slot_handles=self.slot_handles__,
-        )
+class GetAttachmentWithAttachmentImagePartsResultPostAttachmentSlotImageAttachment(GQLSlotModel[ImageParts]):
+    slot_name__: ClassVar[str] = "attachment"
+    typename__: Annotated[Literal["ImageAttachment"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
 
 
-class GetHighlightBound[THighlight](runtime.GQLBoundOperation):
-    async def execute(self, *, id: builtins.str) -> GetHighlightResult[THighlight]:
-        return await API_CLIENT.query(
-            GetHighlightResult[THighlight],
-            self.exec_source__,
-            variables={"id": id, **self.fragment_args__()},
-            headers=self.headers,
-            slot_handles=self.slot_handles__,
-        )
+class GetAttachmentWithAttachmentImagePartsResultPostAttachmentSlotLinkAttachment(GQLSlotModel[ImageParts]):
+    slot_name__: ClassVar[str] = "attachment"
+    typename__: Annotated[Literal["LinkAttachment"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
 
 
-class GetAttachmentWithAttachmentImageParts(GetAttachmentBound[ImageParts]):
+type GetAttachmentWithAttachmentImagePartsResultPostAttachmentSlot = Annotated[GetAttachmentWithAttachmentImagePartsResultPostAttachmentSlotImageAttachment | GetAttachmentWithAttachmentImagePartsResultPostAttachmentSlotLinkAttachment, pydantic.Field(discriminator="typename__")]
+
+
+class GetAttachmentWithAttachmentImagePartsPostWithAttachmentId(GQLModel):
+    id: builtins.str
+    attachment: GetAttachmentWithAttachmentImagePartsResultPostAttachmentSlot | None
+
+
+class GetAttachmentWithAttachmentImagePartsResult(GQLModel):
+    post: GetAttachmentWithAttachmentImagePartsPostWithAttachmentId | None
+
+
+class GetHighlightWithHighlightImagePartsResultPostHighlightSlotImageAttachment(GQLSlotModel[ImageParts]):
+    slot_name__: ClassVar[str] = "highlight"
+    typename__: Annotated[Literal["ImageAttachment"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
+
+
+class GetHighlightWithHighlightImagePartsResultPostHighlightSlotLinkAttachment(GQLSlotModel[ImageParts]):
+    slot_name__: ClassVar[str] = "highlight"
+    typename__: Annotated[Literal["LinkAttachment"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
+
+
+type GetHighlightWithHighlightImagePartsResultPostHighlightSlot = Annotated[GetHighlightWithHighlightImagePartsResultPostHighlightSlotImageAttachment | GetHighlightWithHighlightImagePartsResultPostHighlightSlotLinkAttachment, pydantic.Field(discriminator="typename__")]
+
+
+class GetHighlightWithHighlightImagePartsPostWithHighlightId(GQLModel):
+    id: builtins.str
+    highlight: GetHighlightWithHighlightImagePartsResultPostHighlightSlot | None
+
+
+class GetHighlightWithHighlightImagePartsResult(GQLModel):
+    post: GetHighlightWithHighlightImagePartsPostWithHighlightId | None
+
+
+class GetAttachmentBound[TResult](runtime.GQLBoundOperation, ABC):
+    @abstractmethod
+    async def execute(self, *, id: builtins.str) -> TResult:
+        ...
+
+
+class GetHighlightBound[TResult](runtime.GQLBoundOperation, ABC):
+    @abstractmethod
+    async def execute(self, *, id: builtins.str) -> TResult:
+        ...
+
+
+class GetAttachmentWithAttachmentImageParts(GetAttachmentBound[GetAttachmentWithAttachmentImagePartsResult]):
     # See: queries.py:33
     exec_source__ = 'query GetAttachment($id: ID!) {\n  post(id: $id) {\n    id\n    attachment {\n      __typename\n      ...ImageParts\n    }\n  }\n}\n\nfragment ImageParts on ImageAttachment {\n  url\n}'
     slot_handles__ = {"attachment": (slots.SlotHandle(IMAGE_PARTS, frozenset({'ImageAttachment'})),)}
+    @override
+    async def execute(self, *, id: builtins.str) -> GetAttachmentWithAttachmentImagePartsResult:
+        return await API_CLIENT.query(
+            GetAttachmentWithAttachmentImagePartsResult,
+            self.exec_source__,
+            variables={"id": id, **self.fragment_args__()},
+            headers=self.headers,
+            slot_handles=self.slot_handles__,
+        )
 
 
-class GetHighlightWithHighlightImageParts(GetHighlightBound[ImageParts]):
+class GetHighlightWithHighlightImageParts(GetHighlightBound[GetHighlightWithHighlightImagePartsResult]):
     # See: queries.py:34
     exec_source__ = 'query GetHighlight($id: ID!) {\n  post(id: $id) {\n    id\n    highlight {\n      __typename\n      ...ImageParts\n    }\n  }\n}\n\nfragment ImageParts on ImageAttachment {\n  url\n}'
     slot_handles__ = {"highlight": (slots.SlotHandle(IMAGE_PARTS, frozenset({'ImageAttachment'})),)}
+    @override
+    async def execute(self, *, id: builtins.str) -> GetHighlightWithHighlightImagePartsResult:
+        return await API_CLIENT.query(
+            GetHighlightWithHighlightImagePartsResult,
+            self.exec_source__,
+            variables={"id": id, **self.fragment_args__()},
+            headers=self.headers,
+            slot_handles=self.slot_handles__,
+        )
 
 
 class GetAttachment(runtime.GQLTemplate):
-    def bind(self, *, attachment: ImageParts | Sequence[ImageParts]) -> GetAttachmentWithAttachmentImageParts:
+    @overload
+    def bind(self, *, attachment: Sequence[Never] = ()) -> Never: ...
+    @overload
+    def bind(self, *, attachment: ImageParts | Sequence[ImageParts]) -> GetAttachmentWithAttachmentImageParts: ...
+    def bind(self, *, attachment: slots.GQLFragment[pydantic.BaseModel] | Sequence[slots.GQLFragment[pydantic.BaseModel]] = ()) -> runtime.GQLBoundOperation:
         if _API_GQL_BIND_DISPATCH.get(slots.bind_key('GetAttachment', {'attachment': attachment})) is None:
             raise LookupError("unknown bind combination for GetAttachment; every fragment a bind passes must be a discovered statement - check the call site, then regenerate the package")
-        return GetAttachmentWithAttachmentImageParts()
+        return _API_GQL_BIND_DISPATCH[slots.bind_key('GetAttachment', {'attachment': attachment})]()
 
 
 class GetHighlight(runtime.GQLTemplate):
-    def bind(self, *, highlight: ImageParts | Sequence[ImageParts]) -> GetHighlightWithHighlightImageParts:
+    @overload
+    def bind(self, *, highlight: Sequence[Never] = ()) -> Never: ...
+    @overload
+    def bind(self, *, highlight: ImageParts | Sequence[ImageParts]) -> GetHighlightWithHighlightImageParts: ...
+    def bind(self, *, highlight: slots.GQLFragment[pydantic.BaseModel] | Sequence[slots.GQLFragment[pydantic.BaseModel]] = ()) -> runtime.GQLBoundOperation:
         if _API_GQL_BIND_DISPATCH.get(slots.bind_key('GetHighlight', {'highlight': highlight})) is None:
             raise LookupError("unknown bind combination for GetHighlight; every fragment a bind passes must be a discovered statement - check the call site, then regenerate the package")
-        return GetHighlightWithHighlightImageParts()
+        return _API_GQL_BIND_DISPATCH[slots.bind_key('GetHighlight', {'highlight': highlight})]()
 
 
 _API_GQL_BIND_DISPATCH: dict[slots.BindKey, type[runtime.GQLBoundOperation]] = {

@@ -9,8 +9,19 @@ type Post {
 
 union Attachment = ImageAttachment | LinkAttachment
 
+# `size` carries the one type a fragment variable can introduce that no other
+# position in the package mentions: an enum reaches the module only through
+# this binding's synthesized variable, so a collection order that reads
+# fragment variables after the enums are already listed emits `size: Size`
+# with no `Size` to go with it. Optional, so the variable stays a free rider
+# on the tests either side of it.
 type ImageAttachment {
-    url(width: Int!): String!
+    url(width: Int!, size: Size = SMALL): String!
+}
+
+enum Size {
+    SMALL
+    LARGE
 }
 
 type LinkAttachment {

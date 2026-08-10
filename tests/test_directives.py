@@ -1,27 +1,61 @@
+"""`@skip`/`@include`, as one table over one package.
+
+Every row here used to be its own committed package with its own three-field
+schema -- seventeen of them, differing in which field was conditional. The
+axes are the directive (`include`/`skip`), what the condition is (a variable,
+a literal, two variables in combination), and what it guards (a field, an
+inline fragment, a nested object, a list, a camel-cased name). Crossing them
+on one schema is what makes a missing row visible; seventeen near-identical
+schemas only made each row look covered.
+"""
+
+from collections.abc import AsyncIterator
+
+import pytest
 from graphql import GraphQLResolveInfo
 from pytest_httpserver import HTTPServer
 
+from tests.conftest import Resolvers
 from tests.conftest import generated_package
 from tests.conftest import gql_server
 
-generated_package(
-    "directives_include_skip",
-    schema="""
-    type Query {
-        user(id: ID!): User
-    }
-    type User {
-        name: String!
-        email: String!
-        phone: String!
-    }
-    """,
-    queries='''
-    from tests.generated.directives_include_skip.gql.api import api_gql
+PACKAGE = "directives"
 
-    get_user = api_gql(
+# One schema, wide enough for every row. `nullableName` is its own field
+# rather than a nullability the schema flips per package: a row that asks what
+# a directive does to an already-nullable field is a different cell, not a
+# different schema.
+SCHEMA = """
+type Query {
+    user(id: ID): User
+}
+
+type User {
+    id: ID!
+    name: String!
+    nullableName: String
+    email: String!
+    phone: String!
+    firstName: String!
+    tags: [String]!
+    address: Address!
+}
+
+type Address {
+    city: String!
+    zip: String!
+}
+"""
+
+generated_package(
+    PACKAGE,
+    schema=SCHEMA,
+    queries='''
+    from tests.generated.directives.gql.api import api_gql
+
+    include_skip = api_gql(
         """
-        query GetUser($id: ID!, $withEmail: Boolean!, $skipPhone: Boolean!) {
+        query IncludeSkip($id: ID!, $withEmail: Boolean!, $skipPhone: Boolean!) {
             user(id: $id) {
                 name
                 email @include(if: $withEmail)
@@ -30,26 +64,10 @@ generated_package(
         }
         """
     )
-    ''',
-)
 
-generated_package(
-    "directives_include_non_null",
-    schema="""
-    type Query {
-        user: User
-    }
-    type User {
-        id: ID!
-        name: String!
-    }
-    """,
-    queries='''
-    from tests.generated.directives_include_non_null.gql.api import api_gql
-
-    get_user = api_gql(
+    include_non_null = api_gql(
         """
-        query GetUser($withName: Boolean!) {
+        query IncludeNonNull($withName: Boolean!) {
             user {
                 id
                 name @include(if: $withName)
@@ -57,26 +75,10 @@ generated_package(
         }
         """
     )
-    ''',
-)
 
-generated_package(
-    "directives_skip_non_null",
-    schema="""
-    type Query {
-        user: User
-    }
-    type User {
-        id: ID!
-        name: String!
-    }
-    """,
-    queries='''
-    from tests.generated.directives_skip_non_null.gql.api import api_gql
-
-    get_user = api_gql(
+    skip_non_null = api_gql(
         """
-        query GetUser($skipName: Boolean!) {
+        query SkipNonNull($skipName: Boolean!) {
             user {
                 id
                 name @skip(if: $skipName)
@@ -84,54 +86,21 @@ generated_package(
         }
         """
     )
-    ''',
-)
 
-generated_package(
-    "directives_include_nullable",
-    schema="""
-    type Query {
-        user: User
-    }
-    type User {
-        id: ID!
-        name: String
-    }
-    """,
-    queries='''
-    from tests.generated.directives_include_nullable.gql.api import api_gql
-
-    get_user = api_gql(
+    include_nullable = api_gql(
         """
-        query GetUser($withName: Boolean!) {
+        query IncludeNullable($withName: Boolean!) {
             user {
                 id
-                name @include(if: $withName)
+                nullableName @include(if: $withName)
             }
         }
         """
     )
-    ''',
-)
 
-generated_package(
-    "directives_include_inline_fragment",
-    schema="""
-    type Query {
-        user: User
-    }
-    type User {
-        id: ID!
-        name: String!
-        email: String!
-    }
-    """,
-    queries='''
-    from tests.generated.directives_include_inline_fragment.gql.api import api_gql
-
-    get_user = api_gql(
+    include_inline_fragment = api_gql(
         """
-        query GetUser($withDetails: Boolean!) {
+        query IncludeInlineFragment($withDetails: Boolean!) {
             user {
                 id
                 ... @include(if: $withDetails) {
@@ -142,26 +111,10 @@ generated_package(
         }
         """
     )
-    ''',
-)
 
-generated_package(
-    "directives_conditional_and_unconditional",
-    schema="""
-    type Query {
-        user: User
-    }
-    type User {
-        id: ID!
-        name: String!
-    }
-    """,
-    queries='''
-    from tests.generated.directives_conditional_and_unconditional.gql.api import api_gql
-
-    get_user = api_gql(
+    conditional_and_unconditional = api_gql(
         """
-        query GetUser($withDetails: Boolean!) {
+        query ConditionalAndUnconditional($withDetails: Boolean!) {
             user {
                 id
                 name
@@ -172,26 +125,10 @@ generated_package(
         }
         """
     )
-    ''',
-)
 
-generated_package(
-    "directives_skip_literal_false",
-    schema="""
-    type Query {
-        user: User
-    }
-    type User {
-        id: ID!
-        name: String!
-    }
-    """,
-    queries='''
-    from tests.generated.directives_skip_literal_false.gql.api import api_gql
-
-    get_user = api_gql(
+    skip_literal_false = api_gql(
         """
-        query GetUser {
+        query SkipLiteralFalse {
             user {
                 id
                 name @skip(if: false)
@@ -199,26 +136,10 @@ generated_package(
         }
         """
     )
-    ''',
-)
 
-generated_package(
-    "directives_include_skip_same_field",
-    schema="""
-    type Query {
-        user: User
-    }
-    type User {
-        id: ID!
-        name: String!
-    }
-    """,
-    queries='''
-    from tests.generated.directives_include_skip_same_field.gql.api import api_gql
-
-    get_user = api_gql(
+    include_skip_same_field = api_gql(
         """
-        query GetUser($show: Boolean!, $hide: Boolean!) {
+        query IncludeSkipSameField($show: Boolean!, $hide: Boolean!) {
             user {
                 id
                 name @include(if: $show) @skip(if: $hide)
@@ -226,26 +147,10 @@ generated_package(
         }
         """
     )
-    ''',
-)
 
-generated_package(
-    "directives_include_camel_case",
-    schema="""
-    type Query {
-        user: User
-    }
-    type User {
-        id: ID!
-        firstName: String!
-    }
-    """,
-    queries='''
-    from tests.generated.directives_include_camel_case.gql.api import api_gql
-
-    get_user = api_gql(
+    include_camel_case = api_gql(
         """
-        query GetUser($withName: Boolean!) {
+        query IncludeCamelCase($withName: Boolean!) {
             user {
                 id
                 firstName @include(if: $withName)
@@ -253,26 +158,10 @@ generated_package(
         }
         """
     )
-    ''',
-)
 
-generated_package(
-    "directives_include_list",
-    schema="""
-    type Query {
-        user: User
-    }
-    type User {
-        id: ID!
-        tags: [String]!
-    }
-    """,
-    queries='''
-    from tests.generated.directives_include_list.gql.api import api_gql
-
-    get_user = api_gql(
+    include_list = api_gql(
         """
-        query GetUser($withTags: Boolean!) {
+        query IncludeList($withTags: Boolean!) {
             user {
                 id
                 tags @include(if: $withTags)
@@ -280,26 +169,10 @@ generated_package(
         }
         """
     )
-    ''',
-)
 
-generated_package(
-    "directives_include_literal_true",
-    schema="""
-    type Query {
-        user: User
-    }
-    type User {
-        id: ID!
-        name: String!
-    }
-    """,
-    queries='''
-    from tests.generated.directives_include_literal_true.gql.api import api_gql
-
-    get_user = api_gql(
+    include_literal_true = api_gql(
         """
-        query GetUser {
+        query IncludeLiteralTrue {
             user {
                 id
                 name @include(if: true)
@@ -307,30 +180,10 @@ generated_package(
         }
         """
     )
-    ''',
-)
 
-generated_package(
-    "directives_include_nested_object",
-    schema="""
-    type Query {
-        user: User
-    }
-    type User {
-        id: ID!
-        address: Address!
-    }
-    type Address {
-        city: String!
-        zip: String!
-    }
-    """,
-    queries='''
-    from tests.generated.directives_include_nested_object.gql.api import api_gql
-
-    get_user = api_gql(
+    include_nested_object = api_gql(
         """
-        query GetUser($withAddress: Boolean!) {
+        query IncludeNestedObject($withAddress: Boolean!) {
             user {
                 id
                 address @include(if: $withAddress) {
@@ -341,27 +194,10 @@ generated_package(
         }
         """
     )
-    ''',
-)
 
-generated_package(
-    "directives_shared_variable",
-    schema="""
-    type Query {
-        user: User
-    }
-    type User {
-        id: ID!
-        email: String!
-        phone: String!
-    }
-    """,
-    queries='''
-    from tests.generated.directives_shared_variable.gql.api import api_gql
-
-    get_user = api_gql(
+    shared_variable = api_gql(
         """
-        query GetUser($flag: Boolean!) {
+        query SharedVariable($flag: Boolean!) {
             user {
                 id
                 email @include(if: $flag)
@@ -370,26 +206,10 @@ generated_package(
         }
         """
     )
-    ''',
-)
 
-generated_package(
-    "directives_inline_literal_false",
-    schema="""
-    type Query {
-        user: User
-    }
-    type User {
-        id: ID!
-        name: String!
-    }
-    """,
-    queries='''
-    from tests.generated.directives_inline_literal_false.gql.api import api_gql
-
-    get_user = api_gql(
+    inline_literal_false = api_gql(
         """
-        query GetUser {
+        query InlineLiteralFalse {
             user {
                 id
                 ... @include(if: false) { name }
@@ -397,26 +217,10 @@ generated_package(
         }
         """
     )
-    ''',
-)
 
-generated_package(
-    "directives_contradictory_pair",
-    schema="""
-    type Query {
-        user: User
-    }
-    type User {
-        id: ID!
-        name: String!
-    }
-    """,
-    queries='''
-    from tests.generated.directives_contradictory_pair.gql.api import api_gql
-
-    get_user = api_gql(
+    contradictory_pair = api_gql(
         """
-        query GetUser($flag: Boolean!) {
+        query ContradictoryPair($flag: Boolean!) {
             user {
                 id
                 name @include(if: $flag) @skip(if: $flag)
@@ -424,27 +228,10 @@ generated_package(
         }
         """
     )
-    ''',
-)
 
-generated_package(
-    "directives_mixed_polarity_variable",
-    schema="""
-    type Query {
-        user: User
-    }
-    type User {
-        id: ID!
-        name: String!
-        email: String!
-    }
-    """,
-    queries='''
-    from tests.generated.directives_mixed_polarity_variable.gql.api import api_gql
-
-    get_user = api_gql(
+    mixed_polarity_variable = api_gql(
         """
-        query GetUser($a: Boolean!, $b: Boolean!) {
+        query MixedPolarityVariable($a: Boolean!, $b: Boolean!) {
             user {
                 id
                 ... @include(if: $b) { name }
@@ -453,26 +240,10 @@ generated_package(
         }
         """
     )
-    ''',
-)
 
-generated_package(
-    "directives_complementary_conjunctions",
-    schema="""
-    type Query {
-        user: User
-    }
-    type User {
-        id: ID!
-        name: String!
-    }
-    """,
-    queries='''
-    from tests.generated.directives_complementary_conjunctions.gql.api import api_gql
-
-    get_user = api_gql(
+    complementary_conjunctions = api_gql(
         """
-        query GetUser($a: Boolean!, $b: Boolean!) {
+        query ComplementaryConjunctions($a: Boolean!, $b: Boolean!) {
             user {
                 id
                 ... @include(if: $a) { ... @include(if: $b) { name } }
@@ -484,418 +255,238 @@ generated_package(
     ''',
 )
 
-from tests.generated.directives_complementary_conjunctions import (
-    queries as complementary_conjunctions_queries,
-)
-from tests.generated.directives_conditional_and_unconditional import (
-    queries as conditional_and_unconditional_queries,
-)
-from tests.generated.directives_contradictory_pair import (
-    queries as contradictory_pair_queries,
-)
-from tests.generated.directives_include_camel_case import (
-    queries as include_camel_case_queries,
-)
-from tests.generated.directives_include_inline_fragment import (
-    queries as include_inline_fragment_queries,
-)
-from tests.generated.directives_include_list import queries as include_list_queries
-from tests.generated.directives_include_literal_true import (
-    queries as include_literal_true_queries,
-)
-from tests.generated.directives_include_nested_object import (
-    queries as include_nested_object_queries,
-)
-from tests.generated.directives_include_non_null import (
-    queries as include_non_null_queries,
-)
-from tests.generated.directives_include_nullable import (
-    queries as include_nullable_queries,
-)
-from tests.generated.directives_include_skip import queries as include_skip_queries
-from tests.generated.directives_include_skip_same_field import (
-    queries as include_skip_same_field_queries,
-)
-from tests.generated.directives_inline_literal_false import (
-    queries as inline_literal_false_queries,
-)
-from tests.generated.directives_mixed_polarity_variable import (
-    queries as mixed_polarity_variable_queries,
-)
-from tests.generated.directives_shared_variable import (
-    queries as shared_variable_queries,
-)
-from tests.generated.directives_skip_literal_false import (
-    queries as skip_literal_false_queries,
-)
-from tests.generated.directives_skip_non_null import queries as skip_non_null_queries
+from tests.generated.directives import queries
+
+USER: dict[str, object] = {
+    "id": "user-1",
+    "name": "Bob",
+    "nullableName": "Bob",
+    "email": "bob@example.com",
+    "phone": "+34-123",
+    "firstName": "Bob",
+    "tags": ["vip", None],
+    "address": {"city": "Madrid", "zip": "28001"},
+}
 
 
-async def test_include_skip_directives(httpserver: HTTPServer):
-    def resolve_user(
-        _root: None, _info: GraphQLResolveInfo, *, id: str
-    ) -> dict[str, str]:
-        return {
-            "name": f"Bob {id}",
-            "email": f"{id}@example.com",
-            "phone": "+34-123",
-        }
-
-    async with gql_server(
-        httpserver,
-        "directives_include_skip",
-        {"Query": {"user": resolve_user}},
-    ):
-        visible = await include_skip_queries.get_user.execute(
-            id="u-1", with_email=True, skip_phone=False
-        )
-        assert visible.user is not None
-        assert visible.user.name == "Bob u-1"
-        assert visible.user.email == "u-1@example.com"
-        assert visible.user.phone == "+34-123"
-
-        hidden = await include_skip_queries.get_user.execute(
-            id="u-1", with_email=False, skip_phone=True
-        )
-        assert hidden.user is not None
-        assert hidden.user.name == "Bob u-1"
-        assert hidden.user.email is None
-        assert hidden.user.phone is None
+def _resolve_user(
+    _root: None, _info: GraphQLResolveInfo, **arguments: object
+) -> dict[str, object]:
+    # One resolver for every row: which fields reach the response is the
+    # directives' business, not the server's, so it always offers all of them
+    # and each row observes what came back. `**arguments` because only one row
+    # passes `id`.
+    identifier = arguments.get("id", USER["id"])
+    return {**USER, "id": identifier}
 
 
-async def test_include_on_non_null_field(httpserver: HTTPServer):
-    def resolve_user(_root: None, _info: GraphQLResolveInfo) -> dict[str, str]:
-        return {"id": "user-1", "name": "Bob"}
-
-    async with gql_server(
-        httpserver,
-        "directives_include_non_null",
-        {"Query": {"user": resolve_user}},
-    ):
-        included = await include_non_null_queries.get_user.execute(with_name=True)
-        assert included.user is not None
-        assert included.user.id == "user-1"
-        assert included.user.name == "Bob"
-
-        omitted = await include_non_null_queries.get_user.execute(with_name=False)
-        assert omitted.user is not None
-        assert omitted.user.id == "user-1"
-        assert omitted.user.name is None
+RESOLVERS: Resolvers = {"Query": {"user": _resolve_user}}
 
 
-async def test_skip_on_non_null_field(httpserver: HTTPServer):
-    def resolve_user(_root: None, _info: GraphQLResolveInfo) -> dict[str, str]:
-        return {"id": "user-1", "name": "Bob"}
-
-    async with gql_server(
-        httpserver,
-        "directives_skip_non_null",
-        {"Query": {"user": resolve_user}},
-    ):
-        kept = await skip_non_null_queries.get_user.execute(skip_name=False)
-        assert kept.user is not None
-        assert kept.user.id == "user-1"
-        assert kept.user.name == "Bob"
-
-        skipped = await skip_non_null_queries.get_user.execute(skip_name=True)
-        assert skipped.user is not None
-        assert skipped.user.id == "user-1"
-        assert skipped.user.name is None
+@pytest.fixture
+async def server(httpserver: HTTPServer) -> AsyncIterator[None]:
+    async with gql_server(httpserver, PACKAGE, RESOLVERS):
+        yield
 
 
-async def test_include_on_nullable_field(httpserver: HTTPServer):
-    def resolve_user(_root: None, _info: GraphQLResolveInfo) -> dict[str, str]:
-        return {"id": "user-1", "name": "Bob"}
+@pytest.mark.usefixtures("server")
+async def test_include_skip_directives():
+    visible = await queries.include_skip.execute(
+        id="u-1", with_email=True, skip_phone=False
+    )
+    assert visible.user is not None
+    assert visible.user.name == "Bob"
+    assert visible.user.email == "bob@example.com"
+    assert visible.user.phone == "+34-123"
 
-    async with gql_server(
-        httpserver,
-        "directives_include_nullable",
-        {"Query": {"user": resolve_user}},
-    ):
-        included = await include_nullable_queries.get_user.execute(with_name=True)
-        assert included.user is not None
-        assert included.user.name == "Bob"
-
-        omitted = await include_nullable_queries.get_user.execute(with_name=False)
-        assert omitted.user is not None
-        assert omitted.user.name is None
-
-
-async def test_include_on_inline_fragment(httpserver: HTTPServer):
-    def resolve_user(_root: None, _info: GraphQLResolveInfo) -> dict[str, str]:
-        return {"id": "user-1", "name": "Bob", "email": "bob@example.com"}
-
-    async with gql_server(
-        httpserver,
-        "directives_include_inline_fragment",
-        {"Query": {"user": resolve_user}},
-    ):
-        included = await include_inline_fragment_queries.get_user.execute(
-            with_details=True
-        )
-        assert included.user is not None
-        assert included.user.id == "user-1"
-        assert included.user.name == "Bob"
-        assert included.user.email == "bob@example.com"
-
-        omitted = await include_inline_fragment_queries.get_user.execute(
-            with_details=False
-        )
-        assert omitted.user is not None
-        assert omitted.user.id == "user-1"
-        assert omitted.user.name is None
-        assert omitted.user.email is None
+    hidden = await queries.include_skip.execute(
+        id="u-1", with_email=False, skip_phone=True
+    )
+    assert hidden.user is not None
+    assert hidden.user.name == "Bob"
+    assert hidden.user.email is None
+    assert hidden.user.phone is None
 
 
-async def test_field_both_conditional_and_unconditional(httpserver: HTTPServer):
-    def resolve_user(_root: None, _info: GraphQLResolveInfo) -> dict[str, str]:
-        return {"id": "user-1", "name": "Bob"}
+@pytest.mark.usefixtures("server")
+async def test_include_on_non_null_field():
+    included = await queries.include_non_null.execute(with_name=True)
+    assert included.user is not None
+    assert included.user.id == "user-1"
+    assert included.user.name == "Bob"
 
-    async with gql_server(
-        httpserver,
-        "directives_conditional_and_unconditional",
-        {"Query": {"user": resolve_user}},
-    ):
-        result = await conditional_and_unconditional_queries.get_user.execute(
-            with_details=False
-        )
-        assert result.user is not None
-        assert result.user.id == "user-1"
-        assert result.user.name == "Bob"
+    omitted = await queries.include_non_null.execute(with_name=False)
+    assert omitted.user is not None
+    assert omitted.user.id == "user-1"
+    assert omitted.user.name is None
 
 
-async def test_skip_with_literal_false(httpserver: HTTPServer):
-    def resolve_user(_root: None, _info: GraphQLResolveInfo) -> dict[str, str]:
-        return {"id": "user-1", "name": "Bob"}
+@pytest.mark.usefixtures("server")
+async def test_skip_on_non_null_field():
+    kept = await queries.skip_non_null.execute(skip_name=False)
+    assert kept.user is not None
+    assert kept.user.name == "Bob"
 
-    async with gql_server(
-        httpserver,
-        "directives_skip_literal_false",
-        {"Query": {"user": resolve_user}},
-    ):
-        result = await skip_literal_false_queries.get_user.execute()
-        assert result.user is not None
-        assert result.user.id == "user-1"
-        assert result.user.name == "Bob"
+    skipped = await queries.skip_non_null.execute(skip_name=True)
+    assert skipped.user is not None
+    assert skipped.user.name is None
 
 
-async def test_include_and_skip_on_same_field(httpserver: HTTPServer):
-    def resolve_user(_root: None, _info: GraphQLResolveInfo) -> dict[str, str]:
-        return {"id": "user-1", "name": "Bob"}
+@pytest.mark.usefixtures("server")
+async def test_include_on_nullable_field():
+    included = await queries.include_nullable.execute(with_name=True)
+    assert included.user is not None
+    assert included.user.nullable_name == "Bob"
 
-    async with gql_server(
-        httpserver,
-        "directives_include_skip_same_field",
-        {"Query": {"user": resolve_user}},
-    ):
-        visible = await include_skip_same_field_queries.get_user.execute(
-            show=True, hide=False
-        )
-        assert visible.user is not None
-        assert visible.user.name == "Bob"
-
-        omitted = await include_skip_same_field_queries.get_user.execute(
-            show=True, hide=True
-        )
-        assert omitted.user is not None
-        assert omitted.user.name is None
+    omitted = await queries.include_nullable.execute(with_name=False)
+    assert omitted.user is not None
+    assert omitted.user.nullable_name is None
 
 
-async def test_include_on_camel_case_field(httpserver: HTTPServer):
-    def resolve_user(_root: None, _info: GraphQLResolveInfo) -> dict[str, str]:
-        return {"id": "user-1", "firstName": "Bob"}
+@pytest.mark.usefixtures("server")
+async def test_include_on_inline_fragment():
+    included = await queries.include_inline_fragment.execute(with_details=True)
+    assert included.user is not None
+    assert included.user.name == "Bob"
+    assert included.user.email == "bob@example.com"
 
-    async with gql_server(
-        httpserver,
-        "directives_include_camel_case",
-        {"Query": {"user": resolve_user}},
-    ):
-        included = await include_camel_case_queries.get_user.execute(with_name=True)
-        assert included.user is not None
-        assert included.user.first_name == "Bob"
-
-        omitted = await include_camel_case_queries.get_user.execute(with_name=False)
-        assert omitted.user is not None
-        assert omitted.user.first_name is None
+    omitted = await queries.include_inline_fragment.execute(with_details=False)
+    assert omitted.user is not None
+    assert omitted.user.id == "user-1"
+    assert omitted.user.name is None
+    assert omitted.user.email is None
 
 
-async def test_include_on_non_null_list_of_nullable(httpserver: HTTPServer):
-    def resolve_user(
-        _root: None, _info: GraphQLResolveInfo
-    ) -> dict[str, str | list[str | None]]:
-        return {"id": "user-1", "tags": ["vip", None]}
-
-    async with gql_server(
-        httpserver,
-        "directives_include_list",
-        {"Query": {"user": resolve_user}},
-    ):
-        included = await include_list_queries.get_user.execute(with_tags=True)
-        assert included.user is not None
-        assert included.user.tags == ["vip", None]
-
-        omitted = await include_list_queries.get_user.execute(with_tags=False)
-        assert omitted.user is not None
-        assert omitted.user.tags is None
+@pytest.mark.usefixtures("server")
+async def test_field_both_conditional_and_unconditional():
+    result = await queries.conditional_and_unconditional.execute(with_details=False)
+    assert result.user is not None
+    assert result.user.id == "user-1"
+    assert result.user.name == "Bob"
 
 
-async def test_include_with_literal_true(httpserver: HTTPServer):
-    def resolve_user(_root: None, _info: GraphQLResolveInfo) -> dict[str, str]:
-        return {"id": "user-1", "name": "Bob"}
-
-    async with gql_server(
-        httpserver,
-        "directives_include_literal_true",
-        {"Query": {"user": resolve_user}},
-    ):
-        result = await include_literal_true_queries.get_user.execute()
-        assert result.user is not None
-        assert result.user.id == "user-1"
-        assert result.user.name == "Bob"
+@pytest.mark.usefixtures("server")
+async def test_skip_with_literal_false():
+    result = await queries.skip_literal_false.execute()
+    assert result.user is not None
+    assert result.user.id == "user-1"
+    assert result.user.name == "Bob"
 
 
-async def test_include_on_nested_object_field(httpserver: HTTPServer):
-    def resolve_user(
-        _root: None, _info: GraphQLResolveInfo
-    ) -> dict[str, str | dict[str, str]]:
-        return {
-            "id": "user-1",
-            "address": {"city": "Madrid", "zip": "28001"},
-        }
+@pytest.mark.usefixtures("server")
+async def test_include_and_skip_on_same_field():
+    visible = await queries.include_skip_same_field.execute(show=True, hide=False)
+    assert visible.user is not None
+    assert visible.user.name == "Bob"
 
-    async with gql_server(
-        httpserver,
-        "directives_include_nested_object",
-        {"Query": {"user": resolve_user}},
-    ):
-        included = await include_nested_object_queries.get_user.execute(
-            with_address=True
-        )
-        assert included.user is not None
-        assert included.user.address is not None
-        assert included.user.address.city == "Madrid"
-        assert included.user.address.zip == "28001"
-
-        omitted = await include_nested_object_queries.get_user.execute(
-            with_address=False
-        )
-        assert omitted.user is not None
-        assert omitted.user.address is None
+    omitted = await queries.include_skip_same_field.execute(show=True, hide=True)
+    assert omitted.user is not None
+    assert omitted.user.name is None
 
 
-async def test_inline_fragment_with_literal_false_is_statically_excluded(
-    httpserver: HTTPServer,
-):
+@pytest.mark.usefixtures("server")
+async def test_include_on_camel_case_field():
+    included = await queries.include_camel_case.execute(with_name=True)
+    assert included.user is not None
+    assert included.user.first_name == "Bob"
+
+    omitted = await queries.include_camel_case.execute(with_name=False)
+    assert omitted.user is not None
+    assert omitted.user.first_name is None
+
+
+@pytest.mark.usefixtures("server")
+async def test_include_on_non_null_list_of_nullable():
+    included = await queries.include_list.execute(with_tags=True)
+    assert included.user is not None
+    assert included.user.tags == ["vip", None]
+
+    omitted = await queries.include_list.execute(with_tags=False)
+    assert omitted.user is not None
+    assert omitted.user.tags is None
+
+
+@pytest.mark.usefixtures("server")
+async def test_include_with_literal_true():
+    result = await queries.include_literal_true.execute()
+    assert result.user is not None
+    assert result.user.id == "user-1"
+    assert result.user.name == "Bob"
+
+
+@pytest.mark.usefixtures("server")
+async def test_include_on_nested_object_field():
+    included = await queries.include_nested_object.execute(with_address=True)
+    assert included.user is not None
+    assert included.user.address is not None
+    assert included.user.address.city == "Madrid"
+    assert included.user.address.zip == "28001"
+
+    omitted = await queries.include_nested_object.execute(with_address=False)
+    assert omitted.user is not None
+    assert omitted.user.address is None
+
+
+@pytest.mark.usefixtures("server")
+async def test_inline_fragment_with_literal_false_is_statically_excluded():
     # `... @include(if: false)` cuts the whole subtree at generation time: the
     # model never grows a `name` field, and the query still executes.
-    def resolve_user(_root: None, _info: GraphQLResolveInfo) -> dict[str, str]:
-        return {"id": "user-1", "name": "Bob"}
-
-    async with gql_server(
-        httpserver,
-        "directives_inline_literal_false",
-        {"Query": {"user": resolve_user}},
-    ):
-        result = await inline_literal_false_queries.get_user.execute()
-        assert result.user is not None
-        assert result.user.id == "user-1"
-        assert "name" not in type(result.user).model_fields
+    result = await queries.inline_literal_false.execute()
+    assert result.user is not None
+    assert result.user.id == "user-1"
+    assert "name" not in type(result.user).model_fields
 
 
-async def test_contradictory_directive_pair_is_statically_excluded(
-    httpserver: HTTPServer,
-):
+@pytest.mark.usefixtures("server")
+async def test_contradictory_directive_pair_is_statically_excluded():
     # `@include(if: $flag) @skip(if: $flag)` can never both hold, whatever
     # $flag is: the field is statically excluded — no model field, and the
     # query executes at either value.
-    def resolve_user(_root: None, _info: GraphQLResolveInfo) -> dict[str, str]:
-        return {"id": "user-1", "name": "Bob"}
-
-    async with gql_server(
-        httpserver,
-        "directives_contradictory_pair",
-        {"Query": {"user": resolve_user}},
-    ):
-        result = await contradictory_pair_queries.get_user.execute(flag=True)
-        assert result.user is not None
-        assert result.user.id == "user-1"
-        assert "name" not in type(result.user).model_fields
+    result = await queries.contradictory_pair.execute(flag=True)
+    assert result.user is not None
+    assert result.user.id == "user-1"
+    assert "name" not in type(result.user).model_fields
 
 
-async def test_field_selected_only_between_variable_extremes(httpserver: HTTPServer):
+@pytest.mark.usefixtures("server")
+async def test_field_selected_only_between_variable_extremes():
     # $b guards `name` via @include and `email` via @skip, so no assignment
     # shows both fields at once: email exists only at $a=true, $b=false. The
     # generated model must still admit that state — dropping the field would
     # make `extra="forbid"` reject a valid response.
-    def resolve_user(_root: None, _info: GraphQLResolveInfo) -> dict[str, str]:
-        return {
-            "id": "user-1",
-            "name": "Bob",
-            "email": "bob@example.com",
-        }
+    with_email = await queries.mixed_polarity_variable.execute(a=True, b=False)
+    assert with_email.user is not None
+    assert with_email.user.email == "bob@example.com"
+    assert with_email.user.name is None
 
-    async with gql_server(
-        httpserver,
-        "directives_mixed_polarity_variable",
-        {"Query": {"user": resolve_user}},
-    ):
-        with_email = await mixed_polarity_variable_queries.get_user.execute(
-            a=True, b=False
-        )
-        assert with_email.user is not None
-        assert with_email.user.email == "bob@example.com"
-        assert with_email.user.name is None
-
-        with_name = await mixed_polarity_variable_queries.get_user.execute(
-            a=False, b=True
-        )
-        assert with_name.user is not None
-        assert with_name.user.name == "Bob"
-        assert with_name.user.email is None
+    with_name = await queries.mixed_polarity_variable.execute(a=False, b=True)
+    assert with_name.user is not None
+    assert with_name.user.name == "Bob"
+    assert with_name.user.email is None
 
 
-async def test_key_absent_between_complementary_conjunctions(httpserver: HTTPServer):
+@pytest.mark.usefixtures("server")
+async def test_key_absent_between_complementary_conjunctions():
     # `name` is selected at $a=$b=true and at $a=$b=false but at neither mixed
     # assignment, so the field must be optional even though both all-true and
     # all-false states show it.
-    def resolve_user(_root: None, _info: GraphQLResolveInfo) -> dict[str, str]:
-        return {"id": "user-1", "name": "Bob"}
+    both = await queries.complementary_conjunctions.execute(a=True, b=True)
+    assert both.user is not None
+    assert both.user.name == "Bob"
 
-    async with gql_server(
-        httpserver,
-        "directives_complementary_conjunctions",
-        {"Query": {"user": resolve_user}},
-    ):
-        both = await complementary_conjunctions_queries.get_user.execute(a=True, b=True)
-        assert both.user is not None
-        assert both.user.name == "Bob"
-
-        mixed = await complementary_conjunctions_queries.get_user.execute(
-            a=True, b=False
-        )
-        assert mixed.user is not None
-        assert mixed.user.name is None
+    mixed = await queries.complementary_conjunctions.execute(a=True, b=False)
+    assert mixed.user is not None
+    assert mixed.user.name is None
 
 
-async def test_shared_variable_in_include_and_skip(httpserver: HTTPServer):
-    def resolve_user(_root: None, _info: GraphQLResolveInfo) -> dict[str, str]:
-        return {
-            "id": "user-1",
-            "email": "bob@example.com",
-            "phone": "+34-123",
-        }
+@pytest.mark.usefixtures("server")
+async def test_shared_variable_in_include_and_skip():
+    enabled = await queries.shared_variable.execute(flag=True)
+    assert enabled.user is not None
+    assert enabled.user.email == "bob@example.com"
+    assert enabled.user.phone is None
 
-    async with gql_server(
-        httpserver,
-        "directives_shared_variable",
-        {"Query": {"user": resolve_user}},
-    ):
-        enabled = await shared_variable_queries.get_user.execute(flag=True)
-        assert enabled.user is not None
-        assert enabled.user.email == "bob@example.com"
-        assert enabled.user.phone is None
-
-        disabled = await shared_variable_queries.get_user.execute(flag=False)
-        assert disabled.user is not None
-        assert disabled.user.email is None
-        assert disabled.user.phone == "+34-123"
+    disabled = await queries.shared_variable.execute(flag=False)
+    assert disabled.user is not None
+    assert disabled.user.email is None
+    assert disabled.user.phone == "+34-123"

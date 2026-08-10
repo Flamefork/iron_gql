@@ -1,3 +1,4 @@
+import dataclasses
 import heapq
 import keyword
 from collections import defaultdict
@@ -16,13 +17,24 @@ from iron_gql.codegen.ir import ListRef
 from iron_gql.codegen.ir import NamedRef
 from iron_gql.codegen.ir import ScalarRef
 from iron_gql.codegen.ir import TypeRef
-from iron_gql.codegen.ir import bindings_by_template
 from iron_gql.codegen.ir import field_name_to_pascal
-from iron_gql.codegen.ir import renders_inline_bind_body
 from iron_gql.codegen.render import BIND_BODY_FREE_NAMES
 
 
 def type_tokens(typ: TypeRef) -> Iterator[str]:
+    # The tokens that tell two shapes of one GraphQL type apart. Nullability is
+    # one of them: a field a directive can withhold and the same field always
+    # present are different shapes of the same name, and leaving the
+    # distinction out of the tokens made the two collide under one detailed
+    # name rather than being generated as two models.
+    if typ.nullable:
+        # The trailing underscore is what makes the marker a boundary rather
+        # than a prefix that merges into the next token: every token below goes
+        # through `field_name_to_pascal`, which strips underscores, so `_` can
+        # occur in a token only as a separator this function wrote. Without it,
+        # a nullable `Foo` and a non-null type actually named `OptFoo` produce
+        # the same string and two different shapes collide under one name.
+        yield "Opt_"
     match typ:
         case ListRef(element=element):
             yield "List"
@@ -31,7 +43,7 @@ def type_tokens(typ: TypeRef) -> Iterator[str]:
             yield field_name_to_pascal(name)
         case ScalarRef(name_hint=hint):
             if hint is not None:
-                yield hint
+                yield field_name_to_pascal(hint)
 
 
 def _graphql_type_name(model: CollectedModel) -> str:
@@ -48,10 +60,14 @@ def _graphql_type_name(model: CollectedModel) -> str:
 
 
 def _model_type_name_tokens(model: CollectedModel) -> str:
+    # `rendered_type`, not `type_info`: a field a directive can withhold is
+    # rendered optional, and that is part of the shape the name has to
+    # distinguish. Reading the unconditional type made two models that differ
+    # only in what a directive guards collide under one name.
     return "".join(
         token
         for field in sorted(model.fields, key=lambda f: f.name)
-        for token in type_tokens(field.type_info)
+        for token in type_tokens(field.rendered_type)
     )
 
 
@@ -236,7 +252,6 @@ type ClaimKind = Literal[
     "template",
     "bound_base",
     "binding",
-    "type_param",
     "scaffold",
     "model",
     "enum",
@@ -269,17 +284,6 @@ def _fixed_name_claims(ir: CollectedPackageIR) -> Iterator[tuple[str, ClaimKind,
         )
         origin = f"the bound base of template '{template.class_name}' at {at}"
         yield template.bound_base_name, "bound_base", origin
-        for slot in template.slots:
-            # A PEP 695 type parameter is scoped to the class that declares
-            # it, so it shadows a module-level name of the same spelling
-            # inside every generic artifact this slot reaches -- silently, and
-            # with the wrong type. It pins its name for that reason, even
-            # though it never becomes a module-level binding itself.
-            origin = (
-                f"the type parameter of slot '{slot.name}' in template "
-                f"'{template.class_name}' at {at}"
-            )
-            yield slot.type_param, "type_param", origin
     for binding in ir.bindings:
         yield (
             binding.class_name,
@@ -326,38 +330,38 @@ def apply_rename(
                 existing = seen_models.get(renamed_model.name)
                 if existing is not None:
                     # Raw-name twins are rejected upfront by
-                    # `validate_collected_names`, so a collision here can only
-                    # come from the rename map converging two artifacts —
-                    # legal exactly for identical shapes of the same slot,
-                    # anything else is a rename-map bug.
+                    # `validate_collected_names`, so a collision here comes
+                    # from the rename map converging two artifacts -- legal
+                    # exactly for identical shapes of the same slot.
+                    #
+                    # Anything else is a *diagnosis*, not an internal
+                    # invariant. The detailed name concatenates field names
+                    # and type tokens with no separator, and every token has
+                    # its underscores stripped, so ordinary schemas collide:
+                    # `{a_b, c}` and `{a, b_c}` both spell `ABC`, a list of
+                    # `X` spells what a type named `ListX` spells. Reaching
+                    # this used to crash as if it were unreachable; a schema
+                    # the generator cannot name is the user's to hear about.
                     if (
                         existing.shape_key != renamed_model.shape_key
                         or existing.slot_name != renamed_model.slot_name
-                        or existing.slot_params != renamed_model.slot_params
                     ):
+                        name = renamed_model.name
                         msg = (
-                            f"rename collision on {renamed_model.name!r}:"
-                            " differing shapes"
+                            f"Two different selections derive the same "
+                            f"generated name {name!r}; alias one of the "
+                            f"fields so the two shapes are named apart"
                         )
-                        raise AssertionError(msg)
+                        raise GraphQLGenerationError([msg])
                     continue
                 seen_models[renamed_model.name] = renamed_model
                 renamed_result_artifacts.append(renamed_model)
             case CollectedUnionAlias():
                 renamed_result_artifacts.append(artifact.renamed(rename))
-    return CollectedPackageIR(
-        result_artifacts=renamed_result_artifacts,
-        input_artifacts=ir.input_artifacts,
-        operations=ir.operations,
-        fragments=ir.fragments,
-        templates=ir.templates,
-        bindings=ir.bindings,
-        enums=ir.enums,
-        # Open-model names pass through untouched: every one of them is pinned
-        # out of the rename map.
-        open_model_names=ir.open_model_names,
-        discovered_texts=ir.discovered_texts,
-    )
+    # Only the result artifacts move: open-model names are pinned out of the
+    # rename map, and the per-binding copies of the result models are cut
+    # afterwards, from the names this pass settles.
+    return dataclasses.replace(ir, result_artifacts=renamed_result_artifacts)
 
 
 def _is_usable_identifier(name: str) -> bool:
@@ -375,7 +379,7 @@ def _module_name_claims(
         for origin in scaffold[name]:
             yield name, "scaffold", origin
     yield from _fixed_name_claims(ir)
-    for artifact in (*ir.result_artifacts, *ir.input_artifacts):
+    for artifact in (*ir.result_artifacts, *ir.binding_artifacts, *ir.input_artifacts):
         yield artifact.name, "model", f"model '{artifact.name}'"
     for enum in ir.enums:
         yield enum.name, "enum", f"enum '{enum.name}'"
@@ -400,10 +404,7 @@ def validate_module_names(
     for name, entries in sorted(claims.items()):
         origins = [origin for _kind, origin in entries]
         kinds = {kind for kind, _origin in entries}
-        # Two templates naming a slot alike is not a clash: each type
-        # parameter is scoped to its own class, so they never share a
-        # namespace with each other -- only with the module-level names below.
-        if len(entries) > 1 and kinds != {"type_param"}:
+        if len(entries) > 1:
             message = f"Name '{name}' is claimed by {' and by '.join(origins)}"
             if "singleton" in kinds:
                 message += (
@@ -431,7 +432,6 @@ def _signature_claims(ir: CollectedPackageIR) -> Iterator[tuple[str, str, str]]:
     # binds or reads from an enclosing scope. A name is claimed only where the
     # renderer really writes it: a claim the generated body never makes turns
     # a legal GraphQL name into a generation error with no way out.
-    grouped = bindings_by_template(ir.bindings)
     for operation in ir.operations:
         at = operation.location
         scope = f"execute() of operation '{operation.class_name}' at {at}"
@@ -446,15 +446,14 @@ def _signature_claims(ir: CollectedPackageIR) -> Iterator[tuple[str, str, str]]:
             yield scope, variable.python_name, f"variable ${variable.gql_name}"
         scope = f"bind() of template '{template.class_name}' at {at}"
         yield scope, "self", "the method receiver"
-        if renders_inline_bind_body(grouped.get(template.class_name, [])):
-            # Only that form's `bind()` has a real body, so only it reads
-            # names from outside its own parameters -- and which ones is the
-            # renderer's to say. Otherwise the slots are parameters of
-            # `@overload` stubs whose body is `...`, over an implementation
-            # whose only parameter is `**fragments`, so nothing can be
-            # shadowed there.
-            for name, origin in BIND_BODY_FREE_NAMES:
-                yield scope, name, origin
+        # `bind()` carries the template's slots as parameters of the
+        # implementation under its stubs, over a body that reads the names
+        # below from an enclosing scope. There used to be a second form for a
+        # template with one binding, and claiming these names only for the
+        # other one left its parameters free to shadow the module its own body
+        # calls into; one form now, and the claim is unconditional.
+        for name, origin in BIND_BODY_FREE_NAMES:
+            yield scope, name, origin
         for slot in template.slots:
             yield scope, slot.python_name, f"slot '{slot.name}'"
     for binding in ir.bindings:

@@ -209,15 +209,17 @@ One `With{Slot}{Fragments…}` group per filled slot, slots and fragments in sor
 
 ### Executing and reading
 
-The generator writes one generic base per template, `{Operation}Bound[...]`, with one type parameter per slot in document order. The parameter is the *fragment class* (or a union of them) readable in that slot — `Never` for a slot left unfilled — and `execute` returns the result model parametrized by it, so the type of `result.post.attachment` records which fragments were offered. The base carries `execute` and `with_headers`; each `bind()` gets its own class deriving from it with those parameters filled in:
+The generator writes one base per template, `{Operation}Bound[TResult]`, with a single type parameter: the result its bindings return. Each `bind()` gets its own class deriving from it with that parameter filled in, and carrying the `execute` that answers with exactly that result. Which fragments are readable in each slot is recorded by the result type itself, so `result.post.attachment` still knows what was offered — a slot left unfilled is statically unreadable. Code that works over any binding of one template takes the base and hands the result back to a caller who knows which binding it passed:
 
 ```python
-async def fetch[TFrag](post_id: str, bound: GetPostAttachmentBound[TFrag]) -> GetPostAttachmentResult[TFrag]:
+async def fetch[TResult](post_id: str, bound: GetPostAttachmentBound[TResult]) -> TResult:
     return await bound.execute(id=post_id)
 
 result = await fetch("1", get_post_attachment_image)
 image = image_url.read(result.post.attachment) if result.post else None
 ```
+
+The result models are the binding's own, named after it — `GetPostAttachmentWithAttachmentImageUrlResult` and the models under it, down to the slot node that records what the binding offered there. They are ordinary classes rather than parametrizations of one shared generic, so an instance behaves like any other pydantic model: it pickles and unpickles, and a validation error names the class that raised it.
 
 `execute` takes only the template's own variables. There is no slot keyword argument: the fragment selection already happened at `bind()` time.
 
@@ -230,7 +232,7 @@ attachment = image_caption.read(result.post.attachment)
 
 `fragment.read(node)` is statically checked: the node's type records which fragments its binding offered at that slot, so reading a fragment that binding never offered there — including any read of a node whose slot was left unfilled, which offers nothing at all — is a type error. The same wiring mistakes raise `ValueError` at runtime on type-erased paths — `ValueError` rather than `None`, so a wiring bug cannot look like a legitimate type mismatch.
 
-That check only works where the concrete fragment handle is in scope, as a literal handle or a tuple of them — reading with a handle already erased to `GQLFragment[pydantic.BaseModel]` (a heterogeneous registry, say) is a type error against any node the generator writes, because the erased handle names no fragment the node lists as offered. Only the check is lost, not the data: a handle is an identity token at runtime, so an erased handle its binding really was given still reads back its own model, and the `ValueError` above stays reserved for a handle that binding never offered. Code that is itself generic over which fragments a binding offers has no concrete handle to read with either; it returns the parametrized result and leaves the read to a caller who does know the concrete handles.
+That check only works where the concrete fragment handle is in scope, as a literal handle or a tuple of them — reading with a handle already erased to `GQLFragment[pydantic.BaseModel]` (a heterogeneous registry, say) is a type error against any node the generator writes, because the erased handle names no fragment the node lists as offered. Only the check is lost, not the data: a handle is an identity token at runtime, so an erased handle its binding really was given still reads back its own model, and the `ValueError` above stays reserved for a handle that binding never offered. Code that is itself generic over which binding it was handed has no concrete handle to read with either; it returns the result unread and leaves the read to a caller who does know the concrete handles.
 
 A fragment reached through a *narrower* type condition — an interface brick spread inside a per-type fragment — reads back as `None` for the types that condition excludes, exactly like any other type mismatch.
 
@@ -280,12 +282,12 @@ Generation fails, naming the file and line, for:
 - two combinations whose slot and fragment names derive the same class name — rare, and the fix is to alias the slot field or rename one of the fragments (writing the *same* combination twice is not an error: it is one binding, one class, and both call sites are listed on it);
 - a fragment readable at a slot's root reached under `@skip`/`@include` — whether the directive sits on the spread or on an inline fragment around it — at any runtime type where that conditional path is the only way it reaches the root, since such a fragment is requested and validated on every response and so cannot be conditionally absent. Reaching it unconditionally as well — bound directly, or spread again without a directive — covers the types reached that way, and only the types left over are rejected. The same directive on a spread inside a nested field is fine;
 - a bound fragment whose name a template also defines locally, with a different definition — one name is one definition in the expanded document;
-- two slots of one template whose names collapse to the same Python name or to the same type parameter — a slot's name is its `bind()` keyword and the type parameter it contributes to the operation's bound base and result model;
+- two slots of one template whose names collapse to the same Python name — a slot's name is its `bind()` keyword, and one keyword cannot mean two slots;
 - `@slot` inside a fragment definition, or a slot nested inside another slot's own selection.
 
 One slot name selected under two parents is not an error: both positions carry the same spliced fragments, so every fragment reachable from either position reads the same way through its own handle. A slot on a polymorphic parent works the same way — one node model per variant.
 
-A stale bind — a fragment combination the generator never saw — raises `LookupError` where the `bind()` call runs: at import for a module-level bind, at call time for one inside a function. Some calls can even pass type-checking without matching any discovered bind — types cannot count list elements, so a list bind that uses a strict subset of another list's fragments looks like a valid call statically. Such a call raises the same `LookupError` at import; regenerating after fixing it resolves it.
+A stale bind — a fragment combination the generator never saw — raises `LookupError` where the `bind()` call runs: at import for a module-level bind, at call time for one inside a function. Where the types can say so, they do: a combination no binding covers has the return type `Never`, the type of a call that does not return. Some calls can even pass type-checking without matching any discovered bind — types cannot count list elements, so a list bind that uses a strict subset of another list's fragments looks like a valid call statically. Such a call raises the same `LookupError` at import; regenerating after fixing it resolves it.
 
 Passing the same fragment to one slot twice is rejected at generation instead, naming the call site: a slot spreads each of its fragments once, so `bind(slot=[f, f])` asks for a combination that cannot exist.
 

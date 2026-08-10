@@ -36,6 +36,9 @@ from iron_gql.slots import GQLSlotNode
 from iron_gql.testing import accept_graphql_ws
 from iron_gql.testing import use_async_client
 from iron_gql.testing import use_sync_client
+from tests.corpus.generated_oracles import assert_documents_are_valid
+from tests.corpus.generated_oracles import assert_method_namespaces_are_closed
+from tests.corpus.generated_oracles import assert_module_is_self_contained
 
 type Resolver = Callable[..., object]
 type Resolvers = Mapping[str, Mapping[str, Resolver]]
@@ -94,8 +97,16 @@ class Diagnostic(pydantic.BaseModel):
     rule: str | None = None
 
 
+class DiagnosticSummary(pydantic.BaseModel):
+    files_analyzed: int = pydantic.Field(alias="filesAnalyzed")
+
+
 class BasedPyrightReport(pydantic.BaseModel):
     general_diagnostics: list[Diagnostic] = pydantic.Field(alias="generalDiagnostics")
+    # An empty diagnostic list means "clean" only once it is known that
+    # anything was read at all: a path that matches no file reports exactly the
+    # same silence as a package that type-checks.
+    summary: DiagnosticSummary
 
 
 def basedpyright_report(check_file: Path) -> BasedPyrightReport:
@@ -173,6 +184,18 @@ def generated_package(
         to_snake_fn=alias_generators.to_snake,
     )
     write_text(root / "gql" / "__init__.py", "")
+    _check_generated(_generated_api_module(name), root / "schema.graphql")
+
+
+def _check_generated(module: ModuleType, schema_path: Path) -> None:
+    # The post-conditions every generated package answers. Here rather than in
+    # a test of their own so no package can be generated without them: the
+    # packages a check is applied to by hand are the packages someone thought
+    # of, and the gaps are the ones nobody did.
+    assert_module_is_self_contained(module)
+    assert_method_namespaces_are_closed(module)
+    schema = graphql.build_schema(schema_path.read_text(encoding="utf-8"))
+    assert_documents_are_valid(module, schema)
 
 
 def _generated_api_module(package: str) -> ModuleType:
@@ -327,6 +350,7 @@ class ProjectBuilder:
         self.clear_modules()
         api_module = importlib.import_module(self.gql_pkg)
         queries_module = importlib.import_module(f"{self.package}.queries")
+        _check_generated(api_module, self.root / "schema.graphql")
         return api_module, queries_module
 
     @asynccontextmanager

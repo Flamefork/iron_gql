@@ -3,6 +3,7 @@ import pickle
 from typing import Annotated
 from typing import ClassVar
 from typing import Literal
+from typing import cast
 from typing import override
 
 import pydantic
@@ -253,7 +254,10 @@ def test_slot_data_survives_in_process_pickling():
         {"details": [{"__typename": "Image", "url": "a"}]},
         context={"details": offered(URL_HANDLE)},
     )
-    restored: object = pickle.loads(pickle.dumps(result))  # pyright: ignore[reportAny]
+    # `pickle.loads` answers `Any` -- a payload holds nothing to type it by --
+    # and the isinstance below is what turns it back into a type: the check
+    # this test wants anyway, made where the `Any` would otherwise spread.
+    restored = cast("object", pickle.loads(pickle.dumps(result)))
     assert isinstance(restored, Result)
     assert URL_HANDLE.read(restored.details[0]) == UrlData(url="a")
 

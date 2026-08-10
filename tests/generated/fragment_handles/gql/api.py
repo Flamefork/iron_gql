@@ -6,11 +6,12 @@ from __future__ import annotations
 
 
 import datetime
+from abc import ABC
+from abc import abstractmethod
 from collections.abc import AsyncGenerator
 from collections.abc import Sequence
 from contextlib import AbstractAsyncContextManager
 from typing import Annotated
-from typing import Any
 from typing import ClassVar
 from typing import Literal
 from typing import Never
@@ -47,16 +48,6 @@ class GQLModel(pydantic.BaseModel):
         validate_default=True,
     )
 
-    # A template's result model is subscripted with its slots' offered
-    # fragments (e.g. `GetAttachmentResult[ImageParts | NodeId]`), which
-    # builds and caches a genuine subclass rather than reusing the base -- the
-    # override below keeps that subclass's name, and so every ValidationError
-    # title raised through it, on the plain model name.
-    @classmethod
-    @override
-    def model_parametrized_name(cls, params: tuple[type[Any], ...]) -> str:
-        return cls.__name__
-
 
 class GQLOpenModel(GQLModel):
     model_config = pydantic.ConfigDict(extra="ignore")
@@ -73,15 +64,6 @@ class User(GQLModel):
 
 class GetViewerResult(GQLModel):
     viewer: User
-
-
-class WithSlotResultNodeSlot[TNode](GQLSlotModel[TNode]):
-    slot_name__: ClassVar[str] = "node"
-    typename__: Annotated[Literal['Admin', 'User'], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
-
-
-class WithSlotResult[TNode](GQLModel):
-    node: WithSlotResultNodeSlot[TNode] | None
 
 
 class UserFieldsData(GQLOpenModel):
@@ -134,10 +116,38 @@ NODE_FIELDS = NodeFields(
 )
 
 
-class WithSlotBound[TNode](runtime.GQLBoundOperation):
-    async def execute(self, *, id: builtins.str) -> WithSlotResult[TNode]:
+class WithSlotWithNodeUserFieldsResultNodeSlot(GQLSlotModel[UserFields]):
+    slot_name__: ClassVar[str] = "node"
+    typename__: Annotated[Literal['Admin', 'User'], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
+
+
+class WithSlotWithNodeUserFieldsResult(GQLModel):
+    node: WithSlotWithNodeUserFieldsResultNodeSlot | None
+
+
+class WithSlotWithNodeNodeFieldsResultNodeSlot(GQLSlotModel[NodeFields]):
+    slot_name__: ClassVar[str] = "node"
+    typename__: Annotated[Literal['Admin', 'User'], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
+
+
+class WithSlotWithNodeNodeFieldsResult(GQLModel):
+    node: WithSlotWithNodeNodeFieldsResultNodeSlot | None
+
+
+class WithSlotBound[TResult](runtime.GQLBoundOperation, ABC):
+    @abstractmethod
+    async def execute(self, *, id: builtins.str) -> TResult:
+        ...
+
+
+class WithSlotWithNodeUserFields(WithSlotBound[WithSlotWithNodeUserFieldsResult]):
+    # See: queries.py:48
+    exec_source__ = 'query WithSlot($id: ID!) {\n  node(id: $id) {\n    __typename\n    ...UserFields\n  }\n}\n\nfragment UserFields on User {\n  id\n  name\n}'
+    slot_handles__ = {"node": (slots.SlotHandle(USER_FIELDS, frozenset({'User'})),)}
+    @override
+    async def execute(self, *, id: builtins.str) -> WithSlotWithNodeUserFieldsResult:
         return await API_CLIENT.query(
-            WithSlotResult[TNode],
+            WithSlotWithNodeUserFieldsResult,
             self.exec_source__,
             variables={"id": id, **self.fragment_args__()},
             headers=self.headers,
@@ -145,31 +155,32 @@ class WithSlotBound[TNode](runtime.GQLBoundOperation):
         )
 
 
-class WithSlotWithNodeUserFields(WithSlotBound[UserFields]):
-    # See: queries.py:48
-    exec_source__ = 'query WithSlot($id: ID!) {\n  node(id: $id) {\n    __typename\n    ...UserFields\n  }\n}\n\nfragment UserFields on User {\n  id\n  name\n}'
-    slot_handles__ = {"node": (slots.SlotHandle(USER_FIELDS, frozenset({'User'})),)}
-
-
-class WithSlotWithNodeNodeFields(WithSlotBound[NodeFields]):
+class WithSlotWithNodeNodeFields(WithSlotBound[WithSlotWithNodeNodeFieldsResult]):
     # See: queries.py:49
     exec_source__ = 'query WithSlot($id: ID!) {\n  node(id: $id) {\n    __typename\n    ...NodeFields\n  }\n}\n\nfragment NodeFields on Node {\n  __typename\n  id\n  ... on Admin {\n    permissions\n  }\n}'
     slot_handles__ = {"node": (slots.SlotHandle(NODE_FIELDS, frozenset({'Admin', 'User'})),)}
+    @override
+    async def execute(self, *, id: builtins.str) -> WithSlotWithNodeNodeFieldsResult:
+        return await API_CLIENT.query(
+            WithSlotWithNodeNodeFieldsResult,
+            self.exec_source__,
+            variables={"id": id, **self.fragment_args__()},
+            headers=self.headers,
+            slot_handles=self.slot_handles__,
+        )
 
 
 class WithSlot(runtime.GQLTemplate):
     @overload
+    def bind(self, *, node: Sequence[Never] = ()) -> Never: ...
+    @overload
     def bind(self, *, node: UserFields | Sequence[UserFields]) -> WithSlotWithNodeUserFields: ...
     @overload
     def bind(self, *, node: NodeFields | Sequence[NodeFields]) -> WithSlotWithNodeNodeFields: ...
-    def bind(
-        self,
-        **fragments: slots.GQLFragment[pydantic.BaseModel] | Sequence[slots.GQLFragment[pydantic.BaseModel]],
-    ) -> runtime.GQLBoundOperation:
-        cls = _API_GQL_BIND_DISPATCH.get(slots.bind_key('WithSlot', fragments))
-        if cls is None:
+    def bind(self, *, node: slots.GQLFragment[pydantic.BaseModel] | Sequence[slots.GQLFragment[pydantic.BaseModel]] = ()) -> runtime.GQLBoundOperation:
+        if _API_GQL_BIND_DISPATCH.get(slots.bind_key('WithSlot', {'node': node})) is None:
             raise LookupError("unknown bind combination for WithSlot; every fragment a bind passes must be a discovered statement - check the call site, then regenerate the package")
-        return cls()
+        return _API_GQL_BIND_DISPATCH[slots.bind_key('WithSlot', {'node': node})]()
 
 
 _API_GQL_BIND_DISPATCH: dict[slots.BindKey, type[runtime.GQLBoundOperation]] = {

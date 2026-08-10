@@ -1,0 +1,1499 @@
+none-module-none-before refused
+none-module-assign-before bound:query R { g @slot { __typename } }
+none-module-assign-after refused
+none-module-global-before refused
+none-module-form00-before refused
+none-module-form00-after refused
+none-module-form01-before refused
+none-module-form01-after refused
+none-module-form02-before refused
+none-module-form02-after refused
+none-module-form03-before refused
+none-module-form03-after refused
+none-module-form04-before refused
+none-module-form04-after refused
+none-module-form05-before refused
+none-module-form05-after refused
+none-module-form06-before refused
+none-module-form06-after refused
+none-module-form07-before refused
+none-module-form07-after refused
+none-module-form08-before refused
+none-module-form08-after refused
+none-module-form09-before refused
+none-module-form09-after refused
+none-module-form10-before refused
+none-module-form10-after refused
+none-module-form11-before refused
+none-module-form11-after refused
+none-module-form12-before refused
+none-module-form12-after refused
+none-module-form13-before refused
+none-module-form13-after refused
+none-module-form14-before refused
+none-module-form14-after refused
+none-module-form15-before refused
+none-module-form15-after refused
+none-module-form16-before refused
+none-module-form16-after refused
+none-module-form17-before refused
+none-module-form17-after refused
+none-module-form18-before refused
+none-module-form18-after refused
+none-module-form19-before refused
+none-module-form19-after refused
+none-module-form20-before refused
+none-module-form20-after refused
+none-module-form21-before refused
+none-module-form21-after refused
+none-module-form22-before refused
+none-module-form22-after refused
+none-module-form23-before refused
+none-module-form23-after refused
+none-function-none-before refused
+none-function-assign-before bound:query R { g @slot { __typename } }
+none-function-assign-after refused
+none-function-global-before refused
+none-function-form00-before refused
+none-function-form00-after refused
+none-function-form01-before refused
+none-function-form01-after refused
+none-function-form02-before refused
+none-function-form02-after refused
+none-function-form03-before refused
+none-function-form03-after refused
+none-function-form04-before refused
+none-function-form04-after refused
+none-function-form05-before refused
+none-function-form05-after refused
+none-function-form06-before refused
+none-function-form06-after refused
+none-function-form07-before refused
+none-function-form07-after refused
+none-function-form08-before refused
+none-function-form08-after refused
+none-function-form09-before refused
+none-function-form09-after refused
+none-function-form10-before refused
+none-function-form10-after refused
+none-function-form11-before refused
+none-function-form11-after refused
+none-function-form12-before refused
+none-function-form12-after refused
+none-function-form13-before refused
+none-function-form13-after refused
+none-function-form14-before refused
+none-function-form14-after refused
+none-function-form15-before refused
+none-function-form15-after refused
+none-function-form16-before refused
+none-function-form16-after refused
+none-function-form17-before refused
+none-function-form17-after refused
+none-function-form18-before refused
+none-function-form18-after refused
+none-function-form19-before refused
+none-function-form19-after refused
+none-function-form20-before refused
+none-function-form20-after refused
+none-function-form21-before refused
+none-function-form21-after refused
+none-function-form22-before refused
+none-function-form22-after refused
+none-function-form23-before refused
+none-function-form23-after refused
+none-method-none-before refused
+none-method-assign-before bound:query R { g @slot { __typename } }
+none-method-assign-after refused
+none-method-global-before refused
+none-method-form00-before refused
+none-method-form00-after refused
+none-method-form01-before refused
+none-method-form01-after refused
+none-method-form02-before refused
+none-method-form02-after refused
+none-method-form03-before refused
+none-method-form03-after refused
+none-method-form04-before refused
+none-method-form04-after refused
+none-method-form05-before refused
+none-method-form05-after refused
+none-method-form06-before refused
+none-method-form06-after refused
+none-method-form07-before refused
+none-method-form07-after refused
+none-method-form08-before refused
+none-method-form08-after refused
+none-method-form09-before refused
+none-method-form09-after refused
+none-method-form10-before refused
+none-method-form10-after refused
+none-method-form11-before refused
+none-method-form11-after refused
+none-method-form12-before refused
+none-method-form12-after refused
+none-method-form13-before refused
+none-method-form13-after refused
+none-method-form14-before refused
+none-method-form14-after refused
+none-method-form15-before refused
+none-method-form15-after refused
+none-method-form16-before refused
+none-method-form16-after refused
+none-method-form17-before refused
+none-method-form17-after refused
+none-method-form18-before refused
+none-method-form18-after refused
+none-method-form19-before refused
+none-method-form19-after refused
+none-method-form20-before refused
+none-method-form20-after refused
+none-method-form21-before refused
+none-method-form21-after refused
+none-method-form22-before refused
+none-method-form22-after refused
+none-method-form23-before refused
+none-method-form23-after refused
+none-classbody-none-before refused
+none-classbody-assign-before bound:query R { g @slot { __typename } }
+none-classbody-assign-after refused
+none-classbody-global-before refused
+none-classbody-form00-before refused
+none-classbody-form00-after refused
+none-classbody-form01-before refused
+none-classbody-form01-after refused
+none-classbody-form02-before refused
+none-classbody-form02-after refused
+none-classbody-form03-before refused
+none-classbody-form03-after refused
+none-classbody-form04-before refused
+none-classbody-form04-after refused
+none-classbody-form05-before refused
+none-classbody-form05-after refused
+none-classbody-form06-before refused
+none-classbody-form06-after refused
+none-classbody-form07-before refused
+none-classbody-form07-after refused
+none-classbody-form08-before refused
+none-classbody-form08-after refused
+none-classbody-form09-before refused
+none-classbody-form09-after refused
+none-classbody-form10-before refused
+none-classbody-form10-after refused
+none-classbody-form11-before refused
+none-classbody-form11-after refused
+none-classbody-form12-before refused
+none-classbody-form12-after refused
+none-classbody-form13-before refused
+none-classbody-form13-after refused
+none-classbody-form14-before refused
+none-classbody-form14-after refused
+none-classbody-form15-before refused
+none-classbody-form15-after refused
+none-classbody-form16-before refused
+none-classbody-form16-after refused
+none-classbody-form17-before refused
+none-classbody-form17-after refused
+none-classbody-form18-before refused
+none-classbody-form18-after refused
+none-classbody-form19-before refused
+none-classbody-form19-after refused
+none-nestedfn-none-before refused
+none-nestedfn-assign-before bound:query R { g @slot { __typename } }
+none-nestedfn-assign-after refused
+none-nestedfn-global-before refused
+none-nestedfn-form00-before refused
+none-nestedfn-form00-after refused
+none-nestedfn-form01-before refused
+none-nestedfn-form01-after refused
+none-nestedfn-form02-before refused
+none-nestedfn-form02-after refused
+none-nestedfn-form03-before refused
+none-nestedfn-form03-after refused
+none-nestedfn-form04-before refused
+none-nestedfn-form04-after refused
+none-nestedfn-form05-before refused
+none-nestedfn-form05-after refused
+none-nestedfn-form06-before refused
+none-nestedfn-form06-after refused
+none-nestedfn-form07-before refused
+none-nestedfn-form07-after refused
+none-nestedfn-form08-before refused
+none-nestedfn-form08-after refused
+none-nestedfn-form09-before refused
+none-nestedfn-form09-after refused
+none-nestedfn-form10-before refused
+none-nestedfn-form10-after refused
+none-nestedfn-form11-before refused
+none-nestedfn-form11-after refused
+none-nestedfn-form12-before refused
+none-nestedfn-form12-after refused
+none-nestedfn-form13-before refused
+none-nestedfn-form13-after refused
+none-nestedfn-form14-before refused
+none-nestedfn-form14-after refused
+none-nestedfn-form15-before refused
+none-nestedfn-form15-after refused
+none-nestedfn-form16-before refused
+none-nestedfn-form16-after refused
+none-nestedfn-form17-before refused
+none-nestedfn-form17-after refused
+none-nestedfn-form18-before refused
+none-nestedfn-form18-after refused
+none-nestedfn-form19-before refused
+none-nestedfn-form19-after refused
+none-nestedfn-form20-before refused
+none-nestedfn-form20-after refused
+none-nestedfn-form21-before refused
+none-nestedfn-form21-after refused
+none-nestedfn-form22-before refused
+none-nestedfn-form22-after refused
+none-nestedfn-form23-before refused
+none-nestedfn-form23-after refused
+none-genexp-none-before refused
+none-genexp-assign-before bound:query R { g @slot { __typename } }
+none-genexp-assign-after refused
+none-genexp-global-before refused
+none-genexp-form00-before refused
+none-genexp-form00-after refused
+none-genexp-form01-before refused
+none-genexp-form01-after refused
+none-genexp-form02-before refused
+none-genexp-form02-after refused
+none-genexp-form03-before refused
+none-genexp-form03-after refused
+none-genexp-form04-before refused
+none-genexp-form04-after refused
+none-genexp-form05-before refused
+none-genexp-form05-after refused
+none-genexp-form06-before refused
+none-genexp-form06-after refused
+none-genexp-form07-before refused
+none-genexp-form07-after refused
+none-genexp-form08-before refused
+none-genexp-form08-after refused
+none-genexp-form09-before refused
+none-genexp-form09-after refused
+none-genexp-form10-before refused
+none-genexp-form10-after refused
+none-genexp-form11-before refused
+none-genexp-form11-after refused
+none-genexp-form12-before refused
+none-genexp-form12-after refused
+none-genexp-form13-before refused
+none-genexp-form13-after refused
+none-genexp-form14-before refused
+none-genexp-form14-after refused
+none-genexp-form15-before refused
+none-genexp-form15-after refused
+none-genexp-form16-before refused
+none-genexp-form16-after refused
+none-genexp-form17-before refused
+none-genexp-form17-after refused
+none-genexp-form18-before refused
+none-genexp-form18-after refused
+none-genexp-form19-before refused
+none-genexp-form19-after refused
+none-genexp-form20-before refused
+none-genexp-form20-after refused
+none-genexp-form21-before refused
+none-genexp-form21-after refused
+none-genexp-form22-before refused
+none-genexp-form22-after refused
+none-genexp-form23-before refused
+none-genexp-form23-after refused
+none-deepfn-none-before refused
+none-deepfn-assign-before bound:query R { g @slot { __typename } }
+none-deepfn-assign-after refused
+none-deepfn-global-before refused
+none-deepfn-form00-before refused
+none-deepfn-form00-after refused
+none-deepfn-form01-before refused
+none-deepfn-form01-after refused
+none-deepfn-form02-before refused
+none-deepfn-form02-after refused
+none-deepfn-form03-before refused
+none-deepfn-form03-after refused
+none-deepfn-form04-before refused
+none-deepfn-form04-after refused
+none-deepfn-form05-before refused
+none-deepfn-form05-after refused
+none-deepfn-form06-before refused
+none-deepfn-form06-after refused
+none-deepfn-form07-before refused
+none-deepfn-form07-after refused
+none-deepfn-form08-before refused
+none-deepfn-form08-after refused
+none-deepfn-form09-before refused
+none-deepfn-form09-after refused
+none-deepfn-form10-before refused
+none-deepfn-form10-after refused
+none-deepfn-form11-before refused
+none-deepfn-form11-after refused
+none-deepfn-form12-before refused
+none-deepfn-form12-after refused
+none-deepfn-form13-before refused
+none-deepfn-form13-after refused
+none-deepfn-form14-before refused
+none-deepfn-form14-after refused
+none-deepfn-form15-before refused
+none-deepfn-form15-after refused
+none-deepfn-form16-before refused
+none-deepfn-form16-after refused
+none-deepfn-form17-before refused
+none-deepfn-form17-after refused
+none-deepfn-form18-before refused
+none-deepfn-form18-after refused
+none-deepfn-form19-before refused
+none-deepfn-form19-after refused
+none-deepfn-form20-before refused
+none-deepfn-form20-after refused
+none-deepfn-form21-before refused
+none-deepfn-form21-after refused
+none-deepfn-form22-before refused
+none-deepfn-form22-after refused
+none-deepfn-form23-before refused
+none-deepfn-form23-after refused
+none-fnmethod-none-before refused
+none-fnmethod-assign-before bound:query R { g @slot { __typename } }
+none-fnmethod-assign-after refused
+none-fnmethod-global-before refused
+none-fnmethod-form00-before refused
+none-fnmethod-form00-after refused
+none-fnmethod-form01-before refused
+none-fnmethod-form01-after refused
+none-fnmethod-form02-before refused
+none-fnmethod-form02-after refused
+none-fnmethod-form03-before refused
+none-fnmethod-form03-after refused
+none-fnmethod-form04-before refused
+none-fnmethod-form04-after refused
+none-fnmethod-form05-before refused
+none-fnmethod-form05-after refused
+none-fnmethod-form06-before refused
+none-fnmethod-form06-after refused
+none-fnmethod-form07-before refused
+none-fnmethod-form07-after refused
+none-fnmethod-form08-before refused
+none-fnmethod-form08-after refused
+none-fnmethod-form09-before refused
+none-fnmethod-form09-after refused
+none-fnmethod-form10-before refused
+none-fnmethod-form10-after refused
+none-fnmethod-form11-before refused
+none-fnmethod-form11-after refused
+none-fnmethod-form12-before refused
+none-fnmethod-form12-after refused
+none-fnmethod-form13-before refused
+none-fnmethod-form13-after refused
+none-fnmethod-form14-before refused
+none-fnmethod-form14-after refused
+none-fnmethod-form15-before refused
+none-fnmethod-form15-after refused
+none-fnmethod-form16-before refused
+none-fnmethod-form16-after refused
+none-fnmethod-form17-before refused
+none-fnmethod-form17-after refused
+none-fnmethod-form18-before refused
+none-fnmethod-form18-after refused
+none-fnmethod-form19-before refused
+none-fnmethod-form19-after refused
+none-fnmethod-form20-before refused
+none-fnmethod-form20-after refused
+none-fnmethod-form21-before refused
+none-fnmethod-form21-after refused
+none-fnmethod-form22-before refused
+none-fnmethod-form22-after refused
+none-fnmethod-form23-before refused
+none-fnmethod-form23-after refused
+module-module-none-before bound:query Q { f @slot { __typename } }
+module-module-assign-before refused
+module-module-assign-after bound:query Q { f @slot { __typename } }
+module-module-form00-before refused
+module-module-form00-after bound:query Q { f @slot { __typename } }
+module-module-form01-before refused
+module-module-form01-after bound:query Q { f @slot { __typename } }
+module-module-form02-before refused
+module-module-form02-after bound:query Q { f @slot { __typename } }
+module-module-form03-before refused
+module-module-form03-after bound:query Q { f @slot { __typename } }
+module-module-form04-before refused
+module-module-form04-after bound:query Q { f @slot { __typename } }
+module-module-form05-before refused
+module-module-form05-after bound:query Q { f @slot { __typename } }
+module-module-form06-before bound:query Q { f @slot { __typename } }
+module-module-form06-after bound:query Q { f @slot { __typename } }
+module-module-form07-before bound:query Q { f @slot { __typename } }
+module-module-form07-after bound:query Q { f @slot { __typename } }
+module-module-form08-before bound:query Q { f @slot { __typename } }
+module-module-form08-after bound:query Q { f @slot { __typename } }
+module-module-form09-before bound:query Q { f @slot { __typename } }
+module-module-form09-after bound:query Q { f @slot { __typename } }
+module-module-form10-before bound:query Q { f @slot { __typename } }
+module-module-form10-after bound:query Q { f @slot { __typename } }
+module-module-form11-before refused
+module-module-form11-after bound:query Q { f @slot { __typename } }
+module-module-form12-before refused
+module-module-form12-after bound:query Q { f @slot { __typename } }
+module-module-form13-before refused
+module-module-form13-after bound:query Q { f @slot { __typename } }
+module-module-form14-before refused
+module-module-form14-after bound:query Q { f @slot { __typename } }
+module-module-form15-before refused
+module-module-form15-after bound:query Q { f @slot { __typename } }
+module-module-form16-before refused
+module-module-form16-after bound:query Q { f @slot { __typename } }
+module-module-form17-before bound:query Q { f @slot { __typename } }
+module-module-form17-after bound:query Q { f @slot { __typename } }
+module-module-form18-before refused
+module-module-form18-after bound:query Q { f @slot { __typename } }
+module-module-form19-before refused
+module-module-form19-after bound:query Q { f @slot { __typename } }
+module-module-form20-before refused
+module-module-form20-after bound:query Q { f @slot { __typename } }
+module-module-form21-before refused
+module-module-form21-after bound:query Q { f @slot { __typename } }
+module-module-form22-before refused
+module-module-form22-after bound:query Q { f @slot { __typename } }
+module-module-form23-before refused
+module-module-form23-after bound:query Q { f @slot { __typename } }
+module-function-none-before bound:query Q { f @slot { __typename } }
+module-function-assign-before bound:query R { g @slot { __typename } }
+module-function-assign-after refused
+module-function-global-before refused
+module-function-form00-before refused
+module-function-form00-after refused
+module-function-form01-before refused
+module-function-form01-after refused
+module-function-form02-before refused
+module-function-form02-after refused
+module-function-form03-before refused
+module-function-form03-after refused
+module-function-form04-before refused
+module-function-form04-after refused
+module-function-form05-before refused
+module-function-form05-after refused
+module-function-form06-before bound:query Q { f @slot { __typename } }
+module-function-form06-after bound:query Q { f @slot { __typename } }
+module-function-form07-before bound:query Q { f @slot { __typename } }
+module-function-form07-after bound:query Q { f @slot { __typename } }
+module-function-form08-before bound:query Q { f @slot { __typename } }
+module-function-form08-after bound:query Q { f @slot { __typename } }
+module-function-form09-before bound:query Q { f @slot { __typename } }
+module-function-form09-after bound:query Q { f @slot { __typename } }
+module-function-form10-before bound:query Q { f @slot { __typename } }
+module-function-form10-after bound:query Q { f @slot { __typename } }
+module-function-form11-before refused
+module-function-form11-after refused
+module-function-form12-before refused
+module-function-form12-after refused
+module-function-form13-before refused
+module-function-form13-after refused
+module-function-form14-before refused
+module-function-form14-after refused
+module-function-form15-before refused
+module-function-form15-after refused
+module-function-form16-before refused
+module-function-form16-after refused
+module-function-form17-before refused
+module-function-form17-after refused
+module-function-form18-before refused
+module-function-form18-after refused
+module-function-form19-before refused
+module-function-form19-after refused
+module-function-form20-before refused
+module-function-form20-after refused
+module-function-form21-before refused
+module-function-form21-after refused
+module-function-form22-before refused
+module-function-form22-after refused
+module-function-form23-before refused
+module-function-form23-after refused
+module-method-none-before bound:query Q { f @slot { __typename } }
+module-method-assign-before bound:query R { g @slot { __typename } }
+module-method-assign-after refused
+module-method-global-before refused
+module-method-form00-before refused
+module-method-form00-after refused
+module-method-form01-before refused
+module-method-form01-after refused
+module-method-form02-before refused
+module-method-form02-after refused
+module-method-form03-before refused
+module-method-form03-after refused
+module-method-form04-before refused
+module-method-form04-after refused
+module-method-form05-before refused
+module-method-form05-after refused
+module-method-form06-before bound:query Q { f @slot { __typename } }
+module-method-form06-after bound:query Q { f @slot { __typename } }
+module-method-form07-before bound:query Q { f @slot { __typename } }
+module-method-form07-after bound:query Q { f @slot { __typename } }
+module-method-form08-before bound:query Q { f @slot { __typename } }
+module-method-form08-after bound:query Q { f @slot { __typename } }
+module-method-form09-before bound:query Q { f @slot { __typename } }
+module-method-form09-after bound:query Q { f @slot { __typename } }
+module-method-form10-before bound:query Q { f @slot { __typename } }
+module-method-form10-after bound:query Q { f @slot { __typename } }
+module-method-form11-before refused
+module-method-form11-after refused
+module-method-form12-before refused
+module-method-form12-after refused
+module-method-form13-before refused
+module-method-form13-after refused
+module-method-form14-before refused
+module-method-form14-after refused
+module-method-form15-before refused
+module-method-form15-after refused
+module-method-form16-before refused
+module-method-form16-after refused
+module-method-form17-before refused
+module-method-form17-after refused
+module-method-form18-before refused
+module-method-form18-after refused
+module-method-form19-before refused
+module-method-form19-after refused
+module-method-form20-before refused
+module-method-form20-after refused
+module-method-form21-before refused
+module-method-form21-after refused
+module-method-form22-before refused
+module-method-form22-after refused
+module-method-form23-before refused
+module-method-form23-after refused
+module-classbody-none-before bound:query Q { f @slot { __typename } }
+module-classbody-assign-before bound:query R { g @slot { __typename } }
+module-classbody-assign-after bound:query Q { f @slot { __typename } }
+module-classbody-global-before refused
+module-classbody-form00-before refused
+module-classbody-form00-after bound:query Q { f @slot { __typename } }
+module-classbody-form01-before refused
+module-classbody-form01-after bound:query Q { f @slot { __typename } }
+module-classbody-form02-before refused
+module-classbody-form02-after bound:query Q { f @slot { __typename } }
+module-classbody-form03-before refused
+module-classbody-form03-after bound:query Q { f @slot { __typename } }
+module-classbody-form04-before refused
+module-classbody-form04-after bound:query Q { f @slot { __typename } }
+module-classbody-form05-before refused
+module-classbody-form05-after bound:query Q { f @slot { __typename } }
+module-classbody-form06-before bound:query Q { f @slot { __typename } }
+module-classbody-form06-after bound:query Q { f @slot { __typename } }
+module-classbody-form07-before bound:query Q { f @slot { __typename } }
+module-classbody-form07-after bound:query Q { f @slot { __typename } }
+module-classbody-form08-before bound:query Q { f @slot { __typename } }
+module-classbody-form08-after bound:query Q { f @slot { __typename } }
+module-classbody-form09-before bound:query Q { f @slot { __typename } }
+module-classbody-form09-after bound:query Q { f @slot { __typename } }
+module-classbody-form10-before bound:query Q { f @slot { __typename } }
+module-classbody-form10-after bound:query Q { f @slot { __typename } }
+module-classbody-form11-before refused
+module-classbody-form11-after bound:query Q { f @slot { __typename } }
+module-classbody-form12-before refused
+module-classbody-form12-after bound:query Q { f @slot { __typename } }
+module-classbody-form13-before refused
+module-classbody-form13-after bound:query Q { f @slot { __typename } }
+module-classbody-form14-before refused
+module-classbody-form14-after bound:query Q { f @slot { __typename } }
+module-classbody-form15-before refused
+module-classbody-form15-after bound:query Q { f @slot { __typename } }
+module-classbody-form16-before refused
+module-classbody-form16-after bound:query Q { f @slot { __typename } }
+module-classbody-form17-before bound:query Q { f @slot { __typename } }
+module-classbody-form17-after bound:query Q { f @slot { __typename } }
+module-classbody-form18-before refused
+module-classbody-form18-after bound:query Q { f @slot { __typename } }
+module-classbody-form19-before refused
+module-classbody-form19-after bound:query Q { f @slot { __typename } }
+module-nestedfn-none-before bound:query Q { f @slot { __typename } }
+module-nestedfn-assign-before bound:query R { g @slot { __typename } }
+module-nestedfn-assign-after refused
+module-nestedfn-global-before refused
+module-nestedfn-form00-before refused
+module-nestedfn-form00-after refused
+module-nestedfn-form01-before refused
+module-nestedfn-form01-after refused
+module-nestedfn-form02-before refused
+module-nestedfn-form02-after refused
+module-nestedfn-form03-before refused
+module-nestedfn-form03-after refused
+module-nestedfn-form04-before refused
+module-nestedfn-form04-after refused
+module-nestedfn-form05-before refused
+module-nestedfn-form05-after refused
+module-nestedfn-form06-before bound:query Q { f @slot { __typename } }
+module-nestedfn-form06-after bound:query Q { f @slot { __typename } }
+module-nestedfn-form07-before bound:query Q { f @slot { __typename } }
+module-nestedfn-form07-after bound:query Q { f @slot { __typename } }
+module-nestedfn-form08-before bound:query Q { f @slot { __typename } }
+module-nestedfn-form08-after bound:query Q { f @slot { __typename } }
+module-nestedfn-form09-before bound:query Q { f @slot { __typename } }
+module-nestedfn-form09-after bound:query Q { f @slot { __typename } }
+module-nestedfn-form10-before bound:query Q { f @slot { __typename } }
+module-nestedfn-form10-after bound:query Q { f @slot { __typename } }
+module-nestedfn-form11-before refused
+module-nestedfn-form11-after refused
+module-nestedfn-form12-before refused
+module-nestedfn-form12-after refused
+module-nestedfn-form13-before refused
+module-nestedfn-form13-after refused
+module-nestedfn-form14-before refused
+module-nestedfn-form14-after refused
+module-nestedfn-form15-before refused
+module-nestedfn-form15-after refused
+module-nestedfn-form16-before refused
+module-nestedfn-form16-after refused
+module-nestedfn-form17-before refused
+module-nestedfn-form17-after refused
+module-nestedfn-form18-before refused
+module-nestedfn-form18-after refused
+module-nestedfn-form19-before refused
+module-nestedfn-form19-after refused
+module-nestedfn-form20-before refused
+module-nestedfn-form20-after refused
+module-nestedfn-form21-before refused
+module-nestedfn-form21-after refused
+module-nestedfn-form22-before refused
+module-nestedfn-form22-after refused
+module-nestedfn-form23-before refused
+module-nestedfn-form23-after refused
+module-genexp-none-before bound:query Q { f @slot { __typename } }
+module-genexp-assign-before bound:query R { g @slot { __typename } }
+module-genexp-assign-after refused
+module-genexp-global-before refused
+module-genexp-form00-before refused
+module-genexp-form00-after refused
+module-genexp-form01-before refused
+module-genexp-form01-after refused
+module-genexp-form02-before refused
+module-genexp-form02-after refused
+module-genexp-form03-before refused
+module-genexp-form03-after refused
+module-genexp-form04-before refused
+module-genexp-form04-after refused
+module-genexp-form05-before refused
+module-genexp-form05-after refused
+module-genexp-form06-before bound:query Q { f @slot { __typename } }
+module-genexp-form06-after bound:query Q { f @slot { __typename } }
+module-genexp-form07-before bound:query Q { f @slot { __typename } }
+module-genexp-form07-after bound:query Q { f @slot { __typename } }
+module-genexp-form08-before bound:query Q { f @slot { __typename } }
+module-genexp-form08-after bound:query Q { f @slot { __typename } }
+module-genexp-form09-before bound:query Q { f @slot { __typename } }
+module-genexp-form09-after bound:query Q { f @slot { __typename } }
+module-genexp-form10-before bound:query Q { f @slot { __typename } }
+module-genexp-form10-after bound:query Q { f @slot { __typename } }
+module-genexp-form11-before refused
+module-genexp-form11-after refused
+module-genexp-form12-before refused
+module-genexp-form12-after refused
+module-genexp-form13-before refused
+module-genexp-form13-after refused
+module-genexp-form14-before refused
+module-genexp-form14-after refused
+module-genexp-form15-before refused
+module-genexp-form15-after refused
+module-genexp-form16-before refused
+module-genexp-form16-after refused
+module-genexp-form17-before refused
+module-genexp-form17-after refused
+module-genexp-form18-before refused
+module-genexp-form18-after refused
+module-genexp-form19-before refused
+module-genexp-form19-after refused
+module-genexp-form20-before refused
+module-genexp-form20-after refused
+module-genexp-form21-before refused
+module-genexp-form21-after refused
+module-genexp-form22-before refused
+module-genexp-form22-after refused
+module-genexp-form23-before refused
+module-genexp-form23-after refused
+module-deepfn-none-before bound:query Q { f @slot { __typename } }
+module-deepfn-assign-before bound:query R { g @slot { __typename } }
+module-deepfn-assign-after refused
+module-deepfn-global-before refused
+module-deepfn-form00-before refused
+module-deepfn-form00-after refused
+module-deepfn-form01-before refused
+module-deepfn-form01-after refused
+module-deepfn-form02-before refused
+module-deepfn-form02-after refused
+module-deepfn-form03-before refused
+module-deepfn-form03-after refused
+module-deepfn-form04-before refused
+module-deepfn-form04-after refused
+module-deepfn-form05-before refused
+module-deepfn-form05-after refused
+module-deepfn-form06-before bound:query Q { f @slot { __typename } }
+module-deepfn-form06-after bound:query Q { f @slot { __typename } }
+module-deepfn-form07-before bound:query Q { f @slot { __typename } }
+module-deepfn-form07-after bound:query Q { f @slot { __typename } }
+module-deepfn-form08-before bound:query Q { f @slot { __typename } }
+module-deepfn-form08-after bound:query Q { f @slot { __typename } }
+module-deepfn-form09-before bound:query Q { f @slot { __typename } }
+module-deepfn-form09-after bound:query Q { f @slot { __typename } }
+module-deepfn-form10-before bound:query Q { f @slot { __typename } }
+module-deepfn-form10-after bound:query Q { f @slot { __typename } }
+module-deepfn-form11-before refused
+module-deepfn-form11-after refused
+module-deepfn-form12-before refused
+module-deepfn-form12-after refused
+module-deepfn-form13-before refused
+module-deepfn-form13-after refused
+module-deepfn-form14-before refused
+module-deepfn-form14-after refused
+module-deepfn-form15-before refused
+module-deepfn-form15-after refused
+module-deepfn-form16-before refused
+module-deepfn-form16-after refused
+module-deepfn-form17-before refused
+module-deepfn-form17-after refused
+module-deepfn-form18-before refused
+module-deepfn-form18-after refused
+module-deepfn-form19-before refused
+module-deepfn-form19-after refused
+module-deepfn-form20-before refused
+module-deepfn-form20-after refused
+module-deepfn-form21-before refused
+module-deepfn-form21-after refused
+module-deepfn-form22-before refused
+module-deepfn-form22-after refused
+module-deepfn-form23-before refused
+module-deepfn-form23-after refused
+module-fnmethod-none-before bound:query Q { f @slot { __typename } }
+module-fnmethod-assign-before bound:query R { g @slot { __typename } }
+module-fnmethod-assign-after refused
+module-fnmethod-global-before refused
+module-fnmethod-form00-before refused
+module-fnmethod-form00-after refused
+module-fnmethod-form01-before refused
+module-fnmethod-form01-after refused
+module-fnmethod-form02-before refused
+module-fnmethod-form02-after refused
+module-fnmethod-form03-before refused
+module-fnmethod-form03-after refused
+module-fnmethod-form04-before refused
+module-fnmethod-form04-after refused
+module-fnmethod-form05-before refused
+module-fnmethod-form05-after refused
+module-fnmethod-form06-before bound:query Q { f @slot { __typename } }
+module-fnmethod-form06-after bound:query Q { f @slot { __typename } }
+module-fnmethod-form07-before bound:query Q { f @slot { __typename } }
+module-fnmethod-form07-after bound:query Q { f @slot { __typename } }
+module-fnmethod-form08-before bound:query Q { f @slot { __typename } }
+module-fnmethod-form08-after bound:query Q { f @slot { __typename } }
+module-fnmethod-form09-before bound:query Q { f @slot { __typename } }
+module-fnmethod-form09-after bound:query Q { f @slot { __typename } }
+module-fnmethod-form10-before bound:query Q { f @slot { __typename } }
+module-fnmethod-form10-after bound:query Q { f @slot { __typename } }
+module-fnmethod-form11-before refused
+module-fnmethod-form11-after refused
+module-fnmethod-form12-before refused
+module-fnmethod-form12-after refused
+module-fnmethod-form13-before refused
+module-fnmethod-form13-after refused
+module-fnmethod-form14-before refused
+module-fnmethod-form14-after refused
+module-fnmethod-form15-before refused
+module-fnmethod-form15-after refused
+module-fnmethod-form16-before refused
+module-fnmethod-form16-after refused
+module-fnmethod-form17-before refused
+module-fnmethod-form17-after refused
+module-fnmethod-form18-before refused
+module-fnmethod-form18-after refused
+module-fnmethod-form19-before refused
+module-fnmethod-form19-after refused
+module-fnmethod-form20-before refused
+module-fnmethod-form20-after refused
+module-fnmethod-form21-before refused
+module-fnmethod-form21-after refused
+module-fnmethod-form22-before refused
+module-fnmethod-form22-after refused
+module-fnmethod-form23-before refused
+module-fnmethod-form23-after refused
+import-module-none-before bound:query Q { f @slot { __typename } }
+import-module-assign-before refused
+import-module-assign-after bound:query Q { f @slot { __typename } }
+import-module-global-before refused
+import-module-form00-before refused
+import-module-form00-after bound:query Q { f @slot { __typename } }
+import-module-form01-before refused
+import-module-form01-after bound:query Q { f @slot { __typename } }
+import-module-form02-before refused
+import-module-form02-after bound:query Q { f @slot { __typename } }
+import-module-form03-before refused
+import-module-form03-after bound:query Q { f @slot { __typename } }
+import-module-form04-before refused
+import-module-form04-after bound:query Q { f @slot { __typename } }
+import-module-form05-before refused
+import-module-form05-after bound:query Q { f @slot { __typename } }
+import-module-form06-before bound:query Q { f @slot { __typename } }
+import-module-form06-after bound:query Q { f @slot { __typename } }
+import-module-form07-before bound:query Q { f @slot { __typename } }
+import-module-form07-after bound:query Q { f @slot { __typename } }
+import-module-form08-before bound:query Q { f @slot { __typename } }
+import-module-form08-after bound:query Q { f @slot { __typename } }
+import-module-form09-before bound:query Q { f @slot { __typename } }
+import-module-form09-after bound:query Q { f @slot { __typename } }
+import-module-form10-before bound:query Q { f @slot { __typename } }
+import-module-form10-after bound:query Q { f @slot { __typename } }
+import-module-form11-before refused
+import-module-form11-after bound:query Q { f @slot { __typename } }
+import-module-form12-before refused
+import-module-form12-after bound:query Q { f @slot { __typename } }
+import-module-form13-before refused
+import-module-form13-after bound:query Q { f @slot { __typename } }
+import-module-form14-before refused
+import-module-form14-after bound:query Q { f @slot { __typename } }
+import-module-form15-before refused
+import-module-form15-after bound:query Q { f @slot { __typename } }
+import-module-form16-before refused
+import-module-form16-after bound:query Q { f @slot { __typename } }
+import-module-form17-before bound:query Q { f @slot { __typename } }
+import-module-form17-after bound:query Q { f @slot { __typename } }
+import-module-form18-before refused
+import-module-form18-after bound:query Q { f @slot { __typename } }
+import-module-form19-before refused
+import-module-form19-after bound:query Q { f @slot { __typename } }
+import-module-form20-before refused
+import-module-form20-after bound:query Q { f @slot { __typename } }
+import-module-form21-before refused
+import-module-form21-after bound:query Q { f @slot { __typename } }
+import-module-form22-before refused
+import-module-form22-after bound:query Q { f @slot { __typename } }
+import-module-form23-before refused
+import-module-form23-after bound:query Q { f @slot { __typename } }
+import-function-none-before bound:query Q { f @slot { __typename } }
+import-function-assign-before bound:query R { g @slot { __typename } }
+import-function-assign-after refused
+import-function-global-before refused
+import-function-form00-before refused
+import-function-form00-after refused
+import-function-form01-before refused
+import-function-form01-after refused
+import-function-form02-before refused
+import-function-form02-after refused
+import-function-form03-before refused
+import-function-form03-after refused
+import-function-form04-before refused
+import-function-form04-after refused
+import-function-form05-before refused
+import-function-form05-after refused
+import-function-form06-before bound:query Q { f @slot { __typename } }
+import-function-form06-after bound:query Q { f @slot { __typename } }
+import-function-form07-before bound:query Q { f @slot { __typename } }
+import-function-form07-after bound:query Q { f @slot { __typename } }
+import-function-form08-before bound:query Q { f @slot { __typename } }
+import-function-form08-after bound:query Q { f @slot { __typename } }
+import-function-form09-before bound:query Q { f @slot { __typename } }
+import-function-form09-after bound:query Q { f @slot { __typename } }
+import-function-form10-before bound:query Q { f @slot { __typename } }
+import-function-form10-after bound:query Q { f @slot { __typename } }
+import-function-form11-before refused
+import-function-form11-after refused
+import-function-form12-before refused
+import-function-form12-after refused
+import-function-form13-before refused
+import-function-form13-after refused
+import-function-form14-before refused
+import-function-form14-after refused
+import-function-form15-before refused
+import-function-form15-after refused
+import-function-form16-before refused
+import-function-form16-after refused
+import-function-form17-before refused
+import-function-form17-after refused
+import-function-form18-before refused
+import-function-form18-after refused
+import-function-form19-before refused
+import-function-form19-after refused
+import-function-form20-before refused
+import-function-form20-after refused
+import-function-form21-before refused
+import-function-form21-after refused
+import-function-form22-before refused
+import-function-form22-after refused
+import-function-form23-before refused
+import-function-form23-after refused
+import-method-none-before bound:query Q { f @slot { __typename } }
+import-method-assign-before bound:query R { g @slot { __typename } }
+import-method-assign-after refused
+import-method-global-before refused
+import-method-form00-before refused
+import-method-form00-after refused
+import-method-form01-before refused
+import-method-form01-after refused
+import-method-form02-before refused
+import-method-form02-after refused
+import-method-form03-before refused
+import-method-form03-after refused
+import-method-form04-before refused
+import-method-form04-after refused
+import-method-form05-before refused
+import-method-form05-after refused
+import-method-form06-before bound:query Q { f @slot { __typename } }
+import-method-form06-after bound:query Q { f @slot { __typename } }
+import-method-form07-before bound:query Q { f @slot { __typename } }
+import-method-form07-after bound:query Q { f @slot { __typename } }
+import-method-form08-before bound:query Q { f @slot { __typename } }
+import-method-form08-after bound:query Q { f @slot { __typename } }
+import-method-form09-before bound:query Q { f @slot { __typename } }
+import-method-form09-after bound:query Q { f @slot { __typename } }
+import-method-form10-before bound:query Q { f @slot { __typename } }
+import-method-form10-after bound:query Q { f @slot { __typename } }
+import-method-form11-before refused
+import-method-form11-after refused
+import-method-form12-before refused
+import-method-form12-after refused
+import-method-form13-before refused
+import-method-form13-after refused
+import-method-form14-before refused
+import-method-form14-after refused
+import-method-form15-before refused
+import-method-form15-after refused
+import-method-form16-before refused
+import-method-form16-after refused
+import-method-form17-before refused
+import-method-form17-after refused
+import-method-form18-before refused
+import-method-form18-after refused
+import-method-form19-before refused
+import-method-form19-after refused
+import-method-form20-before refused
+import-method-form20-after refused
+import-method-form21-before refused
+import-method-form21-after refused
+import-method-form22-before refused
+import-method-form22-after refused
+import-method-form23-before refused
+import-method-form23-after refused
+import-classbody-none-before bound:query Q { f @slot { __typename } }
+import-classbody-assign-before bound:query R { g @slot { __typename } }
+import-classbody-assign-after bound:query Q { f @slot { __typename } }
+import-classbody-global-before refused
+import-classbody-form00-before refused
+import-classbody-form00-after bound:query Q { f @slot { __typename } }
+import-classbody-form01-before refused
+import-classbody-form01-after bound:query Q { f @slot { __typename } }
+import-classbody-form02-before refused
+import-classbody-form02-after bound:query Q { f @slot { __typename } }
+import-classbody-form03-before refused
+import-classbody-form03-after bound:query Q { f @slot { __typename } }
+import-classbody-form04-before refused
+import-classbody-form04-after bound:query Q { f @slot { __typename } }
+import-classbody-form05-before refused
+import-classbody-form05-after bound:query Q { f @slot { __typename } }
+import-classbody-form06-before bound:query Q { f @slot { __typename } }
+import-classbody-form06-after bound:query Q { f @slot { __typename } }
+import-classbody-form07-before bound:query Q { f @slot { __typename } }
+import-classbody-form07-after bound:query Q { f @slot { __typename } }
+import-classbody-form08-before bound:query Q { f @slot { __typename } }
+import-classbody-form08-after bound:query Q { f @slot { __typename } }
+import-classbody-form09-before bound:query Q { f @slot { __typename } }
+import-classbody-form09-after bound:query Q { f @slot { __typename } }
+import-classbody-form10-before bound:query Q { f @slot { __typename } }
+import-classbody-form10-after bound:query Q { f @slot { __typename } }
+import-classbody-form11-before refused
+import-classbody-form11-after bound:query Q { f @slot { __typename } }
+import-classbody-form12-before refused
+import-classbody-form12-after bound:query Q { f @slot { __typename } }
+import-classbody-form13-before refused
+import-classbody-form13-after bound:query Q { f @slot { __typename } }
+import-classbody-form14-before refused
+import-classbody-form14-after bound:query Q { f @slot { __typename } }
+import-classbody-form15-before refused
+import-classbody-form15-after bound:query Q { f @slot { __typename } }
+import-classbody-form16-before refused
+import-classbody-form16-after bound:query Q { f @slot { __typename } }
+import-classbody-form17-before bound:query Q { f @slot { __typename } }
+import-classbody-form17-after bound:query Q { f @slot { __typename } }
+import-classbody-form18-before refused
+import-classbody-form18-after bound:query Q { f @slot { __typename } }
+import-classbody-form19-before refused
+import-classbody-form19-after bound:query Q { f @slot { __typename } }
+import-nestedfn-none-before bound:query Q { f @slot { __typename } }
+import-nestedfn-assign-before bound:query R { g @slot { __typename } }
+import-nestedfn-assign-after refused
+import-nestedfn-global-before refused
+import-nestedfn-form00-before refused
+import-nestedfn-form00-after refused
+import-nestedfn-form01-before refused
+import-nestedfn-form01-after refused
+import-nestedfn-form02-before refused
+import-nestedfn-form02-after refused
+import-nestedfn-form03-before refused
+import-nestedfn-form03-after refused
+import-nestedfn-form04-before refused
+import-nestedfn-form04-after refused
+import-nestedfn-form05-before refused
+import-nestedfn-form05-after refused
+import-nestedfn-form06-before bound:query Q { f @slot { __typename } }
+import-nestedfn-form06-after bound:query Q { f @slot { __typename } }
+import-nestedfn-form07-before bound:query Q { f @slot { __typename } }
+import-nestedfn-form07-after bound:query Q { f @slot { __typename } }
+import-nestedfn-form08-before bound:query Q { f @slot { __typename } }
+import-nestedfn-form08-after bound:query Q { f @slot { __typename } }
+import-nestedfn-form09-before bound:query Q { f @slot { __typename } }
+import-nestedfn-form09-after bound:query Q { f @slot { __typename } }
+import-nestedfn-form10-before bound:query Q { f @slot { __typename } }
+import-nestedfn-form10-after bound:query Q { f @slot { __typename } }
+import-nestedfn-form11-before refused
+import-nestedfn-form11-after refused
+import-nestedfn-form12-before refused
+import-nestedfn-form12-after refused
+import-nestedfn-form13-before refused
+import-nestedfn-form13-after refused
+import-nestedfn-form14-before refused
+import-nestedfn-form14-after refused
+import-nestedfn-form15-before refused
+import-nestedfn-form15-after refused
+import-nestedfn-form16-before refused
+import-nestedfn-form16-after refused
+import-nestedfn-form17-before refused
+import-nestedfn-form17-after refused
+import-nestedfn-form18-before refused
+import-nestedfn-form18-after refused
+import-nestedfn-form19-before refused
+import-nestedfn-form19-after refused
+import-nestedfn-form20-before refused
+import-nestedfn-form20-after refused
+import-nestedfn-form21-before refused
+import-nestedfn-form21-after refused
+import-nestedfn-form22-before refused
+import-nestedfn-form22-after refused
+import-nestedfn-form23-before refused
+import-nestedfn-form23-after refused
+import-genexp-none-before bound:query Q { f @slot { __typename } }
+import-genexp-assign-before bound:query R { g @slot { __typename } }
+import-genexp-assign-after refused
+import-genexp-global-before refused
+import-genexp-form00-before refused
+import-genexp-form00-after refused
+import-genexp-form01-before refused
+import-genexp-form01-after refused
+import-genexp-form02-before refused
+import-genexp-form02-after refused
+import-genexp-form03-before refused
+import-genexp-form03-after refused
+import-genexp-form04-before refused
+import-genexp-form04-after refused
+import-genexp-form05-before refused
+import-genexp-form05-after refused
+import-genexp-form06-before bound:query Q { f @slot { __typename } }
+import-genexp-form06-after bound:query Q { f @slot { __typename } }
+import-genexp-form07-before bound:query Q { f @slot { __typename } }
+import-genexp-form07-after bound:query Q { f @slot { __typename } }
+import-genexp-form08-before bound:query Q { f @slot { __typename } }
+import-genexp-form08-after bound:query Q { f @slot { __typename } }
+import-genexp-form09-before bound:query Q { f @slot { __typename } }
+import-genexp-form09-after bound:query Q { f @slot { __typename } }
+import-genexp-form10-before bound:query Q { f @slot { __typename } }
+import-genexp-form10-after bound:query Q { f @slot { __typename } }
+import-genexp-form11-before refused
+import-genexp-form11-after refused
+import-genexp-form12-before refused
+import-genexp-form12-after refused
+import-genexp-form13-before refused
+import-genexp-form13-after refused
+import-genexp-form14-before refused
+import-genexp-form14-after refused
+import-genexp-form15-before refused
+import-genexp-form15-after refused
+import-genexp-form16-before refused
+import-genexp-form16-after refused
+import-genexp-form17-before refused
+import-genexp-form17-after refused
+import-genexp-form18-before refused
+import-genexp-form18-after refused
+import-genexp-form19-before refused
+import-genexp-form19-after refused
+import-genexp-form20-before refused
+import-genexp-form20-after refused
+import-genexp-form21-before refused
+import-genexp-form21-after refused
+import-genexp-form22-before refused
+import-genexp-form22-after refused
+import-genexp-form23-before refused
+import-genexp-form23-after refused
+import-deepfn-none-before bound:query Q { f @slot { __typename } }
+import-deepfn-assign-before bound:query R { g @slot { __typename } }
+import-deepfn-assign-after refused
+import-deepfn-global-before refused
+import-deepfn-form00-before refused
+import-deepfn-form00-after refused
+import-deepfn-form01-before refused
+import-deepfn-form01-after refused
+import-deepfn-form02-before refused
+import-deepfn-form02-after refused
+import-deepfn-form03-before refused
+import-deepfn-form03-after refused
+import-deepfn-form04-before refused
+import-deepfn-form04-after refused
+import-deepfn-form05-before refused
+import-deepfn-form05-after refused
+import-deepfn-form06-before bound:query Q { f @slot { __typename } }
+import-deepfn-form06-after bound:query Q { f @slot { __typename } }
+import-deepfn-form07-before bound:query Q { f @slot { __typename } }
+import-deepfn-form07-after bound:query Q { f @slot { __typename } }
+import-deepfn-form08-before bound:query Q { f @slot { __typename } }
+import-deepfn-form08-after bound:query Q { f @slot { __typename } }
+import-deepfn-form09-before bound:query Q { f @slot { __typename } }
+import-deepfn-form09-after bound:query Q { f @slot { __typename } }
+import-deepfn-form10-before bound:query Q { f @slot { __typename } }
+import-deepfn-form10-after bound:query Q { f @slot { __typename } }
+import-deepfn-form11-before refused
+import-deepfn-form11-after refused
+import-deepfn-form12-before refused
+import-deepfn-form12-after refused
+import-deepfn-form13-before refused
+import-deepfn-form13-after refused
+import-deepfn-form14-before refused
+import-deepfn-form14-after refused
+import-deepfn-form15-before refused
+import-deepfn-form15-after refused
+import-deepfn-form16-before refused
+import-deepfn-form16-after refused
+import-deepfn-form17-before refused
+import-deepfn-form17-after refused
+import-deepfn-form18-before refused
+import-deepfn-form18-after refused
+import-deepfn-form19-before refused
+import-deepfn-form19-after refused
+import-deepfn-form20-before refused
+import-deepfn-form20-after refused
+import-deepfn-form21-before refused
+import-deepfn-form21-after refused
+import-deepfn-form22-before refused
+import-deepfn-form22-after refused
+import-deepfn-form23-before refused
+import-deepfn-form23-after refused
+import-fnmethod-none-before bound:query Q { f @slot { __typename } }
+import-fnmethod-assign-before bound:query R { g @slot { __typename } }
+import-fnmethod-assign-after refused
+import-fnmethod-global-before refused
+import-fnmethod-form00-before refused
+import-fnmethod-form00-after refused
+import-fnmethod-form01-before refused
+import-fnmethod-form01-after refused
+import-fnmethod-form02-before refused
+import-fnmethod-form02-after refused
+import-fnmethod-form03-before refused
+import-fnmethod-form03-after refused
+import-fnmethod-form04-before refused
+import-fnmethod-form04-after refused
+import-fnmethod-form05-before refused
+import-fnmethod-form05-after refused
+import-fnmethod-form06-before bound:query Q { f @slot { __typename } }
+import-fnmethod-form06-after bound:query Q { f @slot { __typename } }
+import-fnmethod-form07-before bound:query Q { f @slot { __typename } }
+import-fnmethod-form07-after bound:query Q { f @slot { __typename } }
+import-fnmethod-form08-before bound:query Q { f @slot { __typename } }
+import-fnmethod-form08-after bound:query Q { f @slot { __typename } }
+import-fnmethod-form09-before bound:query Q { f @slot { __typename } }
+import-fnmethod-form09-after bound:query Q { f @slot { __typename } }
+import-fnmethod-form10-before bound:query Q { f @slot { __typename } }
+import-fnmethod-form10-after bound:query Q { f @slot { __typename } }
+import-fnmethod-form11-before refused
+import-fnmethod-form11-after refused
+import-fnmethod-form12-before refused
+import-fnmethod-form12-after refused
+import-fnmethod-form13-before refused
+import-fnmethod-form13-after refused
+import-fnmethod-form14-before refused
+import-fnmethod-form14-after refused
+import-fnmethod-form15-before refused
+import-fnmethod-form15-after refused
+import-fnmethod-form16-before refused
+import-fnmethod-form16-after refused
+import-fnmethod-form17-before refused
+import-fnmethod-form17-after refused
+import-fnmethod-form18-before refused
+import-fnmethod-form18-after refused
+import-fnmethod-form19-before refused
+import-fnmethod-form19-after refused
+import-fnmethod-form20-before refused
+import-fnmethod-form20-after refused
+import-fnmethod-form21-before refused
+import-fnmethod-form21-after refused
+import-fnmethod-form22-before refused
+import-fnmethod-form22-after refused
+import-fnmethod-form23-before refused
+import-fnmethod-form23-after refused
+enclosing-nestedfn-none-before bound:query Q { f @slot { __typename } }
+enclosing-nestedfn-assign-before bound:query R { g @slot { __typename } }
+enclosing-nestedfn-assign-after refused
+enclosing-nestedfn-global-before refused
+enclosing-nestedfn-nonlocal-before refused
+enclosing-nestedfn-form00-before refused
+enclosing-nestedfn-form00-after refused
+enclosing-nestedfn-form01-before refused
+enclosing-nestedfn-form01-after refused
+enclosing-nestedfn-form02-before refused
+enclosing-nestedfn-form02-after refused
+enclosing-nestedfn-form03-before refused
+enclosing-nestedfn-form03-after refused
+enclosing-nestedfn-form04-before refused
+enclosing-nestedfn-form04-after refused
+enclosing-nestedfn-form05-before refused
+enclosing-nestedfn-form05-after refused
+enclosing-nestedfn-form06-before bound:query Q { f @slot { __typename } }
+enclosing-nestedfn-form06-after bound:query Q { f @slot { __typename } }
+enclosing-nestedfn-form07-before bound:query Q { f @slot { __typename } }
+enclosing-nestedfn-form07-after bound:query Q { f @slot { __typename } }
+enclosing-nestedfn-form08-before bound:query Q { f @slot { __typename } }
+enclosing-nestedfn-form08-after bound:query Q { f @slot { __typename } }
+enclosing-nestedfn-form09-before bound:query Q { f @slot { __typename } }
+enclosing-nestedfn-form09-after bound:query Q { f @slot { __typename } }
+enclosing-nestedfn-form10-before bound:query Q { f @slot { __typename } }
+enclosing-nestedfn-form10-after bound:query Q { f @slot { __typename } }
+enclosing-nestedfn-form11-before refused
+enclosing-nestedfn-form11-after refused
+enclosing-nestedfn-form12-before refused
+enclosing-nestedfn-form12-after refused
+enclosing-nestedfn-form13-before refused
+enclosing-nestedfn-form13-after refused
+enclosing-nestedfn-form14-before refused
+enclosing-nestedfn-form14-after refused
+enclosing-nestedfn-form15-before refused
+enclosing-nestedfn-form15-after refused
+enclosing-nestedfn-form16-before refused
+enclosing-nestedfn-form16-after refused
+enclosing-nestedfn-form17-before refused
+enclosing-nestedfn-form17-after refused
+enclosing-nestedfn-form18-before refused
+enclosing-nestedfn-form18-after refused
+enclosing-nestedfn-form19-before refused
+enclosing-nestedfn-form19-after refused
+enclosing-nestedfn-form20-before refused
+enclosing-nestedfn-form20-after refused
+enclosing-nestedfn-form21-before refused
+enclosing-nestedfn-form21-after refused
+enclosing-nestedfn-form22-before refused
+enclosing-nestedfn-form22-after refused
+enclosing-nestedfn-form23-before refused
+enclosing-nestedfn-form23-after refused
+enclosing-deepfn-none-before bound:query Q { f @slot { __typename } }
+enclosing-deepfn-assign-before bound:query R { g @slot { __typename } }
+enclosing-deepfn-assign-after refused
+enclosing-deepfn-global-before refused
+enclosing-deepfn-nonlocal-before refused
+enclosing-deepfn-form00-before refused
+enclosing-deepfn-form00-after refused
+enclosing-deepfn-form01-before refused
+enclosing-deepfn-form01-after refused
+enclosing-deepfn-form02-before refused
+enclosing-deepfn-form02-after refused
+enclosing-deepfn-form03-before refused
+enclosing-deepfn-form03-after refused
+enclosing-deepfn-form04-before refused
+enclosing-deepfn-form04-after refused
+enclosing-deepfn-form05-before refused
+enclosing-deepfn-form05-after refused
+enclosing-deepfn-form06-before bound:query Q { f @slot { __typename } }
+enclosing-deepfn-form06-after bound:query Q { f @slot { __typename } }
+enclosing-deepfn-form07-before bound:query Q { f @slot { __typename } }
+enclosing-deepfn-form07-after bound:query Q { f @slot { __typename } }
+enclosing-deepfn-form08-before bound:query Q { f @slot { __typename } }
+enclosing-deepfn-form08-after bound:query Q { f @slot { __typename } }
+enclosing-deepfn-form09-before bound:query Q { f @slot { __typename } }
+enclosing-deepfn-form09-after bound:query Q { f @slot { __typename } }
+enclosing-deepfn-form10-before bound:query Q { f @slot { __typename } }
+enclosing-deepfn-form10-after bound:query Q { f @slot { __typename } }
+enclosing-deepfn-form11-before refused
+enclosing-deepfn-form11-after refused
+enclosing-deepfn-form12-before refused
+enclosing-deepfn-form12-after refused
+enclosing-deepfn-form13-before refused
+enclosing-deepfn-form13-after refused
+enclosing-deepfn-form14-before refused
+enclosing-deepfn-form14-after refused
+enclosing-deepfn-form15-before refused
+enclosing-deepfn-form15-after refused
+enclosing-deepfn-form16-before refused
+enclosing-deepfn-form16-after refused
+enclosing-deepfn-form17-before refused
+enclosing-deepfn-form17-after refused
+enclosing-deepfn-form18-before refused
+enclosing-deepfn-form18-after refused
+enclosing-deepfn-form19-before refused
+enclosing-deepfn-form19-after refused
+enclosing-deepfn-form20-before refused
+enclosing-deepfn-form20-after refused
+enclosing-deepfn-form21-before refused
+enclosing-deepfn-form21-after refused
+enclosing-deepfn-form22-before refused
+enclosing-deepfn-form22-after refused
+enclosing-deepfn-form23-before refused
+enclosing-deepfn-form23-after refused
+enclosing-fnmethod-none-before bound:query Q { f @slot { __typename } }
+enclosing-fnmethod-assign-before bound:query R { g @slot { __typename } }
+enclosing-fnmethod-assign-after refused
+enclosing-fnmethod-global-before refused
+enclosing-fnmethod-nonlocal-before refused
+enclosing-fnmethod-form00-before refused
+enclosing-fnmethod-form00-after refused
+enclosing-fnmethod-form01-before refused
+enclosing-fnmethod-form01-after refused
+enclosing-fnmethod-form02-before refused
+enclosing-fnmethod-form02-after refused
+enclosing-fnmethod-form03-before refused
+enclosing-fnmethod-form03-after refused
+enclosing-fnmethod-form04-before refused
+enclosing-fnmethod-form04-after refused
+enclosing-fnmethod-form05-before refused
+enclosing-fnmethod-form05-after refused
+enclosing-fnmethod-form06-before bound:query Q { f @slot { __typename } }
+enclosing-fnmethod-form06-after bound:query Q { f @slot { __typename } }
+enclosing-fnmethod-form07-before bound:query Q { f @slot { __typename } }
+enclosing-fnmethod-form07-after bound:query Q { f @slot { __typename } }
+enclosing-fnmethod-form08-before bound:query Q { f @slot { __typename } }
+enclosing-fnmethod-form08-after bound:query Q { f @slot { __typename } }
+enclosing-fnmethod-form09-before bound:query Q { f @slot { __typename } }
+enclosing-fnmethod-form09-after bound:query Q { f @slot { __typename } }
+enclosing-fnmethod-form10-before bound:query Q { f @slot { __typename } }
+enclosing-fnmethod-form10-after bound:query Q { f @slot { __typename } }
+enclosing-fnmethod-form11-before refused
+enclosing-fnmethod-form11-after refused
+enclosing-fnmethod-form12-before refused
+enclosing-fnmethod-form12-after refused
+enclosing-fnmethod-form13-before refused
+enclosing-fnmethod-form13-after refused
+enclosing-fnmethod-form14-before refused
+enclosing-fnmethod-form14-after refused
+enclosing-fnmethod-form15-before refused
+enclosing-fnmethod-form15-after refused
+enclosing-fnmethod-form16-before refused
+enclosing-fnmethod-form16-after refused
+enclosing-fnmethod-form17-before refused
+enclosing-fnmethod-form17-after refused
+enclosing-fnmethod-form18-before refused
+enclosing-fnmethod-form18-after refused
+enclosing-fnmethod-form19-before refused
+enclosing-fnmethod-form19-after refused
+enclosing-fnmethod-form20-before refused
+enclosing-fnmethod-form20-after refused
+enclosing-fnmethod-form21-before refused
+enclosing-fnmethod-form21-after refused
+enclosing-fnmethod-form22-before refused
+enclosing-fnmethod-form22-after refused
+enclosing-fnmethod-form23-before refused
+enclosing-fnmethod-form23-after refused
+global-before-holder-assign refused
+global-before-holder-def refused
+global-before-holder-class refused
+global-before-holder-import refused
+global-before-holder-from-import refused
+global-before-holder-for refused
+global-before-holder-except refused
+global-before-holder-match refused
+global-before-beside-assign refused
+global-before-beside-def refused
+global-before-beside-class refused
+global-before-beside-import refused
+global-before-beside-from-import refused
+global-before-beside-for refused
+global-before-beside-except refused
+global-before-beside-match refused
+global-after-holder-assign refused
+global-after-holder-def refused
+global-after-holder-class refused
+global-after-holder-import refused
+global-after-holder-from-import refused
+global-after-holder-for refused
+global-after-holder-except refused
+global-after-holder-match refused
+global-after-beside-assign refused
+global-after-beside-def refused
+global-after-beside-class refused
+global-after-beside-import refused
+global-after-beside-from-import refused
+global-after-beside-for refused
+global-after-beside-except refused
+global-after-beside-match refused
+global-never-holder-assign refused
+global-never-holder-def refused
+global-never-holder-class refused
+global-never-holder-import refused
+global-never-holder-from-import refused
+global-never-holder-for refused
+global-never-holder-except refused
+global-never-holder-match refused
+global-never-beside-assign refused
+global-never-beside-def refused
+global-never-beside-class refused
+global-never-beside-import refused
+global-never-beside-from-import refused
+global-never-beside-for refused
+global-never-beside-except refused
+global-never-beside-match refused
+nonlocal-before-holder-assign refused
+nonlocal-before-holder-def refused
+nonlocal-before-holder-class refused
+nonlocal-before-holder-import refused
+nonlocal-before-holder-from-import refused
+nonlocal-before-holder-for refused
+nonlocal-before-holder-except refused
+nonlocal-before-holder-match refused
+nonlocal-before-beside-assign refused
+nonlocal-before-beside-def refused
+nonlocal-before-beside-class refused
+nonlocal-before-beside-import refused
+nonlocal-before-beside-from-import refused
+nonlocal-before-beside-for refused
+nonlocal-before-beside-except refused
+nonlocal-before-beside-match refused
+nonlocal-before-module-assign bound:query Q { f @slot { __typename } }
+nonlocal-before-module-def bound:query Q { f @slot { __typename } }
+nonlocal-before-module-class bound:query Q { f @slot { __typename } }
+nonlocal-before-module-import bound:query Q { f @slot { __typename } }
+nonlocal-before-module-from-import bound:query Q { f @slot { __typename } }
+nonlocal-before-module-for bound:query Q { f @slot { __typename } }
+nonlocal-before-module-except bound:query Q { f @slot { __typename } }
+nonlocal-before-module-match bound:query Q { f @slot { __typename } }
+nonlocal-after-holder-assign refused
+nonlocal-after-holder-def refused
+nonlocal-after-holder-class refused
+nonlocal-after-holder-import refused
+nonlocal-after-holder-from-import refused
+nonlocal-after-holder-for refused
+nonlocal-after-holder-except refused
+nonlocal-after-holder-match refused
+nonlocal-after-beside-assign refused
+nonlocal-after-beside-def refused
+nonlocal-after-beside-class refused
+nonlocal-after-beside-import refused
+nonlocal-after-beside-from-import refused
+nonlocal-after-beside-for refused
+nonlocal-after-beside-except refused
+nonlocal-after-beside-match refused
+nonlocal-never-holder-assign refused
+nonlocal-never-holder-def refused
+nonlocal-never-holder-class refused
+nonlocal-never-holder-import refused
+nonlocal-never-holder-from-import refused
+nonlocal-never-holder-for refused
+nonlocal-never-holder-except refused
+nonlocal-never-holder-match refused
+nonlocal-never-beside-assign refused
+nonlocal-never-beside-def refused
+nonlocal-never-beside-class refused
+nonlocal-never-beside-import refused
+nonlocal-never-beside-from-import refused
+nonlocal-never-beside-for refused
+nonlocal-never-beside-except refused
+nonlocal-never-beside-match refused
+statement-holder bound:query Q { f @slot { __typename } }
+default-holder bound:query Q { f @slot { __typename } }
+default-tmpl refused
+decorator-holder bound:query Q { f @slot { __typename } }
+decorator-tmpl bound:query Q { f @slot { __typename } }
+class-base-holder bound:query Q { f @slot { __typename } }
+class-base-tmpl refused
+class-keyword-holder bound:query Q { f @slot { __typename } }
+class-keyword-tmpl refused
+lambda-default-holder bound:query Q { f @slot { __typename } }
+lambda-default-tmpl refused
+genexp-iterated-after-rebind bound:query R { g @slot { __typename } }
+nonlocal-through-a-function-that-binds-nothing refused
