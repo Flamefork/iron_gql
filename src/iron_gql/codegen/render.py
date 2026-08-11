@@ -216,21 +216,54 @@ def render_field(field: CollectedField) -> str:
 
 def render_pydantic_class(model: CollectedModel, base: str) -> str:
     rendered_fields = "\n".join(render_field(field) for field in model.fields)
-    return f"class {model.name}({base}):\n    {indent_block(rendered_fields, '    ')}"
+    header = f"class {model.name}{_type_params(model.type_params)}({base}):"
+    return f"{header}\n    {indent_block(rendered_fields, '    ')}"
 
 
 def render_slot_class(model: CollectedModel) -> str:
-    # A node model is the phantom's one destination, and it is written as a
-    # concrete base: the fragment classes readable here in the binding this
-    # model was copied for. The union of none of them is `Never` -- an
-    # unfilled slot's node is statically unreadable.
-    offered = " | ".join(model.offered_fragments) or "Never"
+    # A node model is the phantom's one destination: the parameter threaded
+    # down the path to it lands here, in the slot base, and each binding fills
+    # it with the fragment classes readable at this slot.
+    if not model.type_params:
+        # Internal invariant: a node model is its own slot's model, and
+        # `collect.parametrize_slot_paths` seeds the walk with exactly those.
+        msg = f"slot node {model.name!r} reached the renderer unparametrised"
+        raise AssertionError(msg)
+    offered = ", ".join(model.type_params)
     body = "\n".join([
         f'slot_name__: ClassVar[str] = "{model.slot_name}"',
         *(render_field(field) for field in model.fields),
     ])
-    header = f"class {model.name}({SLOT_MODEL_BASE_NAME}[{offered}]):"
+    header = (
+        f"class {model.name}{_type_params(model.type_params)}"
+        f"({SLOT_MODEL_BASE_NAME}[{offered}]):"
+    )
     return f"{header}\n    {indent_block(body, '    ')}"
+
+
+def _type_params(type_params: tuple[str, ...]) -> str:
+    # PEP 695 parameters, declared on the model itself: their order is the
+    # model's own statement, which a parametrised base cannot make when the
+    # model reaches two slots. Variance is left to inference and lands where it
+    # belongs -- a parameter that only reaches `slots.GQLSlotNode`'s
+    # contravariant phantom infers contravariant, one behind a `list[...]`
+    # field infers invariant, and invariant is the truth for a mutable field.
+    # Shared code that wants any binding's result spells the phantom `Any`,
+    # which is assignable both ways whatever the variance came out as.
+    #
+    # The parameters are visible in pydantic's JSON Schema -- `$defs` keys and
+    # titles carry the fragment class names (`Post_ImageParts_`) -- so two
+    # bindings of one template describe the same shape under two names. The
+    # phantom is not a field and nothing validates by it; a consumer diffing
+    # schema snapshots is the one this shows up for.
+    if not type_params:
+        return ""
+    # Each defaults to `Never` (PEP 696), so the bare `{Op}Result` an
+    # annotation may still spell means "readable by nothing" rather than an
+    # unparametrised generic -- the same bottom `slots.GQLSlotNode` declares
+    # for its own phantom.
+    defaulted = ", ".join(f"{name} = Never" for name in type_params)
+    return f"[{defaulted}]"
 
 
 def render_imports(
@@ -522,10 +555,8 @@ def render_package(
     # itself is also what fragment handles derive from. The open base exists
     # exactly when some model validates inside a slot or fragment subtree. A
     # template always has at least one slot (that is what makes it a template),
-    # so its slot model(s) already make `uses_slot_models` true -- whether they
-    # stand among the shared artifacts or among a binding's own copies.
-    rendered_artifacts = (*collected.result_artifacts, *collected.binding_artifacts)
-    uses_slot_models = next(slot_roots(rendered_artifacts), None) is not None
+    # so its slot model(s) already make `uses_slot_models` true.
+    uses_slot_models = next(slot_roots(collected.result_artifacts), None) is not None
     uses_open_models = bool(collected.open_model_names)
     sections = [
         # The slot model base is the one multi-base shape a module can
@@ -546,15 +577,6 @@ def render_package(
             render_operations(collected.operations, package_name, mode_config)
         ),
         "\n\n\n".join(render_fragments(collected.fragments)),
-        # Between the handles and the bindings, the one section whose
-        # position is forced: a node model names its binding's fragment
-        # classes in its base, and a binding names its result model in its
-        # own -- and a base, unlike every other reference the module makes, is
-        # evaluated where it is written rather than left a string by
-        # `from __future__ import annotations`.
-        "\n\n\n".join(
-            render_artifacts(collected.binding_artifacts, collected.open_model_names)
-        ),
         "\n\n\n".join(render_template_bases(collected.templates, mode_config)),
         "\n\n\n".join(render_bindings(collected.bindings, package_name, mode_config)),
         "\n\n\n".join(
@@ -589,7 +611,12 @@ def render_artifacts(
             case CollectedModel():
                 rendered.append(render_slot_class(artifact))
             case CollectedUnionAlias():
-                rendered.append(f"type {artifact.name} = {artifact.type_expr}")
+                params = (
+                    f"[{', '.join(artifact.type_params)}]"
+                    if artifact.type_params
+                    else ""
+                )
+                rendered.append(f"type {artifact.name}{params} = {artifact.type_expr}")
     return rendered
 
 
@@ -698,15 +725,14 @@ def render_template_bases(
     # lives here is the shape every binding of one template shares: one type
     # parameter, the result, and the `execute` signature written against it.
     #
-    # The parameter is the *result*, not one phantom per slot. Slot phantoms
-    # belong to the models, which each binding pins concretely; a parameter per
-    # slot had to be threaded through every model on the way to a node, which
-    # is what made those models generic -- and a generic pydantic model is not
-    # picklable, leaks its parameter names into the JSON schema, and answers
-    # `isinstance` against a specialization nobody wrote. One parameter, at the
-    # level where callers actually need it: a helper generic over
-    # `{Operation}Bound[TResult]` still takes any binding of the template and
-    # hands its caller back the concrete result.
+    # The parameter is the *result*, one for the whole base, while the slot
+    # phantoms live on the models (see `collect.parametrize_slot_paths`) and
+    # each binding fills them in when it names its result type. The two say
+    # different things: this one lets a helper generic over
+    # `{Operation}Bound[TResult]` take any binding of the template and hand its
+    # caller back the concrete result, while the phantoms let a helper that
+    # names `{Operation}Result[Any]` read a slot with the handle it was
+    # passed.
     rendered: list[str] = []
     for template in templates:
         # The parameter carries no bound: the base never validates anything

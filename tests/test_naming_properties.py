@@ -94,7 +94,6 @@ def test_two_shapes_are_never_named_alike(
         return
     ir = CollectedPackageIR(
         result_artifacts=[first, second],
-        binding_artifacts=[],
         input_artifacts=[],
         operations=[],
         fragments=[],

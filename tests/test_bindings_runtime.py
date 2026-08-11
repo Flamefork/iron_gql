@@ -1,8 +1,10 @@
 import importlib
 import json
 import pickle
+import subprocess
+import sys
 from collections.abc import Callable
-from typing import cast
+from typing import Any
 
 import pydantic
 import pytest
@@ -778,15 +780,12 @@ async def test_unread_closure_only_brick_still_validates_eagerly(
 async def test_bound_operation_validation_error_names_the_bindings_result_class(
     httpserver: HTTPServer,
 ):
-    # A binding validates against a model of its own -- a plain class written
-    # into the module, named after the combination that produced it -- so the
-    # ValidationError title is that class's own name, the way a plain (non
-    # bound) operation's title is its result model's. It used to be the
-    # template's bare `GetAttachmentResult`, which was not the class doing the
-    # validating: the model was generic over the offered fragments, and
-    # `execute` handed the client a pydantic-built parametrization whose
-    # mangled name a `model_parametrized_name` override in the scaffold had to
-    # hide.
+    # A binding validates against its template's result model parametrised by
+    # its own fragments, so the ValidationError title names both: the model
+    # that failed and the combination it was read for. The bare
+    # `GetAttachmentResult` would name only the first, and two bindings of one
+    # template fail identically-shaped models -- the arguments are what tells
+    # a reader which of them was being validated.
     httpserver.expect_request("/graphql/", method="POST").respond_with_json(
         BOUNDARY_BODY
     )
@@ -797,7 +796,7 @@ async def test_bound_operation_validation_error_names_the_bindings_result_class(
             _ = await boundary_queries.bound.execute(id="1")
     title = str(exc_info.value).splitlines()[0]
     assert title == (
-        "1 validation error for GetAttachmentWithAttachmentImagePartsResult"
+        "1 validation error for GetAttachmentResult[Union[ImageParts, NodeId]]"
     )
 
 
@@ -807,11 +806,11 @@ async def test_execute_validates_with_the_result_type_its_signature_promises(
     # `execute` is written per binding for this reason. Inherited from the
     # template's base, its body was evaluated with the base's own type
     # parameter -- Python substitutes nothing when a method runs -- so the
-    # class handed to the client was not the one the signature named. The
-    # binding's result model is a plain class now, and identity is what says
-    # `execute` validated with it: two bindings of one template have models of
-    # the same shape, so anything weaker passes while the answer carries the
-    # other binding's offered fragments.
+    # class handed to the client was not the one the signature named. Identity
+    # is what says `execute` validated with the binding's own parametrisation:
+    # pydantic hands out one class per (model, arguments) pair, so a result
+    # read under another binding's fragments is a different class even though
+    # the two have the same shape.
     httpserver.expect_request("/graphql/", method="POST").respond_with_json(
         COMPLETE_BOUNDARY_BODY
     )
@@ -819,25 +818,29 @@ async def test_execute_validates_with_the_result_type_its_signature_promises(
         "bindings_composition_boundary", httpserver.url_for("/graphql/")
     ):
         result = await boundary_queries.bound.execute(id="1")
-    assert type(result) is boundary_api.GetAttachmentWithAttachmentImagePartsResult
+    assert (
+        type(result)
+        is boundary_api.GetAttachmentResult[
+            boundary_api.ImageParts | boundary_api.NodeId
+        ]
+    )
 
 
-async def test_a_bound_results_slot_data_survives_in_process_pickling(
+async def test_a_helper_generic_over_the_binding_reads_what_it_was_handed(
     httpserver: HTTPServer,
 ):
-    # `slots.GQLSlotNode` promises that a validated node keeps its slot data
-    # through a pickle round-trip in one process; tests/test_slots_runtime.py
-    # pins that on hand-written models, and this pins it on the models the
-    # generator actually writes -- which is where it used to fail. pydantic
-    # registers a parametrization of a generic model in its module's globals
-    # only when the subscription itself runs at module scope, and a generated
-    # result's ran inside a class body (and recursively, inside pydantic, for
-    # every model below it): pickle then found no qualname for the class of
-    # the object it was handed, and every result raised `PicklingError`. One
-    # plain class per binding is what leaves nothing to look up.
-    #
-    # The pickle payload is produced and consumed inside this test, so
-    # unpickling is safe here.
+    # The shape shared infrastructure is written in: the helper owns the
+    # operation and each caller owns the selection, so the helper spells the
+    # phantom `Any` -- "whatever this binding offered" -- and reads with the
+    # handle it was given. That annotation is the whole of what it gives up:
+    # the same `read`, and the runtime guard below still answers.
+    def first_attachment[TData: pydantic.BaseModel](
+        result: boundary_api.GetAttachmentResult[Any],
+        handle: GQLFragment[TData],
+    ) -> TData | None:
+        assert result.post is not None
+        return handle.read(result.post.attachment)
+
     httpserver.expect_request("/graphql/", method="POST").respond_with_json(
         COMPLETE_BOUNDARY_BODY
     )
@@ -845,17 +848,57 @@ async def test_a_bound_results_slot_data_survives_in_process_pickling(
         "bindings_composition_boundary", httpserver.url_for("/graphql/")
     ):
         result = await boundary_queries.bound.execute(id="1")
-    # `pickle.loads` answers `Any` -- a payload holds nothing to type it by --
-    # and the isinstance below is what turns it back into a type: the check
-    # this test wants anyway, made where the `Any` would otherwise spread.
-    restored = cast("object", pickle.loads(pickle.dumps(result)))
-    assert isinstance(
-        restored, boundary_api.GetAttachmentWithAttachmentImagePartsResult
-    )
-    assert restored.post is not None
-    image = boundary_queries.image_parts.read(restored.post.attachment)
+    image = first_attachment(result, boundary_queries.image_parts)
     assert image is not None
     assert image.url == "u"
+    # And the guard survives the erasure: a handle this binding never offered
+    # is a wiring bug, not a type mismatch that reads back as None -- the
+    # static check is gone, the runtime one is not.
+    with pytest.raises(ValueError, match=r"is not part of the binding"):
+        first_attachment(result, shape_queries.thumb_alt)
+
+
+async def test_a_bound_result_with_a_populated_slot_does_not_pickle(
+    httpserver: HTTPServer,
+):
+    # The root parametrization has a module-level name because the generated
+    # module subscribes it while declaring the binding. A populated path to the
+    # slot also instantiates nested parametrizations that pydantic created
+    # without module-level names, and pickle cannot resolve those classes.
+    httpserver.expect_request("/graphql/", method="POST").respond_with_json(
+        COMPLETE_BOUNDARY_BODY
+    )
+    async with use_package_client(
+        "bindings_composition_boundary", httpserver.url_for("/graphql/")
+    ):
+        result = await boundary_queries.bound.execute(id="1")
+    with pytest.raises(pickle.PicklingError, match=r"Post\[.*ImageParts"):
+        pickle.dumps(result)
+
+
+def test_a_bound_result_with_a_null_slot_path_pickles_across_processes():
+    # No nested parametrized model is instantiated when the nullable parent is
+    # null. The root specialization is registered at module scope, so a fresh
+    # interpreter can import it and restore the result.
+    result = boundary_api.GetAttachmentResult[
+        boundary_api.ImageParts | boundary_api.NodeId
+    ].model_validate({"post": None})
+    assert result.post is None
+
+    child = """
+import pickle
+import sys
+
+result = pickle.loads(sys.stdin.buffer.read())
+assert result.post is None
+"""
+    completed = subprocess.run(
+        [sys.executable, "-c", child],
+        input=pickle.dumps(result),
+        capture_output=True,
+        check=False,
+    )
+    assert completed.returncode == 0, completed.stderr.decode()
 
 
 # --- fragment variables ---------------------------------------------

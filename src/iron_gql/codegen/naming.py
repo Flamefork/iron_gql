@@ -18,6 +18,7 @@ from iron_gql.codegen.ir import NamedRef
 from iron_gql.codegen.ir import ScalarRef
 from iron_gql.codegen.ir import TypeRef
 from iron_gql.codegen.ir import field_name_to_pascal
+from iron_gql.codegen.ir import slot_param_name
 from iron_gql.codegen.render import BIND_BODY_FREE_NAMES
 
 
@@ -379,7 +380,7 @@ def _module_name_claims(
         for origin in scaffold[name]:
             yield name, "scaffold", origin
     yield from _fixed_name_claims(ir)
-    for artifact in (*ir.result_artifacts, *ir.binding_artifacts, *ir.input_artifacts):
+    for artifact in (*ir.result_artifacts, *ir.input_artifacts):
         yield artifact.name, "model", f"model '{artifact.name}'"
     for enum in ir.enums:
         yield enum.name, "enum", f"enum '{enum.name}'"
@@ -456,6 +457,15 @@ def _signature_claims(ir: CollectedPackageIR) -> Iterator[tuple[str, str, str]]:
             yield scope, name, origin
         for slot in template.slots:
             yield scope, slot.python_name, f"slot '{slot.name}'"
+        # The result models' type parameters are a namespace of their own, and
+        # a narrower one than `bind()`'s keywords: the phantom name drops the
+        # underscores its slot may carry, so `details` and `_details` are two
+        # keywords and one parameter. A model would then declare fewer
+        # parameters than its bindings pass arguments, and the generated
+        # package would fail to import.
+        scope = f"the type parameters of template '{template.class_name}' at {at}"
+        for slot in template.slots:
+            yield scope, slot_param_name(slot.python_name), f"slot '{slot.name}'"
     for binding in ir.bindings:
         # `render._render_with_args` builds the variables mapping as a single
         # expression, so `with_args()`'s namespace holds nothing but its
@@ -483,6 +493,18 @@ def validate_signature_names(ir: CollectedPackageIR) -> list[str]:
     claims: dict[tuple[str, str], list[str]] = defaultdict(list)
     for scope, name, origin in _signature_claims(ir):
         claims[scope, name].append(origin)
+    for artifact in ir.result_artifacts:
+        if not artifact.type_params:
+            continue
+        # A PEP 695 parameter is local to this artifact. It conflicts only
+        # with a module type that this artifact refers to: there the local
+        # name changes the annotation's meaning. An input type used solely by
+        # execute() lives outside this scope and is therefore unrelated.
+        scope = f"generic artifact '{artifact.name}'"
+        for type_param in artifact.type_params:
+            claims[scope, type_param].append(f"type parameter '{type_param}'")
+        for dependency in artifact.dependencies:
+            claims[scope, dependency].append(f"referenced type '{dependency}'")
     errors: list[str] = []
     for (scope, name), origins in sorted(claims.items()):
         if not _is_usable_identifier(name):

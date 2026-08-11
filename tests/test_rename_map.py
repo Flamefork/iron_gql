@@ -89,7 +89,10 @@ def test_three_forms_all_get_detailed_suffix():
 def test_single_form_blocked_by_reserved_name_keeps_short_name():
     # An unrelated artifact already occupies the desired GraphQL type name.
     # The final promotion step must leave the short form intact.
-    reserved = CollectedUnionAlias(name="Foo", variants=("Alpha", "Beta"))
+    reserved = CollectedUnionAlias(
+        name="Foo",
+        variants=(NamedRef(name="Alpha"), NamedRef(name="Beta")),
+    )
     foo = CollectedModel(
         name="Foo_1",
         graphql_type_name="Foo",
@@ -119,7 +122,6 @@ def test_different_graphql_types_are_independent():
 def _pkg(artifacts: list[CollectedModel | CollectedUnionAlias]) -> CollectedPackageIR:
     return CollectedPackageIR(
         result_artifacts=list(artifacts),
-        binding_artifacts=[],
         input_artifacts=[],
         operations=[],
         fragments=[],

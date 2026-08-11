@@ -3,7 +3,7 @@ from pathlib import Path
 from pydantic import alias_generators
 
 from iron_gql.codegen.collect import collect_package_ir
-from iron_gql.codegen.collect import specialize_bindings
+from iron_gql.codegen.collect import parametrize_slot_paths
 from iron_gql.codegen.discovery import discover_package
 from iron_gql.codegen.ir import GraphQLGenerationError
 from iron_gql.codegen.ir import ImportRef
@@ -92,13 +92,13 @@ def generate_gql_package(
     # pass has run, and the model graph, which has already merged the field
     # nodes a response key was assembled from.
     #
-    # The nested-slot rule is asked before specialization and the other two
+    # The nested-slot rule is asked before parametrisation and the other two
     # after, because they read different graphs: nesting is a fact about a
-    # template's own result subtree, which specialization replaces with one
-    # subtree per binding — leaving a template nothing binds with nothing to
-    # walk — while the names the module finally binds include every copy.
+    # template's own result subtree, read from the references between models,
+    # and parametrisation rewrites those references to carry the slot phantoms
+    # down the path.
     nested_slot_errors = validate_no_nested_slots(collected)
-    collected = specialize_bindings(collected)
+    collected = parametrize_slot_paths(collected)
     ir_errors = [
         *validate_module_names(collected, scaffold),
         *validate_signature_names(collected),

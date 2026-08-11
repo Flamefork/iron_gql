@@ -1272,7 +1272,112 @@ def test_input_named_after_the_bound_base_parameter_is_rejected(
         test_project.generate()
 
 
-# An input type spelled exactly like the `attachment` slot's type parameter.
+SLOT_PARAM_INPUT_SCHEMA = """
+type Query {
+    post(execute: TSlotAttachment!): Post
+}
+
+input TSlotAttachment {
+    id: ID!
+}
+
+type Post {
+    id: ID!
+    attachment: Attachment
+}
+
+union Attachment = ImageAttachment | LinkAttachment
+
+type ImageAttachment {
+    url: String!
+}
+
+type LinkAttachment {
+    href: String!
+}
+"""
+
+
+def test_input_named_like_a_slot_parameter_is_valid_outside_generic_models(
+    test_project: ProjectBuilder,
+):
+    # The input model is referenced by execute() on the bound base, while the
+    # same-spelled slot parameter exists only inside generic result artifacts.
+    # They occupy different scopes, so the generated package must import.
+    test_project.prepare(
+        schema=SLOT_PARAM_INPUT_SCHEMA,
+        queries="""
+        from sample_app.gql.api import api_gql
+
+        get_attachment = api_gql(
+            '''
+            query GetAttachment($execute: TSlotAttachment!) {
+                post(execute: $execute) {
+                    attachment @slot { __typename }
+                }
+            }
+            '''
+        )
+        """,
+    )
+    test_project.generate_and_import()
+
+
+SLOT_PARAM_SHADOW_SCHEMA = """
+type Query {
+    post: Post
+}
+
+type Post {
+    kind: TSlotAttachment!
+    attachment: Attachment
+}
+
+enum TSlotAttachment {
+    PHOTO
+    VIDEO
+}
+
+type Attachment {
+    id: ID!
+}
+"""
+
+
+def test_slot_parameter_shadowing_a_type_in_a_generic_model_is_rejected(
+    test_project: ProjectBuilder,
+):
+    # Post declares TSlotAttachment for the slot path and also refers to the
+    # module-level enum in `kind`. The local parameter would change that field
+    # annotation from the enum to the binding's fragment type.
+    test_project.prepare(
+        schema=SLOT_PARAM_SHADOW_SCHEMA,
+        queries="""
+        from sample_app.gql.api import api_gql
+
+        get_attachment = api_gql(
+            '''
+            query GetAttachment {
+                post {
+                    kind
+                    attachment @slot { __typename }
+                }
+            }
+            '''
+        )
+        """,
+    )
+    with pytest.raises(
+        GraphQLGenerationError,
+        match=(
+            r"Parameter 'TSlotAttachment' of generic artifact 'Post'"
+            r".*referenced type 'TSlotAttachment'"
+        ),
+    ):
+        test_project.generate()
+
+
+# A result subtree that includes enum fields under a slot.
 ENUM_IN_SLOT_SCHEMA = """
 type Query {
     post(id: ID!): Post
@@ -1504,7 +1609,7 @@ def test_slot_subtree_models_are_open_and_the_rest_stay_strict():
     assert (
         "class GetBoardResultBoardSlotActivityCommentAuthor(GQLOpenModel):" in generated
     )
-    assert "class GetBoardResult(GQLModel):" in generated
+    assert "class GetBoardResult[TSlotBoard = Never](GQLModel):" in generated
     assert GetBoardResultBoardSlot.model_config.get("extra") == "ignore"
     assert GetBoardResult.model_config.get("extra") == "forbid"
 
@@ -1515,19 +1620,19 @@ def test_slots_with_equal_static_selections_are_not_deduplicated():
     # single class whose one `slot_name__` would then have to speak for three
     # slots. GetBoard's richer selection makes the fourth.
     #
-    # Each binding's own copy is a fifth way two of these could have converged
-    # -- `PingMain` and `MergedBoard` are bound twice each, and the two copies
-    # of one slot differ in nothing but the fragment their node offers.
+    # Which fragments a binding offers no longer separates them either: the
+    # node is one class per slot, generic in that slot's phantom, so two slots
+    # that would collapse under the name-dedup pass are told apart by their
+    # own `slot_name__` and by nothing else.
     generated = generated_source("slots_isolation")
-    for name, offered in (
-        ("GetBoardResultBoardSlot", "Never"),
-        ("PingBoardResultBoardSlot", "Never"),
-        ("PingMainWithNothingResultMainSlot", "Never"),
-        ("PingMainWithMainBoardIdResultMainSlot", "BoardId"),
-        ("MergedBoardWithNothingResultMergedSlot", "Never"),
-        ("MergedBoardWithMergedBoardIdResultMergedSlot", "BoardId"),
+    for name, param in (
+        ("GetBoardResultBoardSlot", "TSlotBoard"),
+        ("PingBoardResultBoardSlot", "TSlotBoard"),
+        ("PingMainResultMainSlot", "TSlotMain"),
+        ("MergedBoardResultMergedSlot", "TSlotMerged"),
     ):
-        assert f"class {name}(GQLSlotModel[{offered}]):" in generated
+        header = f"class {name}[{param} = Never]"
+        assert f"{header}(GQLSlotModel[{param}]):" in generated
 
 
 def test_slot_is_detected_on_any_node_of_a_merged_response_key():
@@ -2602,6 +2707,39 @@ def test_two_slots_mapping_to_one_python_name_are_rejected(
         test_project.generate()
 
 
+def test_two_slots_collapsing_to_one_type_parameter_are_rejected(
+    test_project: ProjectBuilder,
+):
+    # `details` and `_details` are two `bind()` keywords -- the keyword gate
+    # above has nothing to say about them -- but one type parameter, because
+    # the phantom's name drops the underscores. Left alone, the result model
+    # would declare one parameter while every binding of it passes two
+    # arguments, and the generated package would fail to import.
+    test_project.prepare(
+        schema=TWO_ATTACHMENT_SCHEMA,
+        queries="""
+        from sample_app.gql.api import api_gql
+
+        q = api_gql(
+            '''
+            query GetBoth($id: ID!) {
+                post(id: $id) { details: attachment @slot { __typename } }
+                comment(id: $id) { _details: attachment @slot { __typename } }
+            }
+            '''
+        )
+        """,
+    )
+    with pytest.raises(
+        GraphQLGenerationError,
+        match=(
+            r"Parameter 'TSlotDetails' of the type parameters of template "
+            r"'GetBoth'.*is claimed by"
+        ),
+    ):
+        test_project.generate()
+
+
 def test_one_slot_name_under_two_parents_collects_both_positions_models(
     test_project: ProjectBuilder,
 ):
@@ -2625,8 +2763,8 @@ def test_one_slot_name_under_two_parents_collects_both_positions_models(
     )
     test_project.generate()
     generated = (test_project.root / "sample_app/gql/api.py").read_text()
-    assert "type GetBothResultPostAttachmentSlot = " in generated
-    assert "type GetBothResultCommentAttachmentSlot = " in generated
+    assert "type GetBothResultPostAttachmentSlot[TSlotAttachment] = " in generated
+    assert "type GetBothResultCommentAttachmentSlot[TSlotAttachment] = " in generated
 
 
 POLYMORPHIC_SLOT_PARENT_SCHEMA = """
@@ -2684,5 +2822,5 @@ def test_a_slot_under_a_polymorphic_parent_collects_each_variants_model(
     )
     test_project.generate()
     generated = (test_project.root / "sample_app/gql/api.py").read_text()
-    assert "class FeedResultItemPostDetailSlot(" in generated
-    assert "class FeedResultItemItemDetailSlot(" in generated
+    assert "class FeedResultItemPostDetailSlot[" in generated
+    assert "class FeedResultItemItemDetailSlot[" in generated

@@ -37,6 +37,8 @@ def test_phantom_typing_of_slot_reads(tmp_path: Path):
     write_text(
         check_file,
         """
+            from typing import Any
+
             import pydantic
 
             from iron_gql import slots
@@ -44,7 +46,9 @@ def test_phantom_typing_of_slot_reads(tmp_path: Path):
             from tests.generated.bindings_composition import queries as composition_gql
             from tests.generated.bindings_overlap import queries as overlap_gql
             from tests.generated.bindings_overlap.gql.api import (
-                GetAttachmentWithAttachmentImageCaptionImageSizeResult,
+                GetAttachmentResult,
+                ImageCaption,
+                ImageSize,
             )
             from tests.generated.bindings_two_templates import queries as two_tpl_gql
             from tests.generated.slots_multi import queries
@@ -52,7 +56,7 @@ def test_phantom_typing_of_slot_reads(tmp_path: Path):
 
             def use_erased(
                 handle: slots.GQLFragment[pydantic.BaseModel],
-                result: GetAttachmentWithAttachmentImageCaptionImageSizeResult,
+                result: GetAttachmentResult[ImageCaption | ImageSize],
             ) -> None:
                 assert result.post is not None
                 _err_type_erased = handle.read(result.post.attachment)
@@ -110,6 +114,19 @@ def test_phantom_typing_of_slot_reads(tmp_path: Path):
                 )
                 reveal_type(cross_a)
                 reveal_type(cross_b)
+
+                shared = read_any_binding(
+                    overlap_result, overlap_gql.image_caption
+                )
+                reveal_type(shared)
+
+
+            def read_any_binding[TData: pydantic.BaseModel](
+                result: GetAttachmentResult[Any],
+                handle: slots.GQLFragment[TData],
+            ) -> TData | None:
+                assert result.post is not None
+                return handle.read(result.post.attachment)
         """,
     )
     diagnostics = basedpyright_report(check_file).general_diagnostics
@@ -121,12 +138,15 @@ def test_phantom_typing_of_slot_reads(tmp_path: Path):
     # reached only through a nested field of a bound fragment.
     errors = [d for d in diagnostics if d.severity == "error"]
     assert len(errors) == 5, f"expected exactly five errors, got: {diagnostics}"
-    assert [d.range.start.line for d in errors] == [18, 26, 27, 30, 41], errors
+    assert [d.range.start.line for d in errors] == [22, 30, 31, 34, 45], errors
 
     # And the reads that are offered keep their own fragment's model -- the
     # phantom types the node, never the value `read` hands back. This also
     # covers overlap (two handles, one loop, one read each), an indirect
-    # spread-only handle, and the same handle read across two templates.
+    # spread-only handle, the same handle read across two templates, and the
+    # shared-helper shape: a binding's result passed to a helper that spells
+    # the phantom `Any`, where the ordinary `read` keeps the handle's own
+    # model -- the erasure is the annotation, not a second method.
     infos = [d.message for d in diagnostics if d.severity == "information"]
     assert infos == [
         'Type of "ok" is "AlbumTitleData | None"',
@@ -136,6 +156,7 @@ def test_phantom_typing_of_slot_reads(tmp_path: Path):
         'Type of "indirect" is "BasePartsData | None"',
         'Type of "cross_a" is "ImagePartsData | None"',
         'Type of "cross_b" is "ImagePartsData | None"',
+        'Type of "shared" is "ImageCaptionData | None"',
     ]
 
 

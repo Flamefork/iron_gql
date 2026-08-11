@@ -68,6 +68,29 @@ class GetEventsResultBoardSlotEventsMove(GQLOpenModel):
 type GetEventsResultBoardSlotEvents = Annotated[GetEventsResultBoardSlotEventsComment | GetEventsResultBoardSlotEventsMove, pydantic.Field(discriminator="typename__")]
 
 
+class GetEventsResultBoardSlot[TSlotBoard = Never](GQLSlotModel[TSlotBoard]):
+    slot_name__: ClassVar[str] = "board"
+    typename__: Annotated[Literal["Board"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
+    events: list[GetEventsResultBoardSlotEvents]
+
+
+class GetEventsResult[TSlotBoard = Never](GQLModel):
+    board: GetEventsResultBoardSlot[TSlotBoard] | None
+
+
+class GetCardsResultBoardCardsSlot[TSlotCards = Never](GQLSlotModel[TSlotCards]):
+    slot_name__: ClassVar[str] = "cards"
+    typename__: Annotated[Literal["Card"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
+
+
+class Board[TSlotCards = Never](GQLModel):
+    cards: list[GetCardsResultBoardCardsSlot[TSlotCards]]
+
+
+class GetCardsResult[TSlotCards = Never](GQLModel):
+    board: Board[TSlotCards] | None
+
+
 class ActivityTextsDataEventsComment(GQLOpenModel):
     typename__: Annotated[Literal["Comment"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
     body: str
@@ -109,29 +132,6 @@ CARD_TITLE = CardTitle(
 )
 
 
-class GetEventsWithBoardActivityTextsResultBoardSlot(GQLSlotModel[ActivityTexts]):
-    slot_name__: ClassVar[str] = "board"
-    typename__: Annotated[Literal["Board"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
-    events: list[GetEventsResultBoardSlotEvents]
-
-
-class GetEventsWithBoardActivityTextsResult(GQLModel):
-    board: GetEventsWithBoardActivityTextsResultBoardSlot | None
-
-
-class GetCardsWithCardsCardTitleResultBoardCardsSlot(GQLSlotModel[CardTitle]):
-    slot_name__: ClassVar[str] = "cards"
-    typename__: Annotated[Literal["Card"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
-
-
-class GetCardsWithCardsCardTitleBoard(GQLModel):
-    cards: list[GetCardsWithCardsCardTitleResultBoardCardsSlot]
-
-
-class GetCardsWithCardsCardTitleResult(GQLModel):
-    board: GetCardsWithCardsCardTitleBoard | None
-
-
 class GetEventsBound[TResult](runtime.GQLBoundOperation, ABC):
     @abstractmethod
     async def execute(self, *, id: builtins.str) -> TResult:
@@ -144,14 +144,14 @@ class GetCardsBound[TResult](runtime.GQLBoundOperation, ABC):
         ...
 
 
-class GetEventsWithBoardActivityTexts(GetEventsBound[GetEventsWithBoardActivityTextsResult]):
+class GetEventsWithBoardActivityTexts(GetEventsBound[GetEventsResult[ActivityTexts]]):
     # See: queries.py:44
     exec_source__ = 'query GetEvents($id: ID!) {\n  board(id: $id) {\n    __typename\n    events {\n      __typename\n    }\n    ...ActivityTexts\n  }\n}\n\nfragment ActivityTexts on Board {\n  events {\n    __typename\n    ... on Comment {\n      body\n    }\n    ... on Move {\n      fromColumn\n    }\n  }\n}'
     slot_handles__ = {"board": (slots.SlotHandle(ACTIVITY_TEXTS, frozenset({'Board'})),)}
     @override
-    async def execute(self, *, id: builtins.str) -> GetEventsWithBoardActivityTextsResult:
+    async def execute(self, *, id: builtins.str) -> GetEventsResult[ActivityTexts]:
         return await API_CLIENT.query(
-            GetEventsWithBoardActivityTextsResult,
+            GetEventsResult[ActivityTexts],
             self.exec_source__,
             variables={"id": id, **self.fragment_args__()},
             headers=self.headers,
@@ -159,14 +159,14 @@ class GetEventsWithBoardActivityTexts(GetEventsBound[GetEventsWithBoardActivityT
         )
 
 
-class GetCardsWithCardsCardTitle(GetCardsBound[GetCardsWithCardsCardTitleResult]):
+class GetCardsWithCardsCardTitle(GetCardsBound[GetCardsResult[CardTitle]]):
     # See: queries.py:45
     exec_source__ = 'query GetCards($id: ID!) {\n  board(id: $id) {\n    cards {\n      __typename\n      ...CardTitle\n    }\n  }\n}\n\nfragment CardTitle on Card {\n  title\n}'
     slot_handles__ = {"cards": (slots.SlotHandle(CARD_TITLE, frozenset({'Card'})),)}
     @override
-    async def execute(self, *, id: builtins.str) -> GetCardsWithCardsCardTitleResult:
+    async def execute(self, *, id: builtins.str) -> GetCardsResult[CardTitle]:
         return await API_CLIENT.query(
-            GetCardsWithCardsCardTitleResult,
+            GetCardsResult[CardTitle],
             self.exec_source__,
             variables={"id": id, **self.fragment_args__()},
             headers=self.headers,

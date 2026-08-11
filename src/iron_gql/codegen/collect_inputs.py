@@ -12,6 +12,7 @@ from iron_gql.codegen.ir import CollectedArtifact
 from iron_gql.codegen.ir import CollectedField
 from iron_gql.codegen.ir import CollectedModel
 from iron_gql.codegen.ir import CollectedUnionAlias
+from iron_gql.codegen.ir import NamedRef
 from iron_gql.codegen.ir import StrTransform
 from iron_gql.codegen.ir import TypeRef
 from iron_gql.codegen.parser import Query
@@ -138,7 +139,10 @@ def _collect_one_of_input_type(
             )
         )
     artifacts.append(
-        CollectedUnionAlias(name=gql_type.name, variants=tuple(variant_names))
+        CollectedUnionAlias(
+            name=gql_type.name,
+            variants=tuple(NamedRef(name=name) for name in variant_names),
+        )
     )
     return artifacts
 

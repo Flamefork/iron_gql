@@ -57,6 +57,28 @@ class GQLSlotModel[TOffered](GQLOpenModel, slots.GQLSlotNode[TOffered]):
     pass
 
 
+class GetAttachmentResultPostAttachmentSlotImageAttachment[TSlotAttachment = Never](GQLSlotModel[TSlotAttachment]):
+    slot_name__: ClassVar[str] = "attachment"
+    typename__: Annotated[Literal["ImageAttachment"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
+
+
+class GetAttachmentResultPostAttachmentSlotLinkAttachment[TSlotAttachment = Never](GQLSlotModel[TSlotAttachment]):
+    slot_name__: ClassVar[str] = "attachment"
+    typename__: Annotated[Literal["LinkAttachment"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
+
+
+type GetAttachmentResultPostAttachmentSlot[TSlotAttachment] = Annotated[GetAttachmentResultPostAttachmentSlotImageAttachment[TSlotAttachment] | GetAttachmentResultPostAttachmentSlotLinkAttachment[TSlotAttachment], pydantic.Field(discriminator="typename__")]
+
+
+class Post[TSlotAttachment = Never](GQLModel):
+    id: builtins.str
+    attachment: GetAttachmentResultPostAttachmentSlot[TSlotAttachment] | None
+
+
+class GetAttachmentResult[TSlotAttachment = Never](GQLModel):
+    post: Post[TSlotAttachment] | None
+
+
 class ImageCaptionData(GQLOpenModel):
     caption: str
 
@@ -85,42 +107,20 @@ IMAGE_SIZE = ImageSize(
 )
 
 
-class GetAttachmentWithAttachmentImageCaptionImageSizeResultPostAttachmentSlotImageAttachment(GQLSlotModel[ImageCaption | ImageSize]):
-    slot_name__: ClassVar[str] = "attachment"
-    typename__: Annotated[Literal["ImageAttachment"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
-
-
-class GetAttachmentWithAttachmentImageCaptionImageSizeResultPostAttachmentSlotLinkAttachment(GQLSlotModel[ImageCaption | ImageSize]):
-    slot_name__: ClassVar[str] = "attachment"
-    typename__: Annotated[Literal["LinkAttachment"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
-
-
-type GetAttachmentWithAttachmentImageCaptionImageSizeResultPostAttachmentSlot = Annotated[GetAttachmentWithAttachmentImageCaptionImageSizeResultPostAttachmentSlotImageAttachment | GetAttachmentWithAttachmentImageCaptionImageSizeResultPostAttachmentSlotLinkAttachment, pydantic.Field(discriminator="typename__")]
-
-
-class GetAttachmentWithAttachmentImageCaptionImageSizePost(GQLModel):
-    id: builtins.str
-    attachment: GetAttachmentWithAttachmentImageCaptionImageSizeResultPostAttachmentSlot | None
-
-
-class GetAttachmentWithAttachmentImageCaptionImageSizeResult(GQLModel):
-    post: GetAttachmentWithAttachmentImageCaptionImageSizePost | None
-
-
 class GetAttachmentBound[TResult](runtime.GQLBoundOperation, ABC):
     @abstractmethod
     async def execute(self, *, id: builtins.str) -> TResult:
         ...
 
 
-class GetAttachmentWithAttachmentImageCaptionImageSize(GetAttachmentBound[GetAttachmentWithAttachmentImageCaptionImageSizeResult]):
+class GetAttachmentWithAttachmentImageCaptionImageSize(GetAttachmentBound[GetAttachmentResult[ImageCaption | ImageSize]]):
     # See: queries.py:32
     exec_source__ = 'query GetAttachment($id: ID!) {\n  post(id: $id) {\n    id\n    attachment {\n      __typename\n      ...ImageCaption\n      ...ImageSize\n    }\n  }\n}\n\nfragment ImageCaption on ImageAttachment {\n  caption\n}\n\nfragment ImageSize on ImageAttachment {\n  width\n}'
     slot_handles__ = {"attachment": (slots.SlotHandle(IMAGE_CAPTION, frozenset({'ImageAttachment'})), slots.SlotHandle(IMAGE_SIZE, frozenset({'ImageAttachment'})))}
     @override
-    async def execute(self, *, id: builtins.str) -> GetAttachmentWithAttachmentImageCaptionImageSizeResult:
+    async def execute(self, *, id: builtins.str) -> GetAttachmentResult[ImageCaption | ImageSize]:
         return await API_CLIENT.query(
-            GetAttachmentWithAttachmentImageCaptionImageSizeResult,
+            GetAttachmentResult[ImageCaption | ImageSize],
             self.exec_source__,
             variables={"id": id, **self.fragment_args__()},
             headers=self.headers,

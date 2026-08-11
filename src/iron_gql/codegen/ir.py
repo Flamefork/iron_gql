@@ -75,6 +75,11 @@ class ScalarRef:
 @dataclass(kw_only=True, frozen=True)
 class NamedRef:
     name: str
+    # The type arguments this reference passes, when the artifact it names is
+    # generic: the slot phantoms threaded down the path to a slot node (see
+    # `collect.parametrize_slot_paths`). Empty for every other reference, which
+    # is most of them.
+    params: tuple[str, ...] = ()
     nullable: bool = False
 
 
@@ -88,16 +93,15 @@ type TypeRef = ScalarRef | NamedRef | ListRef
 
 
 def render_type_expr(typ: TypeRef) -> str:
-    # Every reference is written bare: no artifact this generator emits takes
-    # type parameters. A slot's offered fragments reach its node model as a
-    # concrete base (`GQLSlotModel[ImageParts]`), stamped per binding by
-    # `collect.specialize_bindings`, so nothing has to be threaded through the
-    # references on the way there.
+    # A reference carries type arguments exactly on the path to a slot node:
+    # the phantom saying which fragments are readable there is a parameter of
+    # every model on the way, and each binding fills it in when it names its
+    # own result type. Every other reference is written bare.
     match typ:
         case ScalarRef(expr=expr):
             body = expr
-        case NamedRef(name=name):
-            body = name
+        case NamedRef(name=name, params=params):
+            body = f"{name}[{', '.join(params)}]" if params else name
         case ListRef(element=element):
             body = f"list[{render_type_expr(element)}]"
     if typ.nullable:
@@ -167,13 +171,11 @@ class CollectedModel:
     fields: list[CollectedField]
     graphql_type_name: str | None = None
     slot_name: str | None = None
-    # The fragment handle classes readable on this node, written into its base
-    # as the offered-fragments phantom. Stamped by
-    # `collect.specialize_bindings`, which copies a template's result models
-    # once per binding; empty is `Never` -- nothing is readable there, because
-    # the binding left the slot unfilled or because no bind names the template
-    # at all. Only a node model (`slot_name` set) carries a phantom.
-    offered_fragments: tuple[str, ...] = ()
+    # The slot phantoms this model is generic over: one per slot reachable from
+    # it, in template order, threaded down to the node models where each one
+    # lands in `GQLSlotModel[...]` (see `collect.parametrize_slot_paths`). Empty
+    # for every model off a slot path, which is most of them.
+    type_params: tuple[str, ...] = ()
     dependencies: tuple[str, ...] = dataclasses.field(init=False, compare=False)
 
     def __post_init__(self) -> None:
@@ -204,14 +206,22 @@ class CollectedModel:
 @dataclass(kw_only=True, frozen=True)
 class CollectedUnionAlias:
     name: str
-    variants: tuple[str, ...]
+    # References rather than bare names: a variant on the path to a slot node
+    # is generic, and one beside it -- a sibling branch of the same union that
+    # holds no slot -- is not, so each variant carries its own arguments.
+    variants: tuple[NamedRef, ...]
     discriminator: str | None = None
+    # The same contract as CollectedModel.type_params: the slot phantoms this
+    # alias is generic over, which are exactly the ones its variants pass on.
+    type_params: tuple[str, ...] = ()
+
+    @property
+    def variant_names(self) -> tuple[str, ...]:
+        return tuple(variant.name for variant in self.variants)
 
     @property
     def type_expr(self) -> str:
-        union_expr = " | ".join(
-            render_type_expr(NamedRef(name=variant)) for variant in self.variants
-        )
+        union_expr = " | ".join(render_type_expr(variant) for variant in self.variants)
         if self.discriminator is None:
             return union_expr
         return (
@@ -223,12 +233,17 @@ class CollectedUnionAlias:
         return dataclasses.replace(
             self,
             name=rename.get(self.name, self.name),
-            variants=tuple(rename.get(name, name) for name in self.variants),
+            variants=tuple(
+                dataclasses.replace(
+                    variant, name=rename.get(variant.name, variant.name)
+                )
+                for variant in self.variants
+            ),
         )
 
     @property
     def dependencies(self) -> tuple[str, ...]:
-        return self.variants
+        return self.variant_names
 
 
 @dataclass(kw_only=True, frozen=True)
@@ -285,6 +300,15 @@ class CollectedBindingArg:
     # required keyword whose `None` is sent as an explicit null, exactly like
     # an operation variable of `execute`.
     omittable: bool
+
+
+def slot_param_name(slot_python_name: str) -> str:
+    # The one statement of the rule, read by `collect.parametrize_slot_paths`
+    # for the models it parametrises and by the renderer for the TypeVar it
+    # declares and the scaffold reserves. Named after the slot's `bind()`
+    # keyword, so two templates with a slot of the same name share one
+    # parameter -- a TypeVar is a variable, and one is enough.
+    return f"TSlot{field_name_to_pascal(slot_python_name)}"
 
 
 def result_model_name(class_name: str) -> str:
@@ -463,24 +487,28 @@ class CollectedBinding:
             sorted(arg.var.gql_name for arg in self.arg_vars if not arg.omittable)
         )
 
-    def specialized_name(self, name: str) -> str:
-        # The name of this binding's own copy of one of its template's result
-        # artifacts: the binding's name where the template's stood, so
-        # `GetAttachmentResultPostAttachmentSlot` becomes
-        # `GetAttachmentWithAttachmentImagePartsResultPostAttachmentSlot`. A
-        # name the rename pass shortened out of that prefix (`Post`) simply
-        # takes the binding's name in front; every binding class name starts
-        # with its template's, so both cases are the one rule.
-        #
-        # One statement of it, used by `specialize_bindings` for the models it
-        # writes and by `result_type` below for the one `execute` names -- a
-        # second spelling would surface as a NameError in the generated module
-        # rather than as a generation error.
-        return self.class_name + name.removeprefix(self.template.class_name)
+    @property
+    def offered_exprs(self) -> tuple[str, ...]:
+        # What this binding fills each slot phantom with, in template slot
+        # order: the fragment handle classes readable at that slot -- what the
+        # bind named, plus what those fragments spread at their own root level.
+        # `Never` for a slot this binding left unfilled, which is what makes
+        # such a node statically unreadable.
+        return tuple(
+            " | ".join(
+                handle.fragment.class_name for handle in binding_slot.readable_handles
+            )
+            or "Never"
+            for binding_slot in self.slots
+        )
 
     @property
     def result_type(self) -> str:
-        return self.specialized_name(self.template.result_type)
+        # The template's one result model, parametrised by this binding's
+        # fragments. The models are shared: which fragments are readable at a
+        # slot is the binding's own fact, and it travels as a type argument
+        # rather than as a copy of every model on the way to the node.
+        return f"{self.template.result_type}[{', '.join(self.offered_exprs)}]"
 
 
 def bindings_by_template(
@@ -497,14 +525,6 @@ def bindings_by_template(
 @dataclass(kw_only=True, frozen=True)
 class CollectedPackageIR:
     result_artifacts: list[CollectedArtifact]
-    # A binding's own result models: the artifacts on the path to one of its
-    # template's slot nodes, copied per binding with the offered fragments
-    # written in (see `collect.specialize_bindings`). Kept apart from the
-    # shared ones because a node model names fragment handle *classes* in its
-    # base, and a base -- unlike every other reference the module makes -- is
-    # evaluated where it is written: these are rendered after the handles,
-    # the rest before them. Empty until specialization runs.
-    binding_artifacts: list[CollectedArtifact]
     input_artifacts: list[CollectedArtifact]
     operations: list[CollectedOperation]
     fragments: list[CollectedFragment]

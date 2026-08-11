@@ -189,6 +189,28 @@ class PostAddedResult(GQLModel):
     post_added: PostWithAuthorBodyIdTitle
 
 
+class GetPostAttachmentResultPostAttachmentSlotImageAttachment[TSlotAttachment = Never](GQLSlotModel[TSlotAttachment]):
+    slot_name__: ClassVar[str] = "attachment"
+    typename__: Annotated[Literal["ImageAttachment"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
+
+
+class GetPostAttachmentResultPostAttachmentSlotLinkAttachment[TSlotAttachment = Never](GQLSlotModel[TSlotAttachment]):
+    slot_name__: ClassVar[str] = "attachment"
+    typename__: Annotated[Literal["LinkAttachment"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
+
+
+type GetPostAttachmentResultPostAttachmentSlot[TSlotAttachment] = Annotated[GetPostAttachmentResultPostAttachmentSlotImageAttachment[TSlotAttachment] | GetPostAttachmentResultPostAttachmentSlotLinkAttachment[TSlotAttachment], pydantic.Field(discriminator="typename__")]
+
+
+class PostWithAttachmentId[TSlotAttachment = Never](GQLModel):
+    id: builtins.str
+    attachment: GetPostAttachmentResultPostAttachmentSlot[TSlotAttachment] | None
+
+
+class GetPostAttachmentResult[TSlotAttachment = Never](GQLModel):
+    post: PostWithAttachmentId[TSlotAttachment] | None
+
+
 class ImageUrlData(GQLOpenModel):
     url: str
 
@@ -358,64 +380,20 @@ IMAGE_THUMBNAIL = ImageThumbnail(
 )
 
 
-class GetPostAttachmentWithAttachmentImageUrlLinkUrlResultPostAttachmentSlotImageAttachment(GQLSlotModel[ImageUrl | LinkUrl]):
-    slot_name__: ClassVar[str] = "attachment"
-    typename__: Annotated[Literal["ImageAttachment"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
-
-
-class GetPostAttachmentWithAttachmentImageUrlLinkUrlResultPostAttachmentSlotLinkAttachment(GQLSlotModel[ImageUrl | LinkUrl]):
-    slot_name__: ClassVar[str] = "attachment"
-    typename__: Annotated[Literal["LinkAttachment"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
-
-
-type GetPostAttachmentWithAttachmentImageUrlLinkUrlResultPostAttachmentSlot = Annotated[GetPostAttachmentWithAttachmentImageUrlLinkUrlResultPostAttachmentSlotImageAttachment | GetPostAttachmentWithAttachmentImageUrlLinkUrlResultPostAttachmentSlotLinkAttachment, pydantic.Field(discriminator="typename__")]
-
-
-class GetPostAttachmentWithAttachmentImageUrlLinkUrlPostWithAttachmentId(GQLModel):
-    id: builtins.str
-    attachment: GetPostAttachmentWithAttachmentImageUrlLinkUrlResultPostAttachmentSlot | None
-
-
-class GetPostAttachmentWithAttachmentImageUrlLinkUrlResult(GQLModel):
-    post: GetPostAttachmentWithAttachmentImageUrlLinkUrlPostWithAttachmentId | None
-
-
-class GetPostAttachmentWithAttachmentImageThumbnailResultPostAttachmentSlotImageAttachment(GQLSlotModel[ImageThumbnail]):
-    slot_name__: ClassVar[str] = "attachment"
-    typename__: Annotated[Literal["ImageAttachment"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
-
-
-class GetPostAttachmentWithAttachmentImageThumbnailResultPostAttachmentSlotLinkAttachment(GQLSlotModel[ImageThumbnail]):
-    slot_name__: ClassVar[str] = "attachment"
-    typename__: Annotated[Literal["LinkAttachment"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
-
-
-type GetPostAttachmentWithAttachmentImageThumbnailResultPostAttachmentSlot = Annotated[GetPostAttachmentWithAttachmentImageThumbnailResultPostAttachmentSlotImageAttachment | GetPostAttachmentWithAttachmentImageThumbnailResultPostAttachmentSlotLinkAttachment, pydantic.Field(discriminator="typename__")]
-
-
-class GetPostAttachmentWithAttachmentImageThumbnailPostWithAttachmentId(GQLModel):
-    id: builtins.str
-    attachment: GetPostAttachmentWithAttachmentImageThumbnailResultPostAttachmentSlot | None
-
-
-class GetPostAttachmentWithAttachmentImageThumbnailResult(GQLModel):
-    post: GetPostAttachmentWithAttachmentImageThumbnailPostWithAttachmentId | None
-
-
 class GetPostAttachmentBound[TResult](runtime.GQLBoundOperation, ABC):
     @abstractmethod
     async def execute(self, *, id: builtins.str) -> TResult:
         ...
 
 
-class GetPostAttachmentWithAttachmentImageUrlLinkUrl(GetPostAttachmentBound[GetPostAttachmentWithAttachmentImageUrlLinkUrlResult]):
+class GetPostAttachmentWithAttachmentImageUrlLinkUrl(GetPostAttachmentBound[GetPostAttachmentResult[ImageUrl | LinkUrl]]):
     # See: ch06_slots.py:32
     exec_source__ = 'query GetPostAttachment($id: ID!) {\n  post(id: $id) {\n    id\n    attachment {\n      __typename\n      ...ImageUrl\n      ...LinkUrl\n    }\n  }\n}\n\nfragment ImageUrl on ImageAttachment {\n  url\n}\n\nfragment LinkUrl on LinkAttachment {\n  href\n}'
     slot_handles__ = {"attachment": (slots.SlotHandle(IMAGE_URL, frozenset({'ImageAttachment'})), slots.SlotHandle(LINK_URL, frozenset({'LinkAttachment'})))}
     @override
-    async def execute(self, *, id: builtins.str) -> GetPostAttachmentWithAttachmentImageUrlLinkUrlResult:
+    async def execute(self, *, id: builtins.str) -> GetPostAttachmentResult[ImageUrl | LinkUrl]:
         return await API_CLIENT.query(
-            GetPostAttachmentWithAttachmentImageUrlLinkUrlResult,
+            GetPostAttachmentResult[ImageUrl | LinkUrl],
             self.exec_source__,
             variables={"id": id, **self.fragment_args__()},
             headers=self.headers,
@@ -423,7 +401,7 @@ class GetPostAttachmentWithAttachmentImageUrlLinkUrl(GetPostAttachmentBound[GetP
         )
 
 
-class GetPostAttachmentWithAttachmentImageThumbnail(GetPostAttachmentBound[GetPostAttachmentWithAttachmentImageThumbnailResult]):
+class GetPostAttachmentWithAttachmentImageThumbnail(GetPostAttachmentBound[GetPostAttachmentResult[ImageThumbnail]]):
     # See: ch06_slots.py:44
     exec_source__ = 'query GetPostAttachment($id: ID!, $width: Int!) {\n  post(id: $id) {\n    id\n    attachment {\n      __typename\n      ...ImageThumbnail\n    }\n  }\n}\n\nfragment ImageThumbnail on ImageAttachment {\n  thumbnail(width: $width)\n}'
     slot_handles__ = {"attachment": (slots.SlotHandle(IMAGE_THUMBNAIL, frozenset({'ImageAttachment'})),)}
@@ -431,9 +409,9 @@ class GetPostAttachmentWithAttachmentImageThumbnail(GetPostAttachmentBound[GetPo
     def with_args(self, *, width: int) -> Self:
         return self.with_args__({"width": width})
     @override
-    async def execute(self, *, id: builtins.str) -> GetPostAttachmentWithAttachmentImageThumbnailResult:
+    async def execute(self, *, id: builtins.str) -> GetPostAttachmentResult[ImageThumbnail]:
         return await API_CLIENT.query(
-            GetPostAttachmentWithAttachmentImageThumbnailResult,
+            GetPostAttachmentResult[ImageThumbnail],
             self.exec_source__,
             variables={"id": id, **self.fragment_args__()},
             headers=self.headers,

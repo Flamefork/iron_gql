@@ -57,6 +57,28 @@ class GQLSlotModel[TOffered](GQLOpenModel, slots.GQLSlotNode[TOffered]):
     pass
 
 
+class GetAttachmentResultPostAttachmentSlotImageAttachment[TSlotAttachment = Never](GQLSlotModel[TSlotAttachment]):
+    slot_name__: ClassVar[str] = "attachment"
+    typename__: Annotated[Literal["ImageAttachment"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
+
+
+class GetAttachmentResultPostAttachmentSlotLinkAttachment[TSlotAttachment = Never](GQLSlotModel[TSlotAttachment]):
+    slot_name__: ClassVar[str] = "attachment"
+    typename__: Annotated[Literal["LinkAttachment"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
+
+
+type GetAttachmentResultPostAttachmentSlot[TSlotAttachment] = Annotated[GetAttachmentResultPostAttachmentSlotImageAttachment[TSlotAttachment] | GetAttachmentResultPostAttachmentSlotLinkAttachment[TSlotAttachment], pydantic.Field(discriminator="typename__")]
+
+
+class Post[TSlotAttachment = Never](GQLModel):
+    id: builtins.str
+    attachment: GetAttachmentResultPostAttachmentSlot[TSlotAttachment] | None
+
+
+class GetAttachmentResult[TSlotAttachment = Never](GQLModel):
+    post: Post[TSlotAttachment] | None
+
+
 class ImagePartsData(GQLOpenModel):
     url: str
 
@@ -99,64 +121,20 @@ OTHER_PARTS = OtherParts(
 )
 
 
-class GetAttachmentWithAttachmentImagePartsLinkPartsResultPostAttachmentSlotImageAttachment(GQLSlotModel[ImageParts | LinkParts]):
-    slot_name__: ClassVar[str] = "attachment"
-    typename__: Annotated[Literal["ImageAttachment"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
-
-
-class GetAttachmentWithAttachmentImagePartsLinkPartsResultPostAttachmentSlotLinkAttachment(GQLSlotModel[ImageParts | LinkParts]):
-    slot_name__: ClassVar[str] = "attachment"
-    typename__: Annotated[Literal["LinkAttachment"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
-
-
-type GetAttachmentWithAttachmentImagePartsLinkPartsResultPostAttachmentSlot = Annotated[GetAttachmentWithAttachmentImagePartsLinkPartsResultPostAttachmentSlotImageAttachment | GetAttachmentWithAttachmentImagePartsLinkPartsResultPostAttachmentSlotLinkAttachment, pydantic.Field(discriminator="typename__")]
-
-
-class GetAttachmentWithAttachmentImagePartsLinkPartsPost(GQLModel):
-    id: builtins.str
-    attachment: GetAttachmentWithAttachmentImagePartsLinkPartsResultPostAttachmentSlot | None
-
-
-class GetAttachmentWithAttachmentImagePartsLinkPartsResult(GQLModel):
-    post: GetAttachmentWithAttachmentImagePartsLinkPartsPost | None
-
-
-class GetAttachmentWithAttachmentOtherPartsResultPostAttachmentSlotImageAttachment(GQLSlotModel[OtherParts]):
-    slot_name__: ClassVar[str] = "attachment"
-    typename__: Annotated[Literal["ImageAttachment"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
-
-
-class GetAttachmentWithAttachmentOtherPartsResultPostAttachmentSlotLinkAttachment(GQLSlotModel[OtherParts]):
-    slot_name__: ClassVar[str] = "attachment"
-    typename__: Annotated[Literal["LinkAttachment"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
-
-
-type GetAttachmentWithAttachmentOtherPartsResultPostAttachmentSlot = Annotated[GetAttachmentWithAttachmentOtherPartsResultPostAttachmentSlotImageAttachment | GetAttachmentWithAttachmentOtherPartsResultPostAttachmentSlotLinkAttachment, pydantic.Field(discriminator="typename__")]
-
-
-class GetAttachmentWithAttachmentOtherPartsPost(GQLModel):
-    id: builtins.str
-    attachment: GetAttachmentWithAttachmentOtherPartsResultPostAttachmentSlot | None
-
-
-class GetAttachmentWithAttachmentOtherPartsResult(GQLModel):
-    post: GetAttachmentWithAttachmentOtherPartsPost | None
-
-
 class GetAttachmentBound[TResult](runtime.GQLBoundOperation, ABC):
     @abstractmethod
     async def execute(self, *, id: builtins.str) -> TResult:
         ...
 
 
-class GetAttachmentWithAttachmentImagePartsLinkParts(GetAttachmentBound[GetAttachmentWithAttachmentImagePartsLinkPartsResult]):
+class GetAttachmentWithAttachmentImagePartsLinkParts(GetAttachmentBound[GetAttachmentResult[ImageParts | LinkParts]]):
     # See: queries.py:38
     exec_source__ = 'query GetAttachment($id: ID!) {\n  post(id: $id) {\n    id\n    attachment {\n      __typename\n      ...ImageParts\n      ...LinkParts\n    }\n  }\n}\n\nfragment ImageParts on ImageAttachment {\n  url\n}\n\nfragment LinkParts on LinkAttachment {\n  href\n}'
     slot_handles__ = {"attachment": (slots.SlotHandle(IMAGE_PARTS, frozenset({'ImageAttachment'})), slots.SlotHandle(LINK_PARTS, frozenset({'LinkAttachment'})))}
     @override
-    async def execute(self, *, id: builtins.str) -> GetAttachmentWithAttachmentImagePartsLinkPartsResult:
+    async def execute(self, *, id: builtins.str) -> GetAttachmentResult[ImageParts | LinkParts]:
         return await API_CLIENT.query(
-            GetAttachmentWithAttachmentImagePartsLinkPartsResult,
+            GetAttachmentResult[ImageParts | LinkParts],
             self.exec_source__,
             variables={"id": id, **self.fragment_args__()},
             headers=self.headers,
@@ -164,14 +142,14 @@ class GetAttachmentWithAttachmentImagePartsLinkParts(GetAttachmentBound[GetAttac
         )
 
 
-class GetAttachmentWithAttachmentOtherParts(GetAttachmentBound[GetAttachmentWithAttachmentOtherPartsResult]):
+class GetAttachmentWithAttachmentOtherParts(GetAttachmentBound[GetAttachmentResult[OtherParts]]):
     # See: queries.py:39
     exec_source__ = 'query GetAttachment($id: ID!) {\n  post(id: $id) {\n    id\n    attachment {\n      __typename\n      ...OtherParts\n    }\n  }\n}\n\nfragment OtherParts on ImageAttachment {\n  url\n}'
     slot_handles__ = {"attachment": (slots.SlotHandle(OTHER_PARTS, frozenset({'ImageAttachment'})),)}
     @override
-    async def execute(self, *, id: builtins.str) -> GetAttachmentWithAttachmentOtherPartsResult:
+    async def execute(self, *, id: builtins.str) -> GetAttachmentResult[OtherParts]:
         return await API_CLIENT.query(
-            GetAttachmentWithAttachmentOtherPartsResult,
+            GetAttachmentResult[OtherParts],
             self.exec_source__,
             variables={"id": id, **self.fragment_args__()},
             headers=self.headers,

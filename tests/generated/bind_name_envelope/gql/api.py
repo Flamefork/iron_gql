@@ -57,6 +57,162 @@ class GQLSlotModel[TOffered](GQLOpenModel, slots.GQLSlotNode[TOffered]):
     pass
 
 
+class OverloadedResultPostClsSlotImageAttachment[TSlotCls = Never](GQLSlotModel[TSlotCls]):
+    slot_name__: ClassVar[str] = "cls"
+    typename__: Annotated[Literal["ImageAttachment"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
+
+
+class OverloadedResultPostClsSlotLinkAttachment[TSlotCls = Never](GQLSlotModel[TSlotCls]):
+    slot_name__: ClassVar[str] = "cls"
+    typename__: Annotated[Literal["LinkAttachment"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
+
+
+type OverloadedResultPostClsSlot[TSlotCls] = Annotated[OverloadedResultPostClsSlotImageAttachment[TSlotCls] | OverloadedResultPostClsSlotLinkAttachment[TSlotCls], pydantic.Field(discriminator="typename__")]
+
+
+class OverloadedResultPostMsgSlotImageAttachment[TSlotMsg = Never](GQLSlotModel[TSlotMsg]):
+    slot_name__: ClassVar[str] = "msg"
+    typename__: Annotated[Literal["ImageAttachment"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
+
+
+class OverloadedResultPostMsgSlotLinkAttachment[TSlotMsg = Never](GQLSlotModel[TSlotMsg]):
+    slot_name__: ClassVar[str] = "msg"
+    typename__: Annotated[Literal["LinkAttachment"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
+
+
+type OverloadedResultPostMsgSlot[TSlotMsg] = Annotated[OverloadedResultPostMsgSlotImageAttachment[TSlotMsg] | OverloadedResultPostMsgSlotLinkAttachment[TSlotMsg], pydantic.Field(discriminator="typename__")]
+
+
+class OverloadedResultPostKeySlotImageAttachment[TSlotKey = Never](GQLSlotModel[TSlotKey]):
+    slot_name__: ClassVar[str] = "key"
+    typename__: Annotated[Literal["ImageAttachment"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
+
+
+class OverloadedResultPostKeySlotLinkAttachment[TSlotKey = Never](GQLSlotModel[TSlotKey]):
+    slot_name__: ClassVar[str] = "key"
+    typename__: Annotated[Literal["LinkAttachment"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
+
+
+type OverloadedResultPostKeySlot[TSlotKey] = Annotated[OverloadedResultPostKeySlotImageAttachment[TSlotKey] | OverloadedResultPostKeySlotLinkAttachment[TSlotKey], pydantic.Field(discriminator="typename__")]
+
+
+class OverloadedResultPostBindSlotImageAttachment[TSlotBind = Never](GQLSlotModel[TSlotBind]):
+    slot_name__: ClassVar[str] = "bind"
+    typename__: Annotated[Literal["ImageAttachment"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
+
+
+class OverloadedResultPostBindSlotLinkAttachment[TSlotBind = Never](GQLSlotModel[TSlotBind]):
+    slot_name__: ClassVar[str] = "bind"
+    typename__: Annotated[Literal["LinkAttachment"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
+
+
+type OverloadedResultPostBindSlot[TSlotBind] = Annotated[OverloadedResultPostBindSlotImageAttachment[TSlotBind] | OverloadedResultPostBindSlotLinkAttachment[TSlotBind], pydantic.Field(discriminator="typename__")]
+
+
+class OverloadedResultPostFragmentsSlotImageAttachment[TSlotFragments = Never](GQLSlotModel[TSlotFragments]):
+    slot_name__: ClassVar[str] = "fragments"
+    typename__: Annotated[Literal["ImageAttachment"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
+
+
+class OverloadedResultPostFragmentsSlotLinkAttachment[TSlotFragments = Never](GQLSlotModel[TSlotFragments]):
+    slot_name__: ClassVar[str] = "fragments"
+    typename__: Annotated[Literal["LinkAttachment"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
+
+
+type OverloadedResultPostFragmentsSlot[TSlotFragments] = Annotated[OverloadedResultPostFragmentsSlotImageAttachment[TSlotFragments] | OverloadedResultPostFragmentsSlotLinkAttachment[TSlotFragments], pydantic.Field(discriminator="typename__")]
+
+
+class OverloadedResultPostDispatchSlotImageAttachment[TSlotDispatch = Never](GQLSlotModel[TSlotDispatch]):
+    slot_name__: ClassVar[str] = "dispatch"
+    typename__: Annotated[Literal["ImageAttachment"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
+
+
+class OverloadedResultPostDispatchSlotLinkAttachment[TSlotDispatch = Never](GQLSlotModel[TSlotDispatch]):
+    slot_name__: ClassVar[str] = "dispatch"
+    typename__: Annotated[Literal["LinkAttachment"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
+
+
+type OverloadedResultPostDispatchSlot[TSlotDispatch] = Annotated[OverloadedResultPostDispatchSlotImageAttachment[TSlotDispatch] | OverloadedResultPostDispatchSlotLinkAttachment[TSlotDispatch], pydantic.Field(discriminator="typename__")]
+
+
+class OverloadedResultPostPydanticSlotImageAttachment[TSlotPydantic = Never](GQLSlotModel[TSlotPydantic]):
+    slot_name__: ClassVar[str] = "pydantic"
+    typename__: Annotated[Literal["ImageAttachment"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
+
+
+class OverloadedResultPostPydanticSlotLinkAttachment[TSlotPydantic = Never](GQLSlotModel[TSlotPydantic]):
+    slot_name__: ClassVar[str] = "pydantic"
+    typename__: Annotated[Literal["LinkAttachment"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
+
+
+type OverloadedResultPostPydanticSlot[TSlotPydantic] = Annotated[OverloadedResultPostPydanticSlotImageAttachment[TSlotPydantic] | OverloadedResultPostPydanticSlotLinkAttachment[TSlotPydantic], pydantic.Field(discriminator="typename__")]
+
+
+class OverloadedResultPostRuntimeSlotImageAttachment[TSlotRuntime = Never](GQLSlotModel[TSlotRuntime]):
+    slot_name__: ClassVar[str] = "runtime"
+    typename__: Annotated[Literal["ImageAttachment"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
+
+
+class OverloadedResultPostRuntimeSlotLinkAttachment[TSlotRuntime = Never](GQLSlotModel[TSlotRuntime]):
+    slot_name__: ClassVar[str] = "runtime"
+    typename__: Annotated[Literal["LinkAttachment"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
+
+
+type OverloadedResultPostRuntimeSlot[TSlotRuntime] = Annotated[OverloadedResultPostRuntimeSlotImageAttachment[TSlotRuntime] | OverloadedResultPostRuntimeSlotLinkAttachment[TSlotRuntime], pydantic.Field(discriminator="typename__")]
+
+
+class OverloadedResultPostSequenceSlotImageAttachment[TSlotSequence = Never](GQLSlotModel[TSlotSequence]):
+    slot_name__: ClassVar[str] = "sequence"
+    typename__: Annotated[Literal["ImageAttachment"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
+
+
+class OverloadedResultPostSequenceSlotLinkAttachment[TSlotSequence = Never](GQLSlotModel[TSlotSequence]):
+    slot_name__: ClassVar[str] = "sequence"
+    typename__: Annotated[Literal["LinkAttachment"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
+
+
+type OverloadedResultPostSequenceSlot[TSlotSequence] = Annotated[OverloadedResultPostSequenceSlotImageAttachment[TSlotSequence] | OverloadedResultPostSequenceSlotLinkAttachment[TSlotSequence], pydantic.Field(discriminator="typename__")]
+
+
+class PostWithBindClsDispatchFragmentsIdKeyMsgPydanticRuntimeSequence[TSlotCls = Never, TSlotMsg = Never, TSlotKey = Never, TSlotBind = Never, TSlotFragments = Never, TSlotDispatch = Never, TSlotPydantic = Never, TSlotRuntime = Never, TSlotSequence = Never](GQLModel):
+    id: builtins.str
+    cls: OverloadedResultPostClsSlot[TSlotCls] | None
+    msg: OverloadedResultPostMsgSlot[TSlotMsg] | None
+    key: OverloadedResultPostKeySlot[TSlotKey] | None
+    bind: OverloadedResultPostBindSlot[TSlotBind] | None
+    fragments: OverloadedResultPostFragmentsSlot[TSlotFragments] | None
+    dispatch: OverloadedResultPostDispatchSlot[TSlotDispatch] | None
+    pydantic: OverloadedResultPostPydanticSlot[TSlotPydantic] | None
+    runtime: OverloadedResultPostRuntimeSlot[TSlotRuntime] | None
+    sequence: OverloadedResultPostSequenceSlot[TSlotSequence] | None
+
+
+class OverloadedResult[TSlotCls = Never, TSlotMsg = Never, TSlotKey = Never, TSlotBind = Never, TSlotFragments = Never, TSlotDispatch = Never, TSlotPydantic = Never, TSlotRuntime = Never, TSlotSequence = Never](GQLModel):
+    post: PostWithBindClsDispatchFragmentsIdKeyMsgPydanticRuntimeSequence[TSlotCls, TSlotMsg, TSlotKey, TSlotBind, TSlotFragments, TSlotDispatch, TSlotPydantic, TSlotRuntime, TSlotSequence] | None
+
+
+class InlineResultPostClsSlotImageAttachment[TSlotCls = Never](GQLSlotModel[TSlotCls]):
+    slot_name__: ClassVar[str] = "cls"
+    typename__: Annotated[Literal["ImageAttachment"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
+
+
+class InlineResultPostClsSlotLinkAttachment[TSlotCls = Never](GQLSlotModel[TSlotCls]):
+    slot_name__: ClassVar[str] = "cls"
+    typename__: Annotated[Literal["LinkAttachment"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
+
+
+type InlineResultPostClsSlot[TSlotCls] = Annotated[InlineResultPostClsSlotImageAttachment[TSlotCls] | InlineResultPostClsSlotLinkAttachment[TSlotCls], pydantic.Field(discriminator="typename__")]
+
+
+class PostWithClsId[TSlotCls = Never](GQLModel):
+    id: builtins.str
+    cls: InlineResultPostClsSlot[TSlotCls] | None
+
+
+class InlineResult[TSlotCls = Never](GQLModel):
+    post: PostWithClsId[TSlotCls] | None
+
+
 class ImagePartsData(GQLOpenModel):
     url: str
 
@@ -85,296 +241,6 @@ LINK_PARTS = LinkParts(
 )
 
 
-class OverloadedWithClsImagePartsResultPostClsSlotImageAttachment(GQLSlotModel[ImageParts]):
-    slot_name__: ClassVar[str] = "cls"
-    typename__: Annotated[Literal["ImageAttachment"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
-
-
-class OverloadedWithClsImagePartsResultPostClsSlotLinkAttachment(GQLSlotModel[ImageParts]):
-    slot_name__: ClassVar[str] = "cls"
-    typename__: Annotated[Literal["LinkAttachment"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
-
-
-type OverloadedWithClsImagePartsResultPostClsSlot = Annotated[OverloadedWithClsImagePartsResultPostClsSlotImageAttachment | OverloadedWithClsImagePartsResultPostClsSlotLinkAttachment, pydantic.Field(discriminator="typename__")]
-
-
-class OverloadedWithClsImagePartsResultPostMsgSlotImageAttachment(GQLSlotModel[Never]):
-    slot_name__: ClassVar[str] = "msg"
-    typename__: Annotated[Literal["ImageAttachment"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
-
-
-class OverloadedWithClsImagePartsResultPostMsgSlotLinkAttachment(GQLSlotModel[Never]):
-    slot_name__: ClassVar[str] = "msg"
-    typename__: Annotated[Literal["LinkAttachment"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
-
-
-type OverloadedWithClsImagePartsResultPostMsgSlot = Annotated[OverloadedWithClsImagePartsResultPostMsgSlotImageAttachment | OverloadedWithClsImagePartsResultPostMsgSlotLinkAttachment, pydantic.Field(discriminator="typename__")]
-
-
-class OverloadedWithClsImagePartsResultPostKeySlotImageAttachment(GQLSlotModel[Never]):
-    slot_name__: ClassVar[str] = "key"
-    typename__: Annotated[Literal["ImageAttachment"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
-
-
-class OverloadedWithClsImagePartsResultPostKeySlotLinkAttachment(GQLSlotModel[Never]):
-    slot_name__: ClassVar[str] = "key"
-    typename__: Annotated[Literal["LinkAttachment"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
-
-
-type OverloadedWithClsImagePartsResultPostKeySlot = Annotated[OverloadedWithClsImagePartsResultPostKeySlotImageAttachment | OverloadedWithClsImagePartsResultPostKeySlotLinkAttachment, pydantic.Field(discriminator="typename__")]
-
-
-class OverloadedWithClsImagePartsResultPostBindSlotImageAttachment(GQLSlotModel[Never]):
-    slot_name__: ClassVar[str] = "bind"
-    typename__: Annotated[Literal["ImageAttachment"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
-
-
-class OverloadedWithClsImagePartsResultPostBindSlotLinkAttachment(GQLSlotModel[Never]):
-    slot_name__: ClassVar[str] = "bind"
-    typename__: Annotated[Literal["LinkAttachment"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
-
-
-type OverloadedWithClsImagePartsResultPostBindSlot = Annotated[OverloadedWithClsImagePartsResultPostBindSlotImageAttachment | OverloadedWithClsImagePartsResultPostBindSlotLinkAttachment, pydantic.Field(discriminator="typename__")]
-
-
-class OverloadedWithClsImagePartsResultPostFragmentsSlotImageAttachment(GQLSlotModel[Never]):
-    slot_name__: ClassVar[str] = "fragments"
-    typename__: Annotated[Literal["ImageAttachment"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
-
-
-class OverloadedWithClsImagePartsResultPostFragmentsSlotLinkAttachment(GQLSlotModel[Never]):
-    slot_name__: ClassVar[str] = "fragments"
-    typename__: Annotated[Literal["LinkAttachment"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
-
-
-type OverloadedWithClsImagePartsResultPostFragmentsSlot = Annotated[OverloadedWithClsImagePartsResultPostFragmentsSlotImageAttachment | OverloadedWithClsImagePartsResultPostFragmentsSlotLinkAttachment, pydantic.Field(discriminator="typename__")]
-
-
-class OverloadedWithClsImagePartsResultPostDispatchSlotImageAttachment(GQLSlotModel[Never]):
-    slot_name__: ClassVar[str] = "dispatch"
-    typename__: Annotated[Literal["ImageAttachment"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
-
-
-class OverloadedWithClsImagePartsResultPostDispatchSlotLinkAttachment(GQLSlotModel[Never]):
-    slot_name__: ClassVar[str] = "dispatch"
-    typename__: Annotated[Literal["LinkAttachment"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
-
-
-type OverloadedWithClsImagePartsResultPostDispatchSlot = Annotated[OverloadedWithClsImagePartsResultPostDispatchSlotImageAttachment | OverloadedWithClsImagePartsResultPostDispatchSlotLinkAttachment, pydantic.Field(discriminator="typename__")]
-
-
-class OverloadedWithClsImagePartsResultPostPydanticSlotImageAttachment(GQLSlotModel[Never]):
-    slot_name__: ClassVar[str] = "pydantic"
-    typename__: Annotated[Literal["ImageAttachment"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
-
-
-class OverloadedWithClsImagePartsResultPostPydanticSlotLinkAttachment(GQLSlotModel[Never]):
-    slot_name__: ClassVar[str] = "pydantic"
-    typename__: Annotated[Literal["LinkAttachment"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
-
-
-type OverloadedWithClsImagePartsResultPostPydanticSlot = Annotated[OverloadedWithClsImagePartsResultPostPydanticSlotImageAttachment | OverloadedWithClsImagePartsResultPostPydanticSlotLinkAttachment, pydantic.Field(discriminator="typename__")]
-
-
-class OverloadedWithClsImagePartsResultPostRuntimeSlotImageAttachment(GQLSlotModel[Never]):
-    slot_name__: ClassVar[str] = "runtime"
-    typename__: Annotated[Literal["ImageAttachment"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
-
-
-class OverloadedWithClsImagePartsResultPostRuntimeSlotLinkAttachment(GQLSlotModel[Never]):
-    slot_name__: ClassVar[str] = "runtime"
-    typename__: Annotated[Literal["LinkAttachment"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
-
-
-type OverloadedWithClsImagePartsResultPostRuntimeSlot = Annotated[OverloadedWithClsImagePartsResultPostRuntimeSlotImageAttachment | OverloadedWithClsImagePartsResultPostRuntimeSlotLinkAttachment, pydantic.Field(discriminator="typename__")]
-
-
-class OverloadedWithClsImagePartsResultPostSequenceSlotImageAttachment(GQLSlotModel[Never]):
-    slot_name__: ClassVar[str] = "sequence"
-    typename__: Annotated[Literal["ImageAttachment"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
-
-
-class OverloadedWithClsImagePartsResultPostSequenceSlotLinkAttachment(GQLSlotModel[Never]):
-    slot_name__: ClassVar[str] = "sequence"
-    typename__: Annotated[Literal["LinkAttachment"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
-
-
-type OverloadedWithClsImagePartsResultPostSequenceSlot = Annotated[OverloadedWithClsImagePartsResultPostSequenceSlotImageAttachment | OverloadedWithClsImagePartsResultPostSequenceSlotLinkAttachment, pydantic.Field(discriminator="typename__")]
-
-
-class OverloadedWithClsImagePartsPostWithBindClsDispatchFragmentsIdKeyMsgPydanticRuntimeSequence(GQLModel):
-    id: builtins.str
-    cls: OverloadedWithClsImagePartsResultPostClsSlot | None
-    msg: OverloadedWithClsImagePartsResultPostMsgSlot | None
-    key: OverloadedWithClsImagePartsResultPostKeySlot | None
-    bind: OverloadedWithClsImagePartsResultPostBindSlot | None
-    fragments: OverloadedWithClsImagePartsResultPostFragmentsSlot | None
-    dispatch: OverloadedWithClsImagePartsResultPostDispatchSlot | None
-    pydantic: OverloadedWithClsImagePartsResultPostPydanticSlot | None
-    runtime: OverloadedWithClsImagePartsResultPostRuntimeSlot | None
-    sequence: OverloadedWithClsImagePartsResultPostSequenceSlot | None
-
-
-class OverloadedWithClsImagePartsResult(GQLModel):
-    post: OverloadedWithClsImagePartsPostWithBindClsDispatchFragmentsIdKeyMsgPydanticRuntimeSequence | None
-
-
-class OverloadedWithPydanticLinkPartsWithRuntimeImagePartsResultPostClsSlotImageAttachment(GQLSlotModel[Never]):
-    slot_name__: ClassVar[str] = "cls"
-    typename__: Annotated[Literal["ImageAttachment"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
-
-
-class OverloadedWithPydanticLinkPartsWithRuntimeImagePartsResultPostClsSlotLinkAttachment(GQLSlotModel[Never]):
-    slot_name__: ClassVar[str] = "cls"
-    typename__: Annotated[Literal["LinkAttachment"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
-
-
-type OverloadedWithPydanticLinkPartsWithRuntimeImagePartsResultPostClsSlot = Annotated[OverloadedWithPydanticLinkPartsWithRuntimeImagePartsResultPostClsSlotImageAttachment | OverloadedWithPydanticLinkPartsWithRuntimeImagePartsResultPostClsSlotLinkAttachment, pydantic.Field(discriminator="typename__")]
-
-
-class OverloadedWithPydanticLinkPartsWithRuntimeImagePartsResultPostMsgSlotImageAttachment(GQLSlotModel[Never]):
-    slot_name__: ClassVar[str] = "msg"
-    typename__: Annotated[Literal["ImageAttachment"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
-
-
-class OverloadedWithPydanticLinkPartsWithRuntimeImagePartsResultPostMsgSlotLinkAttachment(GQLSlotModel[Never]):
-    slot_name__: ClassVar[str] = "msg"
-    typename__: Annotated[Literal["LinkAttachment"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
-
-
-type OverloadedWithPydanticLinkPartsWithRuntimeImagePartsResultPostMsgSlot = Annotated[OverloadedWithPydanticLinkPartsWithRuntimeImagePartsResultPostMsgSlotImageAttachment | OverloadedWithPydanticLinkPartsWithRuntimeImagePartsResultPostMsgSlotLinkAttachment, pydantic.Field(discriminator="typename__")]
-
-
-class OverloadedWithPydanticLinkPartsWithRuntimeImagePartsResultPostKeySlotImageAttachment(GQLSlotModel[Never]):
-    slot_name__: ClassVar[str] = "key"
-    typename__: Annotated[Literal["ImageAttachment"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
-
-
-class OverloadedWithPydanticLinkPartsWithRuntimeImagePartsResultPostKeySlotLinkAttachment(GQLSlotModel[Never]):
-    slot_name__: ClassVar[str] = "key"
-    typename__: Annotated[Literal["LinkAttachment"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
-
-
-type OverloadedWithPydanticLinkPartsWithRuntimeImagePartsResultPostKeySlot = Annotated[OverloadedWithPydanticLinkPartsWithRuntimeImagePartsResultPostKeySlotImageAttachment | OverloadedWithPydanticLinkPartsWithRuntimeImagePartsResultPostKeySlotLinkAttachment, pydantic.Field(discriminator="typename__")]
-
-
-class OverloadedWithPydanticLinkPartsWithRuntimeImagePartsResultPostBindSlotImageAttachment(GQLSlotModel[Never]):
-    slot_name__: ClassVar[str] = "bind"
-    typename__: Annotated[Literal["ImageAttachment"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
-
-
-class OverloadedWithPydanticLinkPartsWithRuntimeImagePartsResultPostBindSlotLinkAttachment(GQLSlotModel[Never]):
-    slot_name__: ClassVar[str] = "bind"
-    typename__: Annotated[Literal["LinkAttachment"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
-
-
-type OverloadedWithPydanticLinkPartsWithRuntimeImagePartsResultPostBindSlot = Annotated[OverloadedWithPydanticLinkPartsWithRuntimeImagePartsResultPostBindSlotImageAttachment | OverloadedWithPydanticLinkPartsWithRuntimeImagePartsResultPostBindSlotLinkAttachment, pydantic.Field(discriminator="typename__")]
-
-
-class OverloadedWithPydanticLinkPartsWithRuntimeImagePartsResultPostFragmentsSlotImageAttachment(GQLSlotModel[Never]):
-    slot_name__: ClassVar[str] = "fragments"
-    typename__: Annotated[Literal["ImageAttachment"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
-
-
-class OverloadedWithPydanticLinkPartsWithRuntimeImagePartsResultPostFragmentsSlotLinkAttachment(GQLSlotModel[Never]):
-    slot_name__: ClassVar[str] = "fragments"
-    typename__: Annotated[Literal["LinkAttachment"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
-
-
-type OverloadedWithPydanticLinkPartsWithRuntimeImagePartsResultPostFragmentsSlot = Annotated[OverloadedWithPydanticLinkPartsWithRuntimeImagePartsResultPostFragmentsSlotImageAttachment | OverloadedWithPydanticLinkPartsWithRuntimeImagePartsResultPostFragmentsSlotLinkAttachment, pydantic.Field(discriminator="typename__")]
-
-
-class OverloadedWithPydanticLinkPartsWithRuntimeImagePartsResultPostDispatchSlotImageAttachment(GQLSlotModel[Never]):
-    slot_name__: ClassVar[str] = "dispatch"
-    typename__: Annotated[Literal["ImageAttachment"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
-
-
-class OverloadedWithPydanticLinkPartsWithRuntimeImagePartsResultPostDispatchSlotLinkAttachment(GQLSlotModel[Never]):
-    slot_name__: ClassVar[str] = "dispatch"
-    typename__: Annotated[Literal["LinkAttachment"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
-
-
-type OverloadedWithPydanticLinkPartsWithRuntimeImagePartsResultPostDispatchSlot = Annotated[OverloadedWithPydanticLinkPartsWithRuntimeImagePartsResultPostDispatchSlotImageAttachment | OverloadedWithPydanticLinkPartsWithRuntimeImagePartsResultPostDispatchSlotLinkAttachment, pydantic.Field(discriminator="typename__")]
-
-
-class OverloadedWithPydanticLinkPartsWithRuntimeImagePartsResultPostPydanticSlotImageAttachment(GQLSlotModel[LinkParts]):
-    slot_name__: ClassVar[str] = "pydantic"
-    typename__: Annotated[Literal["ImageAttachment"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
-
-
-class OverloadedWithPydanticLinkPartsWithRuntimeImagePartsResultPostPydanticSlotLinkAttachment(GQLSlotModel[LinkParts]):
-    slot_name__: ClassVar[str] = "pydantic"
-    typename__: Annotated[Literal["LinkAttachment"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
-
-
-type OverloadedWithPydanticLinkPartsWithRuntimeImagePartsResultPostPydanticSlot = Annotated[OverloadedWithPydanticLinkPartsWithRuntimeImagePartsResultPostPydanticSlotImageAttachment | OverloadedWithPydanticLinkPartsWithRuntimeImagePartsResultPostPydanticSlotLinkAttachment, pydantic.Field(discriminator="typename__")]
-
-
-class OverloadedWithPydanticLinkPartsWithRuntimeImagePartsResultPostRuntimeSlotImageAttachment(GQLSlotModel[ImageParts]):
-    slot_name__: ClassVar[str] = "runtime"
-    typename__: Annotated[Literal["ImageAttachment"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
-
-
-class OverloadedWithPydanticLinkPartsWithRuntimeImagePartsResultPostRuntimeSlotLinkAttachment(GQLSlotModel[ImageParts]):
-    slot_name__: ClassVar[str] = "runtime"
-    typename__: Annotated[Literal["LinkAttachment"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
-
-
-type OverloadedWithPydanticLinkPartsWithRuntimeImagePartsResultPostRuntimeSlot = Annotated[OverloadedWithPydanticLinkPartsWithRuntimeImagePartsResultPostRuntimeSlotImageAttachment | OverloadedWithPydanticLinkPartsWithRuntimeImagePartsResultPostRuntimeSlotLinkAttachment, pydantic.Field(discriminator="typename__")]
-
-
-class OverloadedWithPydanticLinkPartsWithRuntimeImagePartsResultPostSequenceSlotImageAttachment(GQLSlotModel[Never]):
-    slot_name__: ClassVar[str] = "sequence"
-    typename__: Annotated[Literal["ImageAttachment"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
-
-
-class OverloadedWithPydanticLinkPartsWithRuntimeImagePartsResultPostSequenceSlotLinkAttachment(GQLSlotModel[Never]):
-    slot_name__: ClassVar[str] = "sequence"
-    typename__: Annotated[Literal["LinkAttachment"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
-
-
-type OverloadedWithPydanticLinkPartsWithRuntimeImagePartsResultPostSequenceSlot = Annotated[OverloadedWithPydanticLinkPartsWithRuntimeImagePartsResultPostSequenceSlotImageAttachment | OverloadedWithPydanticLinkPartsWithRuntimeImagePartsResultPostSequenceSlotLinkAttachment, pydantic.Field(discriminator="typename__")]
-
-
-class OverloadedWithPydanticLinkPartsWithRuntimeImagePartsPostWithBindClsDispatchFragmentsIdKeyMsgPydanticRuntimeSequence(GQLModel):
-    id: builtins.str
-    cls: OverloadedWithPydanticLinkPartsWithRuntimeImagePartsResultPostClsSlot | None
-    msg: OverloadedWithPydanticLinkPartsWithRuntimeImagePartsResultPostMsgSlot | None
-    key: OverloadedWithPydanticLinkPartsWithRuntimeImagePartsResultPostKeySlot | None
-    bind: OverloadedWithPydanticLinkPartsWithRuntimeImagePartsResultPostBindSlot | None
-    fragments: OverloadedWithPydanticLinkPartsWithRuntimeImagePartsResultPostFragmentsSlot | None
-    dispatch: OverloadedWithPydanticLinkPartsWithRuntimeImagePartsResultPostDispatchSlot | None
-    pydantic: OverloadedWithPydanticLinkPartsWithRuntimeImagePartsResultPostPydanticSlot | None
-    runtime: OverloadedWithPydanticLinkPartsWithRuntimeImagePartsResultPostRuntimeSlot | None
-    sequence: OverloadedWithPydanticLinkPartsWithRuntimeImagePartsResultPostSequenceSlot | None
-
-
-class OverloadedWithPydanticLinkPartsWithRuntimeImagePartsResult(GQLModel):
-    post: OverloadedWithPydanticLinkPartsWithRuntimeImagePartsPostWithBindClsDispatchFragmentsIdKeyMsgPydanticRuntimeSequence | None
-
-
-class InlineWithClsImagePartsResultPostClsSlotImageAttachment(GQLSlotModel[ImageParts]):
-    slot_name__: ClassVar[str] = "cls"
-    typename__: Annotated[Literal["ImageAttachment"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
-
-
-class InlineWithClsImagePartsResultPostClsSlotLinkAttachment(GQLSlotModel[ImageParts]):
-    slot_name__: ClassVar[str] = "cls"
-    typename__: Annotated[Literal["LinkAttachment"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
-
-
-type InlineWithClsImagePartsResultPostClsSlot = Annotated[InlineWithClsImagePartsResultPostClsSlotImageAttachment | InlineWithClsImagePartsResultPostClsSlotLinkAttachment, pydantic.Field(discriminator="typename__")]
-
-
-class InlineWithClsImagePartsPostWithClsId(GQLModel):
-    id: builtins.str
-    cls: InlineWithClsImagePartsResultPostClsSlot | None
-
-
-class InlineWithClsImagePartsResult(GQLModel):
-    post: InlineWithClsImagePartsPostWithClsId | None
-
-
 class OverloadedBound[TResult](runtime.GQLBoundOperation, ABC):
     @abstractmethod
     async def execute(self, *, id: builtins.str) -> TResult:
@@ -387,14 +253,14 @@ class InlineBound[TResult](runtime.GQLBoundOperation, ABC):
         ...
 
 
-class OverloadedWithClsImageParts(OverloadedBound[OverloadedWithClsImagePartsResult]):
+class OverloadedWithClsImageParts(OverloadedBound[OverloadedResult[ImageParts, Never, Never, Never, Never, Never, Never, Never, Never]]):
     # See: queries.py:52
     exec_source__ = 'query Overloaded($id: ID!) {\n  post(id: $id) {\n    id\n    cls: attachment {\n      __typename\n      ...ImageParts\n    }\n    msg: attachment {\n      __typename\n    }\n    key: attachment {\n      __typename\n    }\n    bind: attachment {\n      __typename\n    }\n    fragments: attachment {\n      __typename\n    }\n    dispatch: attachment {\n      __typename\n    }\n    pydantic: attachment {\n      __typename\n    }\n    runtime: attachment {\n      __typename\n    }\n    sequence: attachment {\n      __typename\n    }\n  }\n}\n\nfragment ImageParts on ImageAttachment {\n  url\n}'
     slot_handles__ = {"cls": (slots.SlotHandle(IMAGE_PARTS, frozenset({'ImageAttachment'})),), "msg": (), "key": (), "bind": (), "fragments": (), "dispatch": (), "pydantic": (), "runtime": (), "sequence": ()}
     @override
-    async def execute(self, *, id: builtins.str) -> OverloadedWithClsImagePartsResult:
+    async def execute(self, *, id: builtins.str) -> OverloadedResult[ImageParts, Never, Never, Never, Never, Never, Never, Never, Never]:
         return await API_CLIENT.query(
-            OverloadedWithClsImagePartsResult,
+            OverloadedResult[ImageParts, Never, Never, Never, Never, Never, Never, Never, Never],
             self.exec_source__,
             variables={"id": id, **self.fragment_args__()},
             headers=self.headers,
@@ -402,14 +268,14 @@ class OverloadedWithClsImageParts(OverloadedBound[OverloadedWithClsImagePartsRes
         )
 
 
-class OverloadedWithPydanticLinkPartsWithRuntimeImageParts(OverloadedBound[OverloadedWithPydanticLinkPartsWithRuntimeImagePartsResult]):
+class OverloadedWithPydanticLinkPartsWithRuntimeImageParts(OverloadedBound[OverloadedResult[Never, Never, Never, Never, Never, Never, LinkParts, ImageParts, Never]]):
     # See: queries.py:53
     exec_source__ = 'query Overloaded($id: ID!) {\n  post(id: $id) {\n    id\n    cls: attachment {\n      __typename\n    }\n    msg: attachment {\n      __typename\n    }\n    key: attachment {\n      __typename\n    }\n    bind: attachment {\n      __typename\n    }\n    fragments: attachment {\n      __typename\n    }\n    dispatch: attachment {\n      __typename\n    }\n    pydantic: attachment {\n      __typename\n      ...LinkParts\n    }\n    runtime: attachment {\n      __typename\n      ...ImageParts\n    }\n    sequence: attachment {\n      __typename\n    }\n  }\n}\n\nfragment ImageParts on ImageAttachment {\n  url\n}\n\nfragment LinkParts on LinkAttachment {\n  href\n}'
     slot_handles__ = {"cls": (), "msg": (), "key": (), "bind": (), "fragments": (), "dispatch": (), "pydantic": (slots.SlotHandle(LINK_PARTS, frozenset({'LinkAttachment'})),), "runtime": (slots.SlotHandle(IMAGE_PARTS, frozenset({'ImageAttachment'})),), "sequence": ()}
     @override
-    async def execute(self, *, id: builtins.str) -> OverloadedWithPydanticLinkPartsWithRuntimeImagePartsResult:
+    async def execute(self, *, id: builtins.str) -> OverloadedResult[Never, Never, Never, Never, Never, Never, LinkParts, ImageParts, Never]:
         return await API_CLIENT.query(
-            OverloadedWithPydanticLinkPartsWithRuntimeImagePartsResult,
+            OverloadedResult[Never, Never, Never, Never, Never, Never, LinkParts, ImageParts, Never],
             self.exec_source__,
             variables={"id": id, **self.fragment_args__()},
             headers=self.headers,
@@ -417,14 +283,14 @@ class OverloadedWithPydanticLinkPartsWithRuntimeImageParts(OverloadedBound[Overl
         )
 
 
-class InlineWithClsImageParts(InlineBound[InlineWithClsImagePartsResult]):
+class InlineWithClsImageParts(InlineBound[InlineResult[ImageParts]]):
     # See: queries.py:54
     exec_source__ = 'query Inline($id: ID!) {\n  post(id: $id) {\n    id\n    cls: attachment {\n      __typename\n      ...ImageParts\n    }\n  }\n}\n\nfragment ImageParts on ImageAttachment {\n  url\n}'
     slot_handles__ = {"cls": (slots.SlotHandle(IMAGE_PARTS, frozenset({'ImageAttachment'})),)}
     @override
-    async def execute(self, *, id: builtins.str) -> InlineWithClsImagePartsResult:
+    async def execute(self, *, id: builtins.str) -> InlineResult[ImageParts]:
         return await API_CLIENT.query(
-            InlineWithClsImagePartsResult,
+            InlineResult[ImageParts],
             self.exec_source__,
             variables={"id": id, **self.fragment_args__()},
             headers=self.headers,

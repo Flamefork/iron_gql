@@ -66,6 +66,15 @@ class GetViewerResult(GQLModel):
     viewer: User
 
 
+class WithSlotResultNodeSlot[TSlotNode = Never](GQLSlotModel[TSlotNode]):
+    slot_name__: ClassVar[str] = "node"
+    typename__: Annotated[Literal['Admin', 'User'], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
+
+
+class WithSlotResult[TSlotNode = Never](GQLModel):
+    node: WithSlotResultNodeSlot[TSlotNode] | None
+
+
 class UserFieldsData(GQLOpenModel):
     id: builtins.str
     name: str
@@ -116,38 +125,20 @@ NODE_FIELDS = NodeFields(
 )
 
 
-class WithSlotWithNodeUserFieldsResultNodeSlot(GQLSlotModel[UserFields]):
-    slot_name__: ClassVar[str] = "node"
-    typename__: Annotated[Literal['Admin', 'User'], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
-
-
-class WithSlotWithNodeUserFieldsResult(GQLModel):
-    node: WithSlotWithNodeUserFieldsResultNodeSlot | None
-
-
-class WithSlotWithNodeNodeFieldsResultNodeSlot(GQLSlotModel[NodeFields]):
-    slot_name__: ClassVar[str] = "node"
-    typename__: Annotated[Literal['Admin', 'User'], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
-
-
-class WithSlotWithNodeNodeFieldsResult(GQLModel):
-    node: WithSlotWithNodeNodeFieldsResultNodeSlot | None
-
-
 class WithSlotBound[TResult](runtime.GQLBoundOperation, ABC):
     @abstractmethod
     async def execute(self, *, id: builtins.str) -> TResult:
         ...
 
 
-class WithSlotWithNodeUserFields(WithSlotBound[WithSlotWithNodeUserFieldsResult]):
+class WithSlotWithNodeUserFields(WithSlotBound[WithSlotResult[UserFields]]):
     # See: queries.py:48
     exec_source__ = 'query WithSlot($id: ID!) {\n  node(id: $id) {\n    __typename\n    ...UserFields\n  }\n}\n\nfragment UserFields on User {\n  id\n  name\n}'
     slot_handles__ = {"node": (slots.SlotHandle(USER_FIELDS, frozenset({'User'})),)}
     @override
-    async def execute(self, *, id: builtins.str) -> WithSlotWithNodeUserFieldsResult:
+    async def execute(self, *, id: builtins.str) -> WithSlotResult[UserFields]:
         return await API_CLIENT.query(
-            WithSlotWithNodeUserFieldsResult,
+            WithSlotResult[UserFields],
             self.exec_source__,
             variables={"id": id, **self.fragment_args__()},
             headers=self.headers,
@@ -155,14 +146,14 @@ class WithSlotWithNodeUserFields(WithSlotBound[WithSlotWithNodeUserFieldsResult]
         )
 
 
-class WithSlotWithNodeNodeFields(WithSlotBound[WithSlotWithNodeNodeFieldsResult]):
+class WithSlotWithNodeNodeFields(WithSlotBound[WithSlotResult[NodeFields]]):
     # See: queries.py:49
     exec_source__ = 'query WithSlot($id: ID!) {\n  node(id: $id) {\n    __typename\n    ...NodeFields\n  }\n}\n\nfragment NodeFields on Node {\n  __typename\n  id\n  ... on Admin {\n    permissions\n  }\n}'
     slot_handles__ = {"node": (slots.SlotHandle(NODE_FIELDS, frozenset({'Admin', 'User'})),)}
     @override
-    async def execute(self, *, id: builtins.str) -> WithSlotWithNodeNodeFieldsResult:
+    async def execute(self, *, id: builtins.str) -> WithSlotResult[NodeFields]:
         return await API_CLIENT.query(
-            WithSlotWithNodeNodeFieldsResult,
+            WithSlotResult[NodeFields],
             self.exec_source__,
             variables={"id": id, **self.fragment_args__()},
             headers=self.headers,

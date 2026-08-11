@@ -45,10 +45,10 @@ from iron_gql.codegen.ir import NamedRef
 from iron_gql.codegen.ir import ScalarRef
 from iron_gql.codegen.ir import StrTransform
 from iron_gql.codegen.ir import TypeRef
-from iron_gql.codegen.ir import bindings_by_template
 from iron_gql.codegen.ir import field_name_to_pascal
 from iron_gql.codegen.ir import make_optional
 from iron_gql.codegen.ir import result_model_name
+from iron_gql.codegen.ir import slot_param_name
 from iron_gql.codegen.ir import slot_roots
 from iron_gql.codegen.names import validate_collected_names
 from iron_gql.codegen.parser import FragmentStatement
@@ -648,7 +648,7 @@ class PackageCollector:
             *child_models,
             CollectedUnionAlias(
                 name=base_name,
-                variants=tuple(union_types),
+                variants=tuple(NamedRef(name=name) for name in union_types),
                 discriminator="typename__",
             ),
         ]
@@ -1010,9 +1010,6 @@ def collect_package_ir(
 
     return CollectedPackageIR(
         result_artifacts=result_artifacts,
-        # Filled by `specialize_bindings`, which runs after the rename pass:
-        # the names a binding's copies are built from are only final there.
-        binding_artifacts=[],
         input_artifacts=input_artifacts,
         operations=collected_operations,
         fragments=fragments,
@@ -1024,93 +1021,101 @@ def collect_package_ir(
     )
 
 
-def specialize_bindings(ir: CollectedPackageIR) -> CollectedPackageIR:
-    # One set of result models per binding, in place of one generic set per
-    # template. Which fragments are readable at a slot is the binding's own
-    # fact, and threading it as a type parameter made every model on the way
-    # to a node generic -- see `render.render_template_bases` for what that
-    # cost. Copied per binding instead, with the fragments written into the
-    # node's own base, so every model this generator writes is a plain class.
+def parametrize_slot_paths(ir: CollectedPackageIR) -> CollectedPackageIR:
+    # One set of result models per template, generic in its slots, in place of
+    # a copy of that set per binding. Which fragments are readable at a slot is
+    # the binding's own fact, and it travels as a type argument the binding
+    # fills in when it names its result type -- so shared code that is generic
+    # over the binding still sees the shape of the result and can read a slot
+    # through a type-erased handle.
     #
-    # Copied are exactly the artifacts a slot node is reachable from, the node
-    # itself included: what sits *below* a node is the slot's static
-    # selection, which no binding varies, so every binding's copy points at
-    # the one shared set. A template nothing binds keeps its models as they
-    # are -- no fragment is readable at any of its slots, which is what an
-    # empty `offered_fragments` already says.
+    # Parametrised are exactly the artifacts a slot node is reachable from, the
+    # node itself included: what sits *below* a node is the slot's static
+    # selection, which no binding varies. A template nothing binds is
+    # parametrised all the same -- its models simply have no binding naming
+    # them, and a bare `{Op}Result` reads as `Never` in every slot, which is
+    # what "nothing is readable there" means.
     #
-    # Runs after `apply_rename` (the names the copies are built from must be
-    # final) and after `slots.validate_no_nested_slots` (which walks a
-    # template's own result subtree, and a template's subtree is what this
-    # replaces).
+    # Runs after `apply_rename` (the names must be final) and after
+    # `slots.validate_no_nested_slots` (which walks a template's own result
+    # subtree, and nesting is a fact about that subtree).
     dependents: dict[str, list[str]] = {}
     for artifact in ir.result_artifacts:
         for dep in artifact.dependencies:
             dependents.setdefault(dep, []).append(artifact.name)
-    grouped = bindings_by_template(ir.bindings)
-    copied: set[str] = set()
-    binding_artifacts: list[CollectedArtifact] = []
-    open_names = set(ir.open_model_names)
+    params: dict[str, list[str]] = {}
     for template in ir.templates:
-        bindings = grouped.get(template.class_name, [])
-        if not bindings:
-            continue
-        # Unioned with the roots because `reachable` counts only what an edge
-        # leads to, and a node model is its own root here. Slot paths are
-        # per-template by construction -- their shapes reference the
-        # template's own slot model names, which no rename moves -- so one
-        # artifact is never claimed by two templates.
-        seeds = [name for slot in template.slots for name in slot.node_types]
-        path = set(seeds) | reachable(seeds, lambda name: dependents.get(name, ()))
-        copied |= path
-        # A copy is open exactly when what it was copied from is -- the node
-        # models are, everything above them is not -- so the rule needs no
-        # second walk to say so.
-        open_path = path & ir.open_model_names
-        for binding in bindings:
-            binding_artifacts.extend(
-                _specialized_artifacts(binding, path, ir.result_artifacts)
-            )
-            open_names.update(binding.specialized_name(name) for name in open_path)
+        # Template slot order is parameter order, so a binding can fill the
+        # arguments straight from its own slots (which stand in that same
+        # order) without either side sorting.
+        for slot in template.slots:
+            param = slot_param_name(slot.python_name)
+            # Unioned with the roots because `reachable` counts only what an
+            # edge leads to, and a node model is its own root here. Slot paths
+            # are per-template by construction -- their shapes reference the
+            # template's own slot model names, which no rename moves.
+            seeds = list(slot.node_types)
+            path = set(seeds) | reachable(seeds, lambda name: dependents.get(name, ()))
+            for name in path:
+                on_artifact = params.setdefault(name, [])
+                # One slot name may be selected under two parents, and both
+                # positions carry the same phantom: the second visit adds
+                # nothing.
+                if param not in on_artifact:
+                    on_artifact.append(param)
     return dataclasses.replace(
         ir,
         result_artifacts=[
-            artifact for artifact in ir.result_artifacts if artifact.name not in copied
+            _parametrized(artifact, params) for artifact in ir.result_artifacts
         ],
-        binding_artifacts=binding_artifacts,
-        open_model_names=frozenset(open_names - copied),
     )
 
 
-def _specialized_artifacts(
-    binding: CollectedBinding,
-    path: set[str],
-    artifacts: list[CollectedArtifact],
-) -> list[CollectedArtifact]:
-    # This binding's copy of the path, in the order the shared artifacts
-    # stand in: a model is written after the models it references, which is
-    # what pydantic wants of a module it builds at import.
-    rename = {name: binding.specialized_name(name) for name in path}
-    offered = {
-        binding_slot.slot.name: tuple(
-            handle.fragment.class_name for handle in binding_slot.readable_handles
-        )
-        for binding_slot in binding.slots
-    }
-    copies: list[CollectedArtifact] = []
-    for artifact in artifacts:
-        if artifact.name not in path:
-            continue
-        copy = artifact.renamed(rename)
-        # The phantom, the one thing a copy carries that the shared artifact
-        # could not: the classes of every fragment readable at this slot in
-        # this binding -- what the bind named, plus what those fragments
-        # spread at their own root level. Empty stays empty and renders
-        # `Never`: an unfilled slot's node is statically unreadable.
-        if isinstance(copy, CollectedModel) and copy.slot_name is not None:
-            copy = dataclasses.replace(copy, offered_fragments=offered[copy.slot_name])
-        copies.append(copy)
-    return copies
+def _parametrized(
+    artifact: CollectedArtifact, params: dict[str, list[str]]
+) -> CollectedArtifact:
+    # The artifact's own parameters, plus the arguments every reference into
+    # the path has to pass on. A reference's arguments are the *target's*
+    # parameters: the slots reachable through it are a subset of the ones
+    # reachable from here, so they are always in scope where the reference is
+    # written.
+    own = tuple(params.get(artifact.name, ()))
+    if not own:
+        return artifact
+    match artifact:
+        case CollectedModel():
+            return dataclasses.replace(
+                artifact,
+                type_params=own,
+                fields=[
+                    dataclasses.replace(
+                        model_field,
+                        type_info=_pass_params(model_field.type_info, params),
+                    )
+                    for model_field in artifact.fields
+                ],
+            )
+        case CollectedUnionAlias():
+            return dataclasses.replace(
+                artifact,
+                type_params=own,
+                variants=tuple(
+                    dataclasses.replace(
+                        variant, params=tuple(params.get(variant.name, ()))
+                    )
+                    for variant in artifact.variants
+                ),
+            )
+
+
+def _pass_params(typ: TypeRef, params: dict[str, list[str]]) -> TypeRef:
+    match typ:
+        case NamedRef(name=name):
+            return dataclasses.replace(typ, params=tuple(params.get(name, ())))
+        case ListRef(element=element):
+            return dataclasses.replace(typ, element=_pass_params(element, params))
+        case ScalarRef():
+            return typ
 
 
 def _open_model_names(

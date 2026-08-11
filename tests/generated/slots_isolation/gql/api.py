@@ -88,7 +88,7 @@ class GetBoardResultBoardSlotActivityMove(GQLOpenModel):
 type GetBoardResultBoardSlotActivity = Annotated[GetBoardResultBoardSlotActivityComment | GetBoardResultBoardSlotActivityMove, pydantic.Field(discriminator="typename__")]
 
 
-class GetBoardResultBoardSlot(GQLSlotModel[Never]):
+class GetBoardResultBoardSlot[TSlotBoard = Never](GQLSlotModel[TSlotBoard]):
     slot_name__: ClassVar[str] = "board"
     typename__: Annotated[Literal["Board"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
     owner: GetBoardResultBoardSlotOwner | None
@@ -96,17 +96,35 @@ class GetBoardResultBoardSlot(GQLSlotModel[Never]):
     activity: GetBoardResultBoardSlotActivity | None
 
 
-class GetBoardResult(GQLModel):
-    board: GetBoardResultBoardSlot | None
+class GetBoardResult[TSlotBoard = Never](GQLModel):
+    board: GetBoardResultBoardSlot[TSlotBoard] | None
 
 
-class PingBoardResultBoardSlot(GQLSlotModel[Never]):
+class PingBoardResultBoardSlot[TSlotBoard = Never](GQLSlotModel[TSlotBoard]):
     slot_name__: ClassVar[str] = "board"
     typename__: Annotated[Literal["Board"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
 
 
-class PingBoardResult(GQLModel):
-    board: PingBoardResultBoardSlot | None
+class PingBoardResult[TSlotBoard = Never](GQLModel):
+    board: PingBoardResultBoardSlot[TSlotBoard] | None
+
+
+class PingMainResultMainSlot[TSlotMain = Never](GQLSlotModel[TSlotMain]):
+    slot_name__: ClassVar[str] = "main"
+    typename__: Annotated[Literal["Board"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
+
+
+class PingMainResult[TSlotMain = Never](GQLModel):
+    main: PingMainResultMainSlot[TSlotMain] | None
+
+
+class MergedBoardResultMergedSlot[TSlotMerged = Never](GQLSlotModel[TSlotMerged]):
+    slot_name__: ClassVar[str] = "merged"
+    typename__: Annotated[Literal["Board"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
+
+
+class MergedBoardResult[TSlotMerged = Never](GQLModel):
+    merged: MergedBoardResultMergedSlot[TSlotMerged] | None
 
 
 class BoardIdData(GQLOpenModel):
@@ -121,42 +139,6 @@ BOARD_ID = BoardId(
     fragment_name='BoardId',
     adapter=pydantic.TypeAdapter(BoardIdData),
 )
-
-
-class PingMainWithNothingResultMainSlot(GQLSlotModel[Never]):
-    slot_name__: ClassVar[str] = "main"
-    typename__: Annotated[Literal["Board"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
-
-
-class PingMainWithNothingResult(GQLModel):
-    main: PingMainWithNothingResultMainSlot | None
-
-
-class PingMainWithMainBoardIdResultMainSlot(GQLSlotModel[BoardId]):
-    slot_name__: ClassVar[str] = "main"
-    typename__: Annotated[Literal["Board"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
-
-
-class PingMainWithMainBoardIdResult(GQLModel):
-    main: PingMainWithMainBoardIdResultMainSlot | None
-
-
-class MergedBoardWithNothingResultMergedSlot(GQLSlotModel[Never]):
-    slot_name__: ClassVar[str] = "merged"
-    typename__: Annotated[Literal["Board"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
-
-
-class MergedBoardWithNothingResult(GQLModel):
-    merged: MergedBoardWithNothingResultMergedSlot | None
-
-
-class MergedBoardWithMergedBoardIdResultMergedSlot(GQLSlotModel[BoardId]):
-    slot_name__: ClassVar[str] = "merged"
-    typename__: Annotated[Literal["Board"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
-
-
-class MergedBoardWithMergedBoardIdResult(GQLModel):
-    merged: MergedBoardWithMergedBoardIdResultMergedSlot | None
 
 
 class GetBoardBound[TResult](runtime.GQLBoundOperation, ABC):
@@ -183,14 +165,14 @@ class MergedBoardBound[TResult](runtime.GQLBoundOperation, ABC):
         ...
 
 
-class PingMainWithNothing(PingMainBound[PingMainWithNothingResult]):
+class PingMainWithNothing(PingMainBound[PingMainResult[Never]]):
     # See: queries.py:53
     exec_source__ = 'query PingMain($id: ID!) {\n  main: board(id: $id) {\n    __typename\n  }\n}'
     slot_handles__ = {"main": ()}
     @override
-    async def execute(self, *, id: builtins.str) -> PingMainWithNothingResult:
+    async def execute(self, *, id: builtins.str) -> PingMainResult[Never]:
         return await API_CLIENT.query(
-            PingMainWithNothingResult,
+            PingMainResult[Never],
             self.exec_source__,
             variables={"id": id, **self.fragment_args__()},
             headers=self.headers,
@@ -198,14 +180,14 @@ class PingMainWithNothing(PingMainBound[PingMainWithNothingResult]):
         )
 
 
-class PingMainWithMainBoardId(PingMainBound[PingMainWithMainBoardIdResult]):
+class PingMainWithMainBoardId(PingMainBound[PingMainResult[BoardId]]):
     # See: queries.py:59
     exec_source__ = 'query PingMain($id: ID!) {\n  main: board(id: $id) {\n    __typename\n    ...BoardId\n  }\n}\n\nfragment BoardId on Board {\n  id\n}'
     slot_handles__ = {"main": (slots.SlotHandle(BOARD_ID, frozenset({'Board'})),)}
     @override
-    async def execute(self, *, id: builtins.str) -> PingMainWithMainBoardIdResult:
+    async def execute(self, *, id: builtins.str) -> PingMainResult[BoardId]:
         return await API_CLIENT.query(
-            PingMainWithMainBoardIdResult,
+            PingMainResult[BoardId],
             self.exec_source__,
             variables={"id": id, **self.fragment_args__()},
             headers=self.headers,
@@ -213,14 +195,14 @@ class PingMainWithMainBoardId(PingMainBound[PingMainWithMainBoardIdResult]):
         )
 
 
-class MergedBoardWithNothing(MergedBoardBound[MergedBoardWithNothingResult]):
+class MergedBoardWithNothing(MergedBoardBound[MergedBoardResult[Never]]):
     # See: queries.py:60
     exec_source__ = 'query MergedBoard($id: ID!) {\n  merged: board(id: $id) {\n    __typename\n  }\n  merged: board(id: $id) {\n    __typename\n  }\n}'
     slot_handles__ = {"merged": ()}
     @override
-    async def execute(self, *, id: builtins.str) -> MergedBoardWithNothingResult:
+    async def execute(self, *, id: builtins.str) -> MergedBoardResult[Never]:
         return await API_CLIENT.query(
-            MergedBoardWithNothingResult,
+            MergedBoardResult[Never],
             self.exec_source__,
             variables={"id": id, **self.fragment_args__()},
             headers=self.headers,
@@ -228,14 +210,14 @@ class MergedBoardWithNothing(MergedBoardBound[MergedBoardWithNothingResult]):
         )
 
 
-class MergedBoardWithMergedBoardId(MergedBoardBound[MergedBoardWithMergedBoardIdResult]):
+class MergedBoardWithMergedBoardId(MergedBoardBound[MergedBoardResult[BoardId]]):
     # See: queries.py:61
     exec_source__ = 'query MergedBoard($id: ID!) {\n  merged: board(id: $id) {\n    __typename\n  }\n  merged: board(id: $id) {\n    __typename\n    ...BoardId\n  }\n}\n\nfragment BoardId on Board {\n  id\n}'
     slot_handles__ = {"merged": (slots.SlotHandle(BOARD_ID, frozenset({'Board'})),)}
     @override
-    async def execute(self, *, id: builtins.str) -> MergedBoardWithMergedBoardIdResult:
+    async def execute(self, *, id: builtins.str) -> MergedBoardResult[BoardId]:
         return await API_CLIENT.query(
-            MergedBoardWithMergedBoardIdResult,
+            MergedBoardResult[BoardId],
             self.exec_source__,
             variables={"id": id, **self.fragment_args__()},
             headers=self.headers,

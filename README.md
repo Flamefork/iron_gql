@@ -219,7 +219,9 @@ result = await fetch("1", get_post_attachment_image)
 image = image_url.read(result.post.attachment) if result.post else None
 ```
 
-The result models are the binding's own, named after it — `GetPostAttachmentWithAttachmentImageUrlResult` and the models under it, down to the slot node that records what the binding offered there. They are ordinary classes rather than parametrizations of one shared generic, so an instance behaves like any other pydantic model: it pickles and unpickles, and a validation error names the class that raised it.
+The result models belong to the template, not to each binding. `GetPostAttachmentResult` and its nested models have one generic type parameter per slot. A binding fills these parameters, for example `GetPostAttachmentResult[ImageUrl | LinkUrl]`. Thus, one template writes one set of models for all its bindings. A validation error names the model and the fragment combination used to read it. A helper can use `GetPostAttachmentResult[Any]` to accept the result of any binding (see below).
+
+Pickle support depends on which generic models the payload instantiates. A populated path to a slot creates nested Pydantic parametrizations without module-level pickle names. `pickle.dumps()` raises `PicklingError` for such a result. If `None` stops every slot path before a nested generic model is created, only the registered root specialization is instantiated. `{"post": null}` creates no nested model, so its result can cross a process boundary.
 
 `execute` takes only the template's own variables. There is no slot keyword argument: the fragment selection already happened at `bind()` time.
 
@@ -232,7 +234,16 @@ attachment = image_caption.read(result.post.attachment)
 
 `fragment.read(node)` is statically checked: the node's type records which fragments its binding offered at that slot, so reading a fragment that binding never offered there — including any read of a node whose slot was left unfilled, which offers nothing at all — is a type error. The same wiring mistakes raise `ValueError` at runtime on type-erased paths — `ValueError` rather than `None`, so a wiring bug cannot look like a legitimate type mismatch.
 
-That check only works where the concrete fragment handle is in scope, as a literal handle or a tuple of them — reading with a handle already erased to `GQLFragment[pydantic.BaseModel]` (a heterogeneous registry, say) is a type error against any node the generator writes, because the erased handle names no fragment the node lists as offered. Only the check is lost, not the data: a handle is an identity token at runtime, so an erased handle its binding really was given still reads back its own model, and the `ValueError` above stays reserved for a handle that binding never offered. Code that is itself generic over which binding it was handed has no concrete handle to read with either; it returns the result unread and leaves the read to a caller who does know the concrete handles.
+That check only works where the concrete fragment handle is in scope, as a literal handle or a tuple of them — reading with a handle already erased to `GQLFragment[pydantic.BaseModel]` (a heterogeneous registry, say) is a type error against any node the generator writes, because the erased handle names no fragment the node lists as offered. Where that is the situation, erase the phantom too: `{Operation}Result[Any]` accepts every binding's result and reads with the same `read`. Only the check is lost, not the data or the guarantee — a handle is an identity token at runtime, so one its binding really was given still reads back its own model, and the `ValueError` above stays reserved for a handle that binding never offered.
+
+That is what lets shared infrastructure own the operation and still answer with data rather than a raw result: the helper spells `Any` for the slot it knows nothing about, and reads with the handle its caller passed.
+
+```python
+def title[TData: pydantic.BaseModel](
+    result: GetPostAttachmentResult[Any], handle: GQLFragment[TData]
+) -> TData | None:
+    return handle.read(result.post.attachment) if result.post else None
+```
 
 A fragment reached through a *narrower* type condition — an interface brick spread inside a per-type fragment — reads back as `None` for the types that condition excludes, exactly like any other type mismatch.
 

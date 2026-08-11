@@ -74,6 +74,20 @@ class UserRenamedResult(GQLModel):
     user_renamed: UserWithIdName
 
 
+class GetUserWithManagerResultUserManagerSlot[TSlotManager = Never](GQLSlotModel[TSlotManager]):
+    slot_name__: ClassVar[str] = "manager"
+    typename__: Annotated[Literal["User"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
+
+
+class UserWithIdManager[TSlotManager = Never](GQLModel):
+    id: builtins.str
+    manager: GetUserWithManagerResultUserManagerSlot[TSlotManager] | None
+
+
+class GetUserWithManagerResult[TSlotManager = Never](GQLModel):
+    user: UserWithIdManager[TSlotManager] | None
+
+
 class ManagerNameData(GQLOpenModel):
     name: str
 
@@ -121,34 +135,20 @@ MANAGER_NAME = ManagerName(
 )
 
 
-class GetUserWithManagerWithManagerManagerNameResultUserManagerSlot(GQLSlotModel[ManagerName]):
-    slot_name__: ClassVar[str] = "manager"
-    typename__: Annotated[Literal["User"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
-
-
-class GetUserWithManagerWithManagerManagerNameUserWithIdManager(GQLModel):
-    id: builtins.str
-    manager: GetUserWithManagerWithManagerManagerNameResultUserManagerSlot | None
-
-
-class GetUserWithManagerWithManagerManagerNameResult(GQLModel):
-    user: GetUserWithManagerWithManagerManagerNameUserWithIdManager | None
-
-
 class GetUserWithManagerBound[TResult](runtime.GQLBoundOperation, ABC):
     @abstractmethod
     def execute(self, *, id: builtins.str) -> TResult:
         ...
 
 
-class GetUserWithManagerWithManagerManagerName(GetUserWithManagerBound[GetUserWithManagerWithManagerManagerNameResult]):
+class GetUserWithManagerWithManagerManagerName(GetUserWithManagerBound[GetUserWithManagerResult[ManagerName]]):
     # See: queries.py:58
     exec_source__ = 'query GetUserWithManager($id: ID!) {\n  user(id: $id) {\n    id\n    manager {\n      __typename\n      ...ManagerName\n    }\n  }\n}\n\nfragment ManagerName on User {\n  name\n}'
     slot_handles__ = {"manager": (slots.SlotHandle(MANAGER_NAME, frozenset({'User'})),)}
     @override
-    def execute(self, *, id: builtins.str) -> GetUserWithManagerWithManagerManagerNameResult:
+    def execute(self, *, id: builtins.str) -> GetUserWithManagerResult[ManagerName]:
         return API_CLIENT.query(
-            GetUserWithManagerWithManagerManagerNameResult,
+            GetUserWithManagerResult[ManagerName],
             self.exec_source__,
             variables={"id": id, **self.fragment_args__()},
             headers=self.headers,

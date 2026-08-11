@@ -57,6 +57,42 @@ class GQLSlotModel[TOffered](GQLOpenModel, slots.GQLSlotNode[TOffered]):
     pass
 
 
+class GetAttachmentResultPostAttachmentSlotImageAttachment[TSlotAttachment = Never](GQLSlotModel[TSlotAttachment]):
+    slot_name__: ClassVar[str] = "attachment"
+    typename__: Annotated[Literal["ImageAttachment"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
+
+
+class GetAttachmentResultPostAttachmentSlotLinkAttachment[TSlotAttachment = Never](GQLSlotModel[TSlotAttachment]):
+    slot_name__: ClassVar[str] = "attachment"
+    typename__: Annotated[Literal["LinkAttachment"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
+
+
+type GetAttachmentResultPostAttachmentSlot[TSlotAttachment] = Annotated[GetAttachmentResultPostAttachmentSlotImageAttachment[TSlotAttachment] | GetAttachmentResultPostAttachmentSlotLinkAttachment[TSlotAttachment], pydantic.Field(discriminator="typename__")]
+
+
+class GetAttachmentResultPostPreviewSlotImageAttachment[TSlotPreview = Never](GQLSlotModel[TSlotPreview]):
+    slot_name__: ClassVar[str] = "preview"
+    typename__: Annotated[Literal["ImageAttachment"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
+
+
+class GetAttachmentResultPostPreviewSlotLinkAttachment[TSlotPreview = Never](GQLSlotModel[TSlotPreview]):
+    slot_name__: ClassVar[str] = "preview"
+    typename__: Annotated[Literal["LinkAttachment"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
+
+
+type GetAttachmentResultPostPreviewSlot[TSlotPreview] = Annotated[GetAttachmentResultPostPreviewSlotImageAttachment[TSlotPreview] | GetAttachmentResultPostPreviewSlotLinkAttachment[TSlotPreview], pydantic.Field(discriminator="typename__")]
+
+
+class Post[TSlotAttachment = Never, TSlotPreview = Never](GQLModel):
+    id: builtins.str
+    attachment: GetAttachmentResultPostAttachmentSlot[TSlotAttachment] | None
+    preview: GetAttachmentResultPostPreviewSlot[TSlotPreview] | None
+
+
+class GetAttachmentResult[TSlotAttachment = Never, TSlotPreview = Never](GQLModel):
+    post: Post[TSlotAttachment, TSlotPreview] | None
+
+
 class ImagePartsData(GQLOpenModel):
     url: str
 
@@ -85,164 +121,20 @@ LINK_PARTS = LinkParts(
 )
 
 
-class GetAttachmentWithNothingResultPostAttachmentSlotImageAttachment(GQLSlotModel[Never]):
-    slot_name__: ClassVar[str] = "attachment"
-    typename__: Annotated[Literal["ImageAttachment"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
-
-
-class GetAttachmentWithNothingResultPostAttachmentSlotLinkAttachment(GQLSlotModel[Never]):
-    slot_name__: ClassVar[str] = "attachment"
-    typename__: Annotated[Literal["LinkAttachment"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
-
-
-type GetAttachmentWithNothingResultPostAttachmentSlot = Annotated[GetAttachmentWithNothingResultPostAttachmentSlotImageAttachment | GetAttachmentWithNothingResultPostAttachmentSlotLinkAttachment, pydantic.Field(discriminator="typename__")]
-
-
-class GetAttachmentWithNothingResultPostPreviewSlotImageAttachment(GQLSlotModel[Never]):
-    slot_name__: ClassVar[str] = "preview"
-    typename__: Annotated[Literal["ImageAttachment"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
-
-
-class GetAttachmentWithNothingResultPostPreviewSlotLinkAttachment(GQLSlotModel[Never]):
-    slot_name__: ClassVar[str] = "preview"
-    typename__: Annotated[Literal["LinkAttachment"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
-
-
-type GetAttachmentWithNothingResultPostPreviewSlot = Annotated[GetAttachmentWithNothingResultPostPreviewSlotImageAttachment | GetAttachmentWithNothingResultPostPreviewSlotLinkAttachment, pydantic.Field(discriminator="typename__")]
-
-
-class GetAttachmentWithNothingPost(GQLModel):
-    id: builtins.str
-    attachment: GetAttachmentWithNothingResultPostAttachmentSlot | None
-    preview: GetAttachmentWithNothingResultPostPreviewSlot | None
-
-
-class GetAttachmentWithNothingResult(GQLModel):
-    post: GetAttachmentWithNothingPost | None
-
-
-class GetAttachmentWithAttachmentImagePartsResultPostAttachmentSlotImageAttachment(GQLSlotModel[ImageParts]):
-    slot_name__: ClassVar[str] = "attachment"
-    typename__: Annotated[Literal["ImageAttachment"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
-
-
-class GetAttachmentWithAttachmentImagePartsResultPostAttachmentSlotLinkAttachment(GQLSlotModel[ImageParts]):
-    slot_name__: ClassVar[str] = "attachment"
-    typename__: Annotated[Literal["LinkAttachment"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
-
-
-type GetAttachmentWithAttachmentImagePartsResultPostAttachmentSlot = Annotated[GetAttachmentWithAttachmentImagePartsResultPostAttachmentSlotImageAttachment | GetAttachmentWithAttachmentImagePartsResultPostAttachmentSlotLinkAttachment, pydantic.Field(discriminator="typename__")]
-
-
-class GetAttachmentWithAttachmentImagePartsResultPostPreviewSlotImageAttachment(GQLSlotModel[Never]):
-    slot_name__: ClassVar[str] = "preview"
-    typename__: Annotated[Literal["ImageAttachment"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
-
-
-class GetAttachmentWithAttachmentImagePartsResultPostPreviewSlotLinkAttachment(GQLSlotModel[Never]):
-    slot_name__: ClassVar[str] = "preview"
-    typename__: Annotated[Literal["LinkAttachment"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
-
-
-type GetAttachmentWithAttachmentImagePartsResultPostPreviewSlot = Annotated[GetAttachmentWithAttachmentImagePartsResultPostPreviewSlotImageAttachment | GetAttachmentWithAttachmentImagePartsResultPostPreviewSlotLinkAttachment, pydantic.Field(discriminator="typename__")]
-
-
-class GetAttachmentWithAttachmentImagePartsPost(GQLModel):
-    id: builtins.str
-    attachment: GetAttachmentWithAttachmentImagePartsResultPostAttachmentSlot | None
-    preview: GetAttachmentWithAttachmentImagePartsResultPostPreviewSlot | None
-
-
-class GetAttachmentWithAttachmentImagePartsResult(GQLModel):
-    post: GetAttachmentWithAttachmentImagePartsPost | None
-
-
-class GetAttachmentWithAttachmentImagePartsLinkPartsResultPostAttachmentSlotImageAttachment(GQLSlotModel[ImageParts | LinkParts]):
-    slot_name__: ClassVar[str] = "attachment"
-    typename__: Annotated[Literal["ImageAttachment"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
-
-
-class GetAttachmentWithAttachmentImagePartsLinkPartsResultPostAttachmentSlotLinkAttachment(GQLSlotModel[ImageParts | LinkParts]):
-    slot_name__: ClassVar[str] = "attachment"
-    typename__: Annotated[Literal["LinkAttachment"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
-
-
-type GetAttachmentWithAttachmentImagePartsLinkPartsResultPostAttachmentSlot = Annotated[GetAttachmentWithAttachmentImagePartsLinkPartsResultPostAttachmentSlotImageAttachment | GetAttachmentWithAttachmentImagePartsLinkPartsResultPostAttachmentSlotLinkAttachment, pydantic.Field(discriminator="typename__")]
-
-
-class GetAttachmentWithAttachmentImagePartsLinkPartsResultPostPreviewSlotImageAttachment(GQLSlotModel[Never]):
-    slot_name__: ClassVar[str] = "preview"
-    typename__: Annotated[Literal["ImageAttachment"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
-
-
-class GetAttachmentWithAttachmentImagePartsLinkPartsResultPostPreviewSlotLinkAttachment(GQLSlotModel[Never]):
-    slot_name__: ClassVar[str] = "preview"
-    typename__: Annotated[Literal["LinkAttachment"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
-
-
-type GetAttachmentWithAttachmentImagePartsLinkPartsResultPostPreviewSlot = Annotated[GetAttachmentWithAttachmentImagePartsLinkPartsResultPostPreviewSlotImageAttachment | GetAttachmentWithAttachmentImagePartsLinkPartsResultPostPreviewSlotLinkAttachment, pydantic.Field(discriminator="typename__")]
-
-
-class GetAttachmentWithAttachmentImagePartsLinkPartsPost(GQLModel):
-    id: builtins.str
-    attachment: GetAttachmentWithAttachmentImagePartsLinkPartsResultPostAttachmentSlot | None
-    preview: GetAttachmentWithAttachmentImagePartsLinkPartsResultPostPreviewSlot | None
-
-
-class GetAttachmentWithAttachmentImagePartsLinkPartsResult(GQLModel):
-    post: GetAttachmentWithAttachmentImagePartsLinkPartsPost | None
-
-
-class GetAttachmentWithAttachmentImagePartsWithPreviewLinkPartsResultPostAttachmentSlotImageAttachment(GQLSlotModel[ImageParts]):
-    slot_name__: ClassVar[str] = "attachment"
-    typename__: Annotated[Literal["ImageAttachment"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
-
-
-class GetAttachmentWithAttachmentImagePartsWithPreviewLinkPartsResultPostAttachmentSlotLinkAttachment(GQLSlotModel[ImageParts]):
-    slot_name__: ClassVar[str] = "attachment"
-    typename__: Annotated[Literal["LinkAttachment"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
-
-
-type GetAttachmentWithAttachmentImagePartsWithPreviewLinkPartsResultPostAttachmentSlot = Annotated[GetAttachmentWithAttachmentImagePartsWithPreviewLinkPartsResultPostAttachmentSlotImageAttachment | GetAttachmentWithAttachmentImagePartsWithPreviewLinkPartsResultPostAttachmentSlotLinkAttachment, pydantic.Field(discriminator="typename__")]
-
-
-class GetAttachmentWithAttachmentImagePartsWithPreviewLinkPartsResultPostPreviewSlotImageAttachment(GQLSlotModel[LinkParts]):
-    slot_name__: ClassVar[str] = "preview"
-    typename__: Annotated[Literal["ImageAttachment"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
-
-
-class GetAttachmentWithAttachmentImagePartsWithPreviewLinkPartsResultPostPreviewSlotLinkAttachment(GQLSlotModel[LinkParts]):
-    slot_name__: ClassVar[str] = "preview"
-    typename__: Annotated[Literal["LinkAttachment"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
-
-
-type GetAttachmentWithAttachmentImagePartsWithPreviewLinkPartsResultPostPreviewSlot = Annotated[GetAttachmentWithAttachmentImagePartsWithPreviewLinkPartsResultPostPreviewSlotImageAttachment | GetAttachmentWithAttachmentImagePartsWithPreviewLinkPartsResultPostPreviewSlotLinkAttachment, pydantic.Field(discriminator="typename__")]
-
-
-class GetAttachmentWithAttachmentImagePartsWithPreviewLinkPartsPost(GQLModel):
-    id: builtins.str
-    attachment: GetAttachmentWithAttachmentImagePartsWithPreviewLinkPartsResultPostAttachmentSlot | None
-    preview: GetAttachmentWithAttachmentImagePartsWithPreviewLinkPartsResultPostPreviewSlot | None
-
-
-class GetAttachmentWithAttachmentImagePartsWithPreviewLinkPartsResult(GQLModel):
-    post: GetAttachmentWithAttachmentImagePartsWithPreviewLinkPartsPost | None
-
-
 class GetAttachmentBound[TResult](runtime.GQLBoundOperation, ABC):
     @abstractmethod
     async def execute(self, *, id: builtins.str) -> TResult:
         ...
 
 
-class GetAttachmentWithNothing(GetAttachmentBound[GetAttachmentWithNothingResult]):
+class GetAttachmentWithNothing(GetAttachmentBound[GetAttachmentResult[Never, Never]]):
     # See: queries.py:31
     exec_source__ = 'query GetAttachment($id: ID!) {\n  post(id: $id) {\n    id\n    attachment {\n      __typename\n    }\n    preview {\n      __typename\n    }\n  }\n}'
     slot_handles__ = {"attachment": (), "preview": ()}
     @override
-    async def execute(self, *, id: builtins.str) -> GetAttachmentWithNothingResult:
+    async def execute(self, *, id: builtins.str) -> GetAttachmentResult[Never, Never]:
         return await API_CLIENT.query(
-            GetAttachmentWithNothingResult,
+            GetAttachmentResult[Never, Never],
             self.exec_source__,
             variables={"id": id, **self.fragment_args__()},
             headers=self.headers,
@@ -250,14 +142,14 @@ class GetAttachmentWithNothing(GetAttachmentBound[GetAttachmentWithNothingResult
         )
 
 
-class GetAttachmentWithAttachmentImageParts(GetAttachmentBound[GetAttachmentWithAttachmentImagePartsResult]):
+class GetAttachmentWithAttachmentImageParts(GetAttachmentBound[GetAttachmentResult[ImageParts, Never]]):
     # See: queries.py:32
     exec_source__ = 'query GetAttachment($id: ID!) {\n  post(id: $id) {\n    id\n    attachment {\n      __typename\n      ...ImageParts\n    }\n    preview {\n      __typename\n    }\n  }\n}\n\nfragment ImageParts on ImageAttachment {\n  url\n}'
     slot_handles__ = {"attachment": (slots.SlotHandle(IMAGE_PARTS, frozenset({'ImageAttachment'})),), "preview": ()}
     @override
-    async def execute(self, *, id: builtins.str) -> GetAttachmentWithAttachmentImagePartsResult:
+    async def execute(self, *, id: builtins.str) -> GetAttachmentResult[ImageParts, Never]:
         return await API_CLIENT.query(
-            GetAttachmentWithAttachmentImagePartsResult,
+            GetAttachmentResult[ImageParts, Never],
             self.exec_source__,
             variables={"id": id, **self.fragment_args__()},
             headers=self.headers,
@@ -265,14 +157,14 @@ class GetAttachmentWithAttachmentImageParts(GetAttachmentBound[GetAttachmentWith
         )
 
 
-class GetAttachmentWithAttachmentImagePartsLinkParts(GetAttachmentBound[GetAttachmentWithAttachmentImagePartsLinkPartsResult]):
+class GetAttachmentWithAttachmentImagePartsLinkParts(GetAttachmentBound[GetAttachmentResult[ImageParts | LinkParts, Never]]):
     # See: queries.py:33
     exec_source__ = 'query GetAttachment($id: ID!) {\n  post(id: $id) {\n    id\n    attachment {\n      __typename\n      ...ImageParts\n      ...LinkParts\n    }\n    preview {\n      __typename\n    }\n  }\n}\n\nfragment ImageParts on ImageAttachment {\n  url\n}\n\nfragment LinkParts on LinkAttachment {\n  href\n}'
     slot_handles__ = {"attachment": (slots.SlotHandle(IMAGE_PARTS, frozenset({'ImageAttachment'})), slots.SlotHandle(LINK_PARTS, frozenset({'LinkAttachment'}))), "preview": ()}
     @override
-    async def execute(self, *, id: builtins.str) -> GetAttachmentWithAttachmentImagePartsLinkPartsResult:
+    async def execute(self, *, id: builtins.str) -> GetAttachmentResult[ImageParts | LinkParts, Never]:
         return await API_CLIENT.query(
-            GetAttachmentWithAttachmentImagePartsLinkPartsResult,
+            GetAttachmentResult[ImageParts | LinkParts, Never],
             self.exec_source__,
             variables={"id": id, **self.fragment_args__()},
             headers=self.headers,
@@ -280,14 +172,14 @@ class GetAttachmentWithAttachmentImagePartsLinkParts(GetAttachmentBound[GetAttac
         )
 
 
-class GetAttachmentWithAttachmentImagePartsWithPreviewLinkParts(GetAttachmentBound[GetAttachmentWithAttachmentImagePartsWithPreviewLinkPartsResult]):
+class GetAttachmentWithAttachmentImagePartsWithPreviewLinkParts(GetAttachmentBound[GetAttachmentResult[ImageParts, LinkParts]]):
     # See: queries.py:34
     exec_source__ = 'query GetAttachment($id: ID!) {\n  post(id: $id) {\n    id\n    attachment {\n      __typename\n      ...ImageParts\n    }\n    preview {\n      __typename\n      ...LinkParts\n    }\n  }\n}\n\nfragment ImageParts on ImageAttachment {\n  url\n}\n\nfragment LinkParts on LinkAttachment {\n  href\n}'
     slot_handles__ = {"attachment": (slots.SlotHandle(IMAGE_PARTS, frozenset({'ImageAttachment'})),), "preview": (slots.SlotHandle(LINK_PARTS, frozenset({'LinkAttachment'})),)}
     @override
-    async def execute(self, *, id: builtins.str) -> GetAttachmentWithAttachmentImagePartsWithPreviewLinkPartsResult:
+    async def execute(self, *, id: builtins.str) -> GetAttachmentResult[ImageParts, LinkParts]:
         return await API_CLIENT.query(
-            GetAttachmentWithAttachmentImagePartsWithPreviewLinkPartsResult,
+            GetAttachmentResult[ImageParts, LinkParts],
             self.exec_source__,
             variables={"id": id, **self.fragment_args__()},
             headers=self.headers,

@@ -164,7 +164,7 @@ def test_generated_source_strips_slot_and_renders_binding(test_project: ProjectB
     assert exec_source_lines, "exec_source__ assignment not found in generated api.py"
     assert all("@slot" not in line for line in exec_source_lines)
     assert "...ImageParts" in generated
-    bound_base = "GetAttachmentBound[GetAttachmentWithAttachmentImagePartsResult]"
+    bound_base = "GetAttachmentBound[GetAttachmentResult[ImageParts]]"
     assert f"class GetAttachmentWithAttachmentImageParts({bound_base}):" in generated
 
 
@@ -273,15 +273,15 @@ def test_unfilled_slot_renders_never_and_the_partial_overload():
     generated = generated_source("bindings_shapes")
     # The unfilled slot's phantom is `Never`, so its node is statically
     # unreadable by any fragment -- the static half of the runtime rule that a
-    # handle no bind offered raises instead of returning None. Both slots'
-    # nodes belong to this binding alone, so each carries its own answer in
-    # its base rather than a parameter the result model threads down.
-    node = "GetAttachmentWithAttachmentImagePartsResultPost"
-    assert f"class {node}PreviewSlotImageAttachment(GQLSlotModel[Never]):" in generated
-    assert (
-        f"class {node}AttachmentSlotImageAttachment(GQLSlotModel[ImageParts]):"
-    ) in generated
-    bound_base = "GetAttachmentBound[GetAttachmentWithAttachmentImagePartsResult]"
+    # handle no bind offered raises instead of returning None. Each slot's
+    # node is generic in that slot's own phantom, and the binding fills both
+    # in when it names its result -- `Never` for the one it left unfilled.
+    node = "GetAttachmentResultPost"
+    slots = (("Preview", "TSlotPreview"), ("Attachment", "TSlotAttachment"))
+    for slot, param in slots:
+        header = f"class {node}{slot}SlotImageAttachment[{param} = Never]"
+        assert f"{header}(GQLSlotModel[{param}]):" in generated
+    bound_base = "GetAttachmentBound[GetAttachmentResult[ImageParts, Never]]"
     partial_class = f"class GetAttachmentWithAttachmentImageParts({bound_base}):"
     assert partial_class in generated
     assert (
@@ -311,7 +311,7 @@ def test_all_unfilled_binding_renders_an_all_defaulted_overload():
     # this without a dedicated zero-kwarg form: every slot is unfilled, so
     # every parameter defaults to `()`, and `bind()` matches directly.
     generated = generated_source("bindings_shapes")
-    bare_base = "GetAttachmentBound[GetAttachmentWithNothingResult]"
+    bare_base = "GetAttachmentBound[GetAttachmentResult[Never, Never]]"
     assert f"class GetAttachmentWithNothing({bare_base}):" in generated
     assert (
         "def bind(self, *, attachment: Sequence[Never] = (), "
@@ -663,7 +663,7 @@ def test_omitted_slot_and_explicit_empty_list_are_one_combination(
     generated = (test_project.root / "sample_app/gql/api.py").read_text(
         encoding="utf-8"
     )
-    bound_base = "GetAttachmentBound[GetAttachmentWithAttachmentImagePartsResult]"
+    bound_base = "GetAttachmentBound[GetAttachmentResult[ImageParts, Never]]"
     partial_class = f"class GetAttachmentWithAttachmentImageParts({bound_base}):"
     assert generated.count(partial_class) == 1
     # Both call sites are recorded on the one class, so a reader of the

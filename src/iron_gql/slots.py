@@ -67,6 +67,11 @@ class GQLFragment[TModel: pydantic.BaseModel]:
     # fragment classes readable on it, so the contravariant phantom rejects
     # this very handle against a node that was never offered it -- the same
     # wiring bug `slot_data__` raises ValueError for on type-erased paths.
+    #
+    # Code generic over which binding it was handed spells the phantom `Any`
+    # (`{Op}Result[Any]`), which this signature accepts like any other: giving
+    # up the check is a decision written at the annotation, not a second read
+    # method to choose between.
     def read(self, node: "GQLSlotNode[Self] | None") -> TModel | None:
         if node is None:
             return None
@@ -95,9 +100,11 @@ def _is_handles(value: object) -> TypeIs[tuple[SlotHandle, ...]]:
 
 
 # The "offered fragments" phantom: the union of the fragment handle classes
-# readable on this node, stamped by codegen per binding. Contravariant so a
-# node offering more fragments is accepted where fewer are expected
-# (`Slot[A | B]` is assignable to `GQLSlotNode[A]`). An old-style TypeVar
+# readable on this node. Codegen declares it as a parameter of every model on
+# the path to the node, and each binding fills it in when it names its result
+# type. Contravariant so a node offering more fragments is accepted where fewer
+# are expected (`Slot[A | B]` is assignable to `GQLSlotNode[A]`). An old-style
+# TypeVar
 # because PEP 695 cannot declare variance and infers an unused (phantom)
 # parameter as covariant — so we cannot use PEP 695 type parameters syntax
 # and must suppress UP046. `default=Never` makes a bare `GQLSlotNode`
@@ -114,8 +121,10 @@ class GQLSlotNode(pydantic.BaseModel, Generic[TOffered_contra]):  # noqa: UP046
     # address can never collide with a stored key — a wiring bug must not
     # look like a legitimate mismatch. Identity by id(), not by dict key
     # lookup, so a subclass overriding __eq__/__hash__ cannot alias one
-    # fragment's data to another, and the entries survive deepcopy and
-    # in-process pickling of a validated node.
+    # fragment's data to another, and the entries survive a deepcopy of a
+    # validated node. (Generated results are parametrizations of a generic
+    # model and are not picklable at all; a hand-written node is, and keeps
+    # its entries through a round trip in one process.)
     _slot_data: dict[int, tuple[GQLFragment[pydantic.BaseModel], object]] = (
         pydantic.PrivateAttr(default_factory=dict)
     )

@@ -57,6 +57,28 @@ class GQLSlotModel[TOffered](GQLOpenModel, slots.GQLSlotNode[TOffered]):
     pass
 
 
+class GetAttachmentResultPostAttachmentSlotImageAttachment[TSlotAttachment = Never](GQLSlotModel[TSlotAttachment]):
+    slot_name__: ClassVar[str] = "attachment"
+    typename__: Annotated[Literal["ImageAttachment"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
+
+
+class GetAttachmentResultPostAttachmentSlotLinkAttachment[TSlotAttachment = Never](GQLSlotModel[TSlotAttachment]):
+    slot_name__: ClassVar[str] = "attachment"
+    typename__: Annotated[Literal["LinkAttachment"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
+
+
+type GetAttachmentResultPostAttachmentSlot[TSlotAttachment] = Annotated[GetAttachmentResultPostAttachmentSlotImageAttachment[TSlotAttachment] | GetAttachmentResultPostAttachmentSlotLinkAttachment[TSlotAttachment], pydantic.Field(discriminator="typename__")]
+
+
+class Post[TSlotAttachment = Never](GQLModel):
+    id: builtins.str
+    attachment: GetAttachmentResultPostAttachmentSlot[TSlotAttachment] | None
+
+
+class GetAttachmentResult[TSlotAttachment = Never](GQLModel):
+    post: Post[TSlotAttachment] | None
+
+
 class ImagePartsData(GQLOpenModel):
     url: str
 
@@ -71,35 +93,13 @@ IMAGE_PARTS = ImageParts(
 )
 
 
-class GetAttachmentWithAttachmentImagePartsResultPostAttachmentSlotImageAttachment(GQLSlotModel[ImageParts]):
-    slot_name__: ClassVar[str] = "attachment"
-    typename__: Annotated[Literal["ImageAttachment"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
-
-
-class GetAttachmentWithAttachmentImagePartsResultPostAttachmentSlotLinkAttachment(GQLSlotModel[ImageParts]):
-    slot_name__: ClassVar[str] = "attachment"
-    typename__: Annotated[Literal["LinkAttachment"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
-
-
-type GetAttachmentWithAttachmentImagePartsResultPostAttachmentSlot = Annotated[GetAttachmentWithAttachmentImagePartsResultPostAttachmentSlotImageAttachment | GetAttachmentWithAttachmentImagePartsResultPostAttachmentSlotLinkAttachment, pydantic.Field(discriminator="typename__")]
-
-
-class GetAttachmentWithAttachmentImagePartsPost(GQLModel):
-    id: builtins.str
-    attachment: GetAttachmentWithAttachmentImagePartsResultPostAttachmentSlot | None
-
-
-class GetAttachmentWithAttachmentImagePartsResult(GQLModel):
-    post: GetAttachmentWithAttachmentImagePartsPost | None
-
-
 class GetAttachmentBound[TResult](runtime.GQLBoundOperation, ABC):
     @abstractmethod
     async def execute(self, *, id: builtins.str) -> TResult:
         ...
 
 
-class GetAttachmentWithAttachmentImageParts(GetAttachmentBound[GetAttachmentWithAttachmentImagePartsResult]):
+class GetAttachmentWithAttachmentImageParts(GetAttachmentBound[GetAttachmentResult[ImageParts]]):
     # See: queries.py:22
     exec_source__ = 'query GetAttachment($id: ID!, $height: Int, $pad: Int, $width: Int) {\n  post(id: $id) {\n    id\n    attachment {\n      __typename\n      ...ImageParts\n    }\n  }\n}\n\nfragment ImageParts on ImageAttachment {\n  url(width: $width, height: $height, pad: $pad)\n}'
     slot_handles__ = {"attachment": (slots.SlotHandle(IMAGE_PARTS, frozenset({'ImageAttachment'})),)}
@@ -107,9 +107,9 @@ class GetAttachmentWithAttachmentImageParts(GetAttachmentBound[GetAttachmentWith
     def with_args(self, *, height: int | None = None, pad: int | None = None, width: int | None) -> Self:
         return self.with_args__({**({"height": height} if height is not None else {}), **({"pad": pad} if pad is not None else {}), "width": width})
     @override
-    async def execute(self, *, id: builtins.str) -> GetAttachmentWithAttachmentImagePartsResult:
+    async def execute(self, *, id: builtins.str) -> GetAttachmentResult[ImageParts]:
         return await API_CLIENT.query(
-            GetAttachmentWithAttachmentImagePartsResult,
+            GetAttachmentResult[ImageParts],
             self.exec_source__,
             variables={"id": id, **self.fragment_args__()},
             headers=self.headers,

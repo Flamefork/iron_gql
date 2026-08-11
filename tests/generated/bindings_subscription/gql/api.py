@@ -57,6 +57,28 @@ class GQLSlotModel[TOffered](GQLOpenModel, slots.GQLSlotNode[TOffered]):
     pass
 
 
+class WatchAttachmentResultAttachmentChangedAttachmentSlotImageAttachment[TSlotAttachment = Never](GQLSlotModel[TSlotAttachment]):
+    slot_name__: ClassVar[str] = "attachment"
+    typename__: Annotated[Literal["ImageAttachment"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
+
+
+class WatchAttachmentResultAttachmentChangedAttachmentSlotLinkAttachment[TSlotAttachment = Never](GQLSlotModel[TSlotAttachment]):
+    slot_name__: ClassVar[str] = "attachment"
+    typename__: Annotated[Literal["LinkAttachment"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
+
+
+type WatchAttachmentResultAttachmentChangedAttachmentSlot[TSlotAttachment] = Annotated[WatchAttachmentResultAttachmentChangedAttachmentSlotImageAttachment[TSlotAttachment] | WatchAttachmentResultAttachmentChangedAttachmentSlotLinkAttachment[TSlotAttachment], pydantic.Field(discriminator="typename__")]
+
+
+class Post[TSlotAttachment = Never](GQLModel):
+    id: builtins.str
+    attachment: WatchAttachmentResultAttachmentChangedAttachmentSlot[TSlotAttachment] | None
+
+
+class WatchAttachmentResult[TSlotAttachment = Never](GQLModel):
+    attachment_changed: Post[TSlotAttachment]
+
+
 class ImageUrlData(GQLOpenModel):
     url: str
 
@@ -71,42 +93,20 @@ IMAGE_URL = ImageUrl(
 )
 
 
-class WatchAttachmentWithAttachmentImageUrlResultAttachmentChangedAttachmentSlotImageAttachment(GQLSlotModel[ImageUrl]):
-    slot_name__: ClassVar[str] = "attachment"
-    typename__: Annotated[Literal["ImageAttachment"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
-
-
-class WatchAttachmentWithAttachmentImageUrlResultAttachmentChangedAttachmentSlotLinkAttachment(GQLSlotModel[ImageUrl]):
-    slot_name__: ClassVar[str] = "attachment"
-    typename__: Annotated[Literal["LinkAttachment"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
-
-
-type WatchAttachmentWithAttachmentImageUrlResultAttachmentChangedAttachmentSlot = Annotated[WatchAttachmentWithAttachmentImageUrlResultAttachmentChangedAttachmentSlotImageAttachment | WatchAttachmentWithAttachmentImageUrlResultAttachmentChangedAttachmentSlotLinkAttachment, pydantic.Field(discriminator="typename__")]
-
-
-class WatchAttachmentWithAttachmentImageUrlPost(GQLModel):
-    id: builtins.str
-    attachment: WatchAttachmentWithAttachmentImageUrlResultAttachmentChangedAttachmentSlot | None
-
-
-class WatchAttachmentWithAttachmentImageUrlResult(GQLModel):
-    attachment_changed: WatchAttachmentWithAttachmentImageUrlPost
-
-
 class WatchAttachmentBound[TResult](runtime.GQLBoundOperation, ABC):
     @abstractmethod
     def execute(self, *, id: builtins.str) -> AbstractAsyncContextManager[AsyncGenerator[TResult]]:
         ...
 
 
-class WatchAttachmentWithAttachmentImageUrl(WatchAttachmentBound[WatchAttachmentWithAttachmentImageUrlResult]):
+class WatchAttachmentWithAttachmentImageUrl(WatchAttachmentBound[WatchAttachmentResult[ImageUrl]]):
     # See: queries.py:22
     exec_source__ = 'subscription WatchAttachment($id: ID!) {\n  attachmentChanged(id: $id) {\n    id\n    attachment {\n      __typename\n      ...ImageUrl\n    }\n  }\n}\n\nfragment ImageUrl on ImageAttachment {\n  url\n}'
     slot_handles__ = {"attachment": (slots.SlotHandle(IMAGE_URL, frozenset({'ImageAttachment'})),)}
     @override
-    def execute(self, *, id: builtins.str) -> AbstractAsyncContextManager[AsyncGenerator[WatchAttachmentWithAttachmentImageUrlResult]]:
+    def execute(self, *, id: builtins.str) -> AbstractAsyncContextManager[AsyncGenerator[WatchAttachmentResult[ImageUrl]]]:
         return API_CLIENT.subscribe(
-            WatchAttachmentWithAttachmentImageUrlResult,
+            WatchAttachmentResult[ImageUrl],
             self.exec_source__,
             variables={"id": id, **self.fragment_args__()},
             headers=self.headers,

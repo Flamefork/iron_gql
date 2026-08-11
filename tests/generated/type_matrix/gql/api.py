@@ -79,6 +79,15 @@ class DefaultsResult(GQLModel):
     labelled: EchoWithSeenSize | None
 
 
+class SlottedResultEchoSlot[TSlotEcho = Never](GQLSlotModel[TSlotEcho]):
+    slot_name__: ClassVar[str] = "echo"
+    typename__: Annotated[Literal["Echo"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
+
+
+class SlottedResult[TSlotEcho = Never](GQLModel):
+    echo: SlottedResultEchoSlot[TSlotEcho] | None
+
+
 class SizePartsData(GQLOpenModel):
     seen: str
     tagged: str
@@ -143,22 +152,13 @@ SIZE_PARTS = SizeParts(
 )
 
 
-class SlottedWithEchoSizePartsResultEchoSlot(GQLSlotModel[SizeParts]):
-    slot_name__: ClassVar[str] = "echo"
-    typename__: Annotated[Literal["Echo"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
-
-
-class SlottedWithEchoSizePartsResult(GQLModel):
-    echo: SlottedWithEchoSizePartsResultEchoSlot | None
-
-
 class SlottedBound[TResult](runtime.GQLBoundOperation, ABC):
     @abstractmethod
     async def execute(self, *, payload: Payload) -> TResult:
         ...
 
 
-class SlottedWithEchoSizeParts(SlottedBound[SlottedWithEchoSizePartsResult]):
+class SlottedWithEchoSizeParts(SlottedBound[SlottedResult[SizeParts]]):
     # See: queries.py:40
     exec_source__ = 'query Slotted($payload: Payload!, $frag_size: Size!, $frag_term: String) {\n  echo(payload: $payload) {\n    __typename\n    ...SizeParts\n  }\n}\n\nfragment SizeParts on Echo {\n  seen\n  tagged(size: $frag_size, term: $frag_term)\n}'
     slot_handles__ = {"echo": (slots.SlotHandle(SIZE_PARTS, frozenset({'Echo'})),)}
@@ -166,9 +166,9 @@ class SlottedWithEchoSizeParts(SlottedBound[SlottedWithEchoSizePartsResult]):
     def with_args(self, *, frag_size: Size, frag_term: str | None) -> Self:
         return self.with_args__({"frag_size": frag_size, "frag_term": frag_term})
     @override
-    async def execute(self, *, payload: Payload) -> SlottedWithEchoSizePartsResult:
+    async def execute(self, *, payload: Payload) -> SlottedResult[SizeParts]:
         return await API_CLIENT.query(
-            SlottedWithEchoSizePartsResult,
+            SlottedResult[SizeParts],
             self.exec_source__,
             variables={"payload": payload, **self.fragment_args__()},
             headers=self.headers,
