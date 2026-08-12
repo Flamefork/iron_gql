@@ -97,6 +97,7 @@ def test_two_shapes_are_never_named_alike(
         input_artifacts=[],
         operations=[],
         fragments=[],
+        on_type_bases=[],
         templates=[],
         bindings=[],
         enums=[],

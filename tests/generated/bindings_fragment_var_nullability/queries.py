@@ -14,9 +14,7 @@ get_attachment = api_gql(
 image_parts = api_gql(
     """
     fragment ImageParts on ImageAttachment {
-        url(width: $width, height: $height, pad: $pad)
+        url(width: $width, height: $height, pad: $pad, slots: $slots)
     }
     """
 )
-
-bound = get_attachment.bind(attachment=image_parts)

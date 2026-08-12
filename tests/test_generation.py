@@ -308,7 +308,7 @@ def test_self_referential_input_type(test_project: ProjectBuilder):
     api = test_project.import_api()
     # attributes of a dynamically imported module are Any
     leaf = api.TreeNode(value="leaf")  # pyright: ignore[reportAny]
-    parent = api.TreeNode(value="parent", children=[leaf])  # pyright: ignore[reportAny]
+    parent = api.TreeNode(value="parent", children=(leaf,))  # pyright: ignore[reportAny]
     assert parent.children[0].value == "leaf"  # pyright: ignore[reportAny]
 
 
@@ -932,6 +932,45 @@ def test_variable_that_to_snake_fn_turns_into_a_non_identifier_is_rejected(
                 "a-b" if name == "userId" else alias_generators.to_snake(name)
             )
         )
+
+
+def test_variable_named_after_the_client_binding_is_rejected(
+    test_project: ProjectBuilder,
+):
+    # `execute`'s body calls the module's own client, so a parameter spelled
+    # like it answers the call instead: `await API_CLIENT.query(...)` reaches
+    # the string the caller passed for `$API_CLIENT`. The module-scope claim
+    # over that name is a different check -- it settles which *binding* owns
+    # it, not which name a body sees -- so the parameter namespace claims it
+    # too, and the identity `to_snake_fn` is what it takes to get one.
+    test_project.prepare(
+        schema="""
+            type Query {
+                user(id: ID!): User
+            }
+
+            type User {
+                id: ID!
+            }
+        """,
+        queries="""
+        from sample_app.gql.api import api_gql
+
+        q = api_gql(
+            '''
+            query GetUser($API_CLIENT: ID!) { user(id: $API_CLIENT) { id } }
+            '''
+        )
+        """,
+    )
+    with pytest.raises(
+        GraphQLGenerationError,
+        match=(
+            r"Parameter 'API_CLIENT' of execute\(\) of operation 'GetUser'"
+            r".*the generated client binding"
+        ),
+    ):
+        test_project.generate(to_snake_fn=lambda name: name)
 
 
 def test_unparseable_file_stops_generation_before_the_package_is_rewritten(

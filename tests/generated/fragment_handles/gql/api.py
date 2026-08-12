@@ -9,13 +9,17 @@ import datetime
 from abc import ABC
 from abc import abstractmethod
 from collections.abc import AsyncGenerator
+from collections.abc import Callable
 from collections.abc import Sequence
 from contextlib import AbstractAsyncContextManager
 from typing import Annotated
+from typing import Any
 from typing import ClassVar
 from typing import Literal
 from typing import Never
-from typing import Self
+from typing import TypeVar
+from typing import cast
+from typing import final
 from typing import overload
 from typing import override
 
@@ -34,6 +38,8 @@ from tests.generated.fragment_handles.settings import GRAPHQL_URL
 API_CLIENT = runtime.AsyncGQLClient(
     base_url=GRAPHQL_URL,
 )
+
+_API_GQL_CAST = cast
 
 
 class GQLModel(pydantic.BaseModel):
@@ -105,78 +111,105 @@ class GetViewer(runtime.GQLOperation):
         )
 
 
-class UserFields(slots.GQLFragment[UserFieldsData]):
-    pass
+TModel = TypeVar("TModel", bound=pydantic.BaseModel, covariant=True)
+TReads = TypeVar("TReads", contravariant=True)
 
 
-USER_FIELDS = UserFields(
-    fragment_name='UserFields',
-    adapter=pydantic.TypeAdapter(UserFieldsData),
-)
-
-
-class NodeFields(slots.GQLFragment[NodeFieldsData]):
-    pass
-
-
-NODE_FIELDS = NodeFields(
-    fragment_name='NodeFields',
-    adapter=pydantic.TypeAdapter(NodeFieldsData),
-)
-
-
-class WithSlotBound[TResult](runtime.GQLBoundOperation, ABC):
+class OnNode(slots.GQLBindableFragment[TModel, TReads], ABC):
     @abstractmethod
-    async def execute(self, *, id: builtins.str) -> TResult:
-        ...
-
-
-class WithSlotWithNodeUserFields(WithSlotBound[WithSlotResult[UserFields]]):
-    # See: queries.py:48
-    exec_source__ = 'query WithSlot($id: ID!) {\n  node(id: $id) {\n    __typename\n    ...UserFields\n  }\n}\n\nfragment UserFields on User {\n  id\n  name\n}'
-    slot_handles__ = {"node": (slots.SlotHandle(USER_FIELDS, frozenset({'User'})),)}
-    @override
-    async def execute(self, *, id: builtins.str) -> WithSlotResult[UserFields]:
-        return await API_CLIENT.query(
-            WithSlotResult[UserFields],
-            self.exec_source__,
-            variables={"id": id, **self.fragment_args__()},
-            headers=self.headers,
-            slot_handles=self.slot_handles__,
+    def __init__(
+        self,
+        *,
+        fragment_name: str,
+        definition_type: type[slots.GQLFragment[
+            TModel, TReads,
+        ]],
+        adapter: pydantic.TypeAdapter[TModel],
+    ) -> None:
+        super().__init__(
+            fragment_name=fragment_name,
+            definition_type=definition_type,
+            adapter=adapter,
         )
 
 
-class WithSlotWithNodeNodeFields(WithSlotBound[WithSlotResult[NodeFields]]):
-    # See: queries.py:49
-    exec_source__ = 'query WithSlot($id: ID!) {\n  node(id: $id) {\n    __typename\n    ...NodeFields\n  }\n}\n\nfragment NodeFields on Node {\n  __typename\n  id\n  ... on Admin {\n    permissions\n  }\n}'
-    slot_handles__ = {"node": (slots.SlotHandle(NODE_FIELDS, frozenset({'Admin', 'User'})),)}
+class OnUser(slots.GQLBindableFragment[TModel, TReads], ABC):
+    @abstractmethod
+    def __init__(
+        self,
+        *,
+        fragment_name: str,
+        definition_type: type[slots.GQLFragment[
+            TModel, TReads,
+        ]],
+        adapter: pydantic.TypeAdapter[TModel],
+    ) -> None:
+        super().__init__(
+            fragment_name=fragment_name,
+            definition_type=definition_type,
+            adapter=adapter,
+        )
+
+
+@final
+class UserFields(OnUser[UserFieldsData, "UserFields"]):
+    adapter__: ClassVar[pydantic.TypeAdapter[UserFieldsData]] = pydantic.TypeAdapter(UserFieldsData)
+
     @override
-    async def execute(self, *, id: builtins.str) -> WithSlotResult[NodeFields]:
+    def __init__(self) -> None:
+        super().__init__(
+            fragment_name='UserFields',
+            definition_type=UserFields,
+            adapter=self.adapter__,
+        )
+
+
+@final
+class NodeFields(OnNode[NodeFieldsData, "NodeFields"]):
+    adapter__: ClassVar[pydantic.TypeAdapter[NodeFieldsData]] = pydantic.TypeAdapter(NodeFieldsData)
+
+    @override
+    def __init__(self) -> None:
+        super().__init__(
+            fragment_name='NodeFields',
+            definition_type=NodeFields,
+            adapter=self.adapter__,
+        )
+
+
+class WithSlotBound[TResult: pydantic.BaseModel](runtime.GQLBoundOperation):
+    async def execute(self, *, id: builtins.str) -> TResult:
         return await API_CLIENT.query(
-            WithSlotResult[NodeFields],
-            self.exec_source__,
-            variables={"id": id, **self.fragment_args__()},
+            _API_GQL_CAST("type[TResult]", WithSlotResult),
+            self.exec_source,
+            variables={"id": id, **self.fragment_args},
             headers=self.headers,
-            slot_handles=self.slot_handles__,
+            slot_readers=self.slot_readers,
         )
 
 
 class WithSlot(runtime.GQLTemplate):
     @overload
-    def bind(self, *, node: Sequence[Never] = ()) -> Never: ...
+    def bind(self, *, node: Sequence[Never] = ()) -> WithSlotBound[WithSlotResult[Never]]: ...
     @overload
-    def bind(self, *, node: UserFields | Sequence[UserFields]) -> WithSlotWithNodeUserFields: ...
+    def bind[TModelNode: pydantic.BaseModel, TReadsNode](self, *, node: OnNode[TModelNode, TReadsNode]) -> WithSlotBound[WithSlotResult[OnNode[TModelNode, TReadsNode] | TReadsNode]]: ...
     @overload
-    def bind(self, *, node: NodeFields | Sequence[NodeFields]) -> WithSlotWithNodeNodeFields: ...
-    def bind(self, *, node: slots.GQLFragment[pydantic.BaseModel] | Sequence[slots.GQLFragment[pydantic.BaseModel]] = ()) -> runtime.GQLBoundOperation:
-        if _API_GQL_BIND_DISPATCH.get(slots.bind_key('WithSlot', {'node': node})) is None:
-            raise LookupError("unknown bind combination for WithSlot; every fragment a bind passes must be a discovered statement - check the call site, then regenerate the package")
-        return _API_GQL_BIND_DISPATCH[slots.bind_key('WithSlot', {'node': node})]()
+    def bind[TModelNode: pydantic.BaseModel, TReadsNode](self, *, node: OnUser[TModelNode, TReadsNode]) -> WithSlotBound[WithSlotResult[OnUser[TModelNode, TReadsNode] | TReadsNode]]: ...
+    def bind(self, *, node: slots.GQLBindableFragment[pydantic.BaseModel, Any] | Sequence[slots.GQLBindableFragment[pydantic.BaseModel, Any]] = ()) -> runtime.GQLBoundOperation:
+        if _API_GQL_BIND_DISPATCH.get(slots.dispatch_key('WithSlot', {'node': node})) is None:
+            raise LookupError("unknown bind combination for WithSlot; single-fragment and empty combinations are generated from the schema, so this is a tuple combination no call site writes literally - write it, then regenerate the package. A call whose template is an expression the scan cannot follow is never read either: those are listed, with the reason, in the debug run's ignored_binds.json")
+        return WithSlotBound[WithSlotResult].bound__(
+            _API_GQL_BIND_DISPATCH[slots.dispatch_key('WithSlot', {'node': node})], {'node': slots.as_bindable_fragments(node)},
+        )
 
 
-_API_GQL_BIND_DISPATCH: dict[slots.BindKey, type[runtime.GQLBoundOperation]] = {
-    ('WithSlot', (('node', ('UserFields',)),)): WithSlotWithNodeUserFields,
-    ('WithSlot', (('node', ('NodeFields',)),)): WithSlotWithNodeNodeFields,
+_API_GQL_BIND_DISPATCH: dict[slots.DispatchKey, runtime.BoundSpec] = {
+    # See: queries.py:37
+    ('WithSlot', ()): ('query WithSlot($id: ID!) {\n  node(id: $id) {\n    __typename\n  }\n}', {"node": ()}),
+    # See: queries.py:37, queries.py:12
+    ('WithSlot', (('node', (NodeFields,)),)): ('query WithSlot($id: ID!) {\n  node(id: $id) {\n    __typename\n    ...NodeFields\n  }\n}\n\nfragment NodeFields on Node {\n  __typename\n  id\n  ... on Admin {\n    permissions\n  }\n}', {"node": ((NodeFields, frozenset({'Admin', 'User'})),)}),
+    # See: queries.py:37, queries.py:3
+    ('WithSlot', (('node', (UserFields,)),)): ('query WithSlot($id: ID!) {\n  node(id: $id) {\n    __typename\n    ...UserFields\n  }\n}\n\nfragment UserFields on User {\n  id\n  name\n}', {"node": ((UserFields, frozenset({'User'})),)}),
 }
 
 
@@ -189,7 +222,7 @@ def api_gql(stmt: Literal['\n    fragment NodeFields on Node {\n        __typena
 @overload
 def api_gql(stmt: Literal['\n    query WithSlot($id: ID!) {\n        node(id: $id) @slot { __typename }\n    }\n    ']) -> WithSlot: ...
 @overload
-def api_gql(stmt: str) -> runtime.GQLOperation | slots.GQLFragment[pydantic.BaseModel] | runtime.GQLTemplate: ...
+def api_gql(stmt: str) -> runtime.GQLOperation | slots.GQLFragment[pydantic.BaseModel, Any] | runtime.GQLTemplate: ...
 
 
 _API_GQL_DISPATCH: dict[str, type[runtime.GQLOperation]] = {
@@ -197,9 +230,9 @@ _API_GQL_DISPATCH: dict[str, type[runtime.GQLOperation]] = {
 }
 
 
-_API_GQL_FRAGMENTS: dict[str, slots.GQLFragment[pydantic.BaseModel]] = {
-    '\n    fragment UserFields on User {\n        id\n        name\n    }\n    ': USER_FIELDS,
-    '\n    fragment NodeFields on Node {\n        __typename\n        id\n        ... on Admin { permissions }\n    }\n    ': NODE_FIELDS,
+_API_GQL_FRAGMENTS: dict[str, type[slots.GQLFragment[pydantic.BaseModel, Any]]] = {
+    '\n    fragment UserFields on User {\n        id\n        name\n    }\n    ': UserFields,
+    '\n    fragment NodeFields on Node {\n        __typename\n        id\n        ... on Admin { permissions }\n    }\n    ': NodeFields,
 }
 
 
@@ -208,13 +241,13 @@ _API_GQL_TEMPLATES: dict[str, type[runtime.GQLTemplate]] = {
 }
 
 
-def api_gql(stmt: str) -> runtime.GQLOperation | slots.GQLFragment[pydantic.BaseModel] | runtime.GQLTemplate:
+def api_gql(stmt: str) -> runtime.GQLOperation | slots.GQLFragment[pydantic.BaseModel, Any] | runtime.GQLTemplate:
     query_cls = _API_GQL_DISPATCH.get(stmt)
     if query_cls is not None:
         return query_cls()
-    fragment = _API_GQL_FRAGMENTS.get(stmt)
-    if fragment is not None:
-        return fragment
+    fragment_cls = _API_GQL_FRAGMENTS.get(stmt)
+    if fragment_cls is not None:
+        return _API_GQL_CAST("Callable[[], slots.GQLFragment[pydantic.BaseModel, Any]]", fragment_cls)()
     template_cls = _API_GQL_TEMPLATES.get(stmt)
     if template_cls is not None:
         return template_cls()

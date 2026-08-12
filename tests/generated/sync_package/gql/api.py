@@ -9,13 +9,17 @@ import datetime
 from abc import ABC
 from abc import abstractmethod
 from collections.abc import Generator
+from collections.abc import Callable
 from collections.abc import Sequence
 from contextlib import AbstractContextManager
 from typing import Annotated
+from typing import Any
 from typing import ClassVar
 from typing import Literal
 from typing import Never
-from typing import Self
+from typing import TypeVar
+from typing import cast
+from typing import final
 from typing import overload
 from typing import override
 
@@ -34,6 +38,8 @@ from tests.generated.sync_package.settings import GRAPHQL_URL
 API_CLIENT = runtime.GQLClient(
     base_url=GRAPHQL_URL,
 )
+
+_API_GQL_CAST = cast
 
 
 class GQLModel(pydantic.BaseModel):
@@ -125,50 +131,70 @@ class UserRenamed(runtime.GQLOperation):
         )
 
 
-class ManagerName(slots.GQLFragment[ManagerNameData]):
-    pass
+TModel = TypeVar("TModel", bound=pydantic.BaseModel, covariant=True)
+TReads = TypeVar("TReads", contravariant=True)
 
 
-MANAGER_NAME = ManagerName(
-    fragment_name='ManagerName',
-    adapter=pydantic.TypeAdapter(ManagerNameData),
-)
-
-
-class GetUserWithManagerBound[TResult](runtime.GQLBoundOperation, ABC):
+class OnUser(slots.GQLBindableFragment[TModel, TReads], ABC):
     @abstractmethod
-    def execute(self, *, id: builtins.str) -> TResult:
-        ...
+    def __init__(
+        self,
+        *,
+        fragment_name: str,
+        definition_type: type[slots.GQLFragment[
+            TModel, TReads,
+        ]],
+        adapter: pydantic.TypeAdapter[TModel],
+    ) -> None:
+        super().__init__(
+            fragment_name=fragment_name,
+            definition_type=definition_type,
+            adapter=adapter,
+        )
 
 
-class GetUserWithManagerWithManagerManagerName(GetUserWithManagerBound[GetUserWithManagerResult[ManagerName]]):
-    # See: queries.py:58
-    exec_source__ = 'query GetUserWithManager($id: ID!) {\n  user(id: $id) {\n    id\n    manager {\n      __typename\n      ...ManagerName\n    }\n  }\n}\n\nfragment ManagerName on User {\n  name\n}'
-    slot_handles__ = {"manager": (slots.SlotHandle(MANAGER_NAME, frozenset({'User'})),)}
+@final
+class ManagerName(OnUser[ManagerNameData, "ManagerName"]):
+    adapter__: ClassVar[pydantic.TypeAdapter[ManagerNameData]] = pydantic.TypeAdapter(ManagerNameData)
+
     @override
-    def execute(self, *, id: builtins.str) -> GetUserWithManagerResult[ManagerName]:
+    def __init__(self) -> None:
+        super().__init__(
+            fragment_name='ManagerName',
+            definition_type=ManagerName,
+            adapter=self.adapter__,
+        )
+
+
+class GetUserWithManagerBound[TResult: pydantic.BaseModel](runtime.GQLBoundOperation):
+    def execute(self, *, id: builtins.str) -> TResult:
         return API_CLIENT.query(
-            GetUserWithManagerResult[ManagerName],
-            self.exec_source__,
-            variables={"id": id, **self.fragment_args__()},
+            _API_GQL_CAST("type[TResult]", GetUserWithManagerResult),
+            self.exec_source,
+            variables={"id": id, **self.fragment_args},
             headers=self.headers,
-            slot_handles=self.slot_handles__,
+            slot_readers=self.slot_readers,
         )
 
 
 class GetUserWithManager(runtime.GQLTemplate):
     @overload
-    def bind(self, *, manager: Sequence[Never] = ()) -> Never: ...
+    def bind(self, *, manager: Sequence[Never] = ()) -> GetUserWithManagerBound[GetUserWithManagerResult[Never]]: ...
     @overload
-    def bind(self, *, manager: ManagerName | Sequence[ManagerName]) -> GetUserWithManagerWithManagerManagerName: ...
-    def bind(self, *, manager: slots.GQLFragment[pydantic.BaseModel] | Sequence[slots.GQLFragment[pydantic.BaseModel]] = ()) -> runtime.GQLBoundOperation:
-        if _API_GQL_BIND_DISPATCH.get(slots.bind_key('GetUserWithManager', {'manager': manager})) is None:
-            raise LookupError("unknown bind combination for GetUserWithManager; every fragment a bind passes must be a discovered statement - check the call site, then regenerate the package")
-        return _API_GQL_BIND_DISPATCH[slots.bind_key('GetUserWithManager', {'manager': manager})]()
+    def bind[TModelManager: pydantic.BaseModel, TReadsManager](self, *, manager: OnUser[TModelManager, TReadsManager]) -> GetUserWithManagerBound[GetUserWithManagerResult[OnUser[TModelManager, TReadsManager] | TReadsManager]]: ...
+    def bind(self, *, manager: slots.GQLBindableFragment[pydantic.BaseModel, Any] | Sequence[slots.GQLBindableFragment[pydantic.BaseModel, Any]] = ()) -> runtime.GQLBoundOperation:
+        if _API_GQL_BIND_DISPATCH.get(slots.dispatch_key('GetUserWithManager', {'manager': manager})) is None:
+            raise LookupError("unknown bind combination for GetUserWithManager; single-fragment and empty combinations are generated from the schema, so this is a tuple combination no call site writes literally - write it, then regenerate the package. A call whose template is an expression the scan cannot follow is never read either: those are listed, with the reason, in the debug run's ignored_binds.json")
+        return GetUserWithManagerBound[GetUserWithManagerResult].bound__(
+            _API_GQL_BIND_DISPATCH[slots.dispatch_key('GetUserWithManager', {'manager': manager})], {'manager': slots.as_bindable_fragments(manager)},
+        )
 
 
-_API_GQL_BIND_DISPATCH: dict[slots.BindKey, type[runtime.GQLBoundOperation]] = {
-    ('GetUserWithManager', (('manager', ('ManagerName',)),)): GetUserWithManagerWithManagerManagerName,
+_API_GQL_BIND_DISPATCH: dict[slots.DispatchKey, runtime.BoundSpec] = {
+    # See: queries.py:39
+    ('GetUserWithManager', ()): ('query GetUserWithManager($id: ID!) {\n  user(id: $id) {\n    id\n    manager {\n      __typename\n    }\n  }\n}', {"manager": ()}),
+    # See: queries.py:39, queries.py:50
+    ('GetUserWithManager', (('manager', (ManagerName,)),)): ('query GetUserWithManager($id: ID!) {\n  user(id: $id) {\n    id\n    manager {\n      __typename\n      ...ManagerName\n    }\n  }\n}\n\nfragment ManagerName on User {\n  name\n}', {"manager": ((ManagerName, frozenset({'User'})),)}),
 }
 
 
@@ -183,7 +209,7 @@ def api_gql(stmt: Literal['\n    fragment ManagerName on User {\n        name\n 
 @overload
 def api_gql(stmt: Literal['\n    query GetUserWithManager($id: ID!) {\n        user(id: $id) {\n            id\n            manager @slot { __typename }\n        }\n    }\n    ']) -> GetUserWithManager: ...
 @overload
-def api_gql(stmt: str) -> runtime.GQLOperation | slots.GQLFragment[pydantic.BaseModel] | runtime.GQLTemplate: ...
+def api_gql(stmt: str) -> runtime.GQLOperation | slots.GQLFragment[pydantic.BaseModel, Any] | runtime.GQLTemplate: ...
 
 
 _API_GQL_DISPATCH: dict[str, type[runtime.GQLOperation]] = {
@@ -193,8 +219,8 @@ _API_GQL_DISPATCH: dict[str, type[runtime.GQLOperation]] = {
 }
 
 
-_API_GQL_FRAGMENTS: dict[str, slots.GQLFragment[pydantic.BaseModel]] = {
-    '\n    fragment ManagerName on User {\n        name\n    }\n    ': MANAGER_NAME,
+_API_GQL_FRAGMENTS: dict[str, type[slots.GQLFragment[pydantic.BaseModel, Any]]] = {
+    '\n    fragment ManagerName on User {\n        name\n    }\n    ': ManagerName,
 }
 
 
@@ -203,13 +229,13 @@ _API_GQL_TEMPLATES: dict[str, type[runtime.GQLTemplate]] = {
 }
 
 
-def api_gql(stmt: str) -> runtime.GQLOperation | slots.GQLFragment[pydantic.BaseModel] | runtime.GQLTemplate:
+def api_gql(stmt: str) -> runtime.GQLOperation | slots.GQLFragment[pydantic.BaseModel, Any] | runtime.GQLTemplate:
     query_cls = _API_GQL_DISPATCH.get(stmt)
     if query_cls is not None:
         return query_cls()
-    fragment = _API_GQL_FRAGMENTS.get(stmt)
-    if fragment is not None:
-        return fragment
+    fragment_cls = _API_GQL_FRAGMENTS.get(stmt)
+    if fragment_cls is not None:
+        return _API_GQL_CAST("Callable[[], slots.GQLFragment[pydantic.BaseModel, Any]]", fragment_cls)()
     template_cls = _API_GQL_TEMPLATES.get(stmt)
     if template_cls is not None:
         return template_cls()

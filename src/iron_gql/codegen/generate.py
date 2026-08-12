@@ -61,6 +61,7 @@ def generate_gql_package(
         schema_path,
         discovered.statements,
         discovered.binds,
+        bind_keyword_checks=discovered.bind_keyword_checks,
         debug_path=debug_path,
     )
 
@@ -79,8 +80,9 @@ def generate_gql_package(
             schema=parse_res.schema,
             operations=parse_res.operations,
             templates=parse_res.templates,
-            fragment_statements=parse_res.reachable_statements,
+            fragment_statements=parse_res.bindable_statements,
             binds=discovered.binds,
+            bind_keyword_checks=discovered.bind_keyword_checks,
             discovered_texts=tuple(stmt.raw_text for stmt in discovered.statements),
             scalars=scalar_refs,
             to_snake_fn=to_snake_fn,
@@ -101,7 +103,7 @@ def generate_gql_package(
     collected = parametrize_slot_paths(collected)
     ir_errors = [
         *validate_module_names(collected, scaffold),
-        *validate_signature_names(collected),
+        *validate_signature_names(collected, package_name),
         *nested_slot_errors,
     ]
     if ir_errors:

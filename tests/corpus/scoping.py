@@ -26,7 +26,12 @@ TEMPLATE = f'api_gql("{TEMPLATE_TEXT}")'
 SHADOW_TEMPLATE = f'api_gql("{SHADOW_TEMPLATE_TEXT}")'
 FRAGMENT = f'api_gql("{FRAGMENT_TEXT}")'
 
-BIND_EXPR = "tmpl.bind(f=frag)"
+
+# A literal tuple, not a bare fragment: discovery no longer looks at a `.bind`
+# call at all unless some slot carries one (parametric-bind's Task 5), so the
+# corpus's own `.bind` -- otherwise identical to every case this file crosses
+# it with -- has to carry one to be a case the scan ever reaches.
+BIND_EXPR = "tmpl.bind(f=(frag,))"
 BIND_LINE = f"bound = {BIND_EXPR}"
 
 # `ctx`/`loaders`/`load` stand in for whatever a real call site would use: the

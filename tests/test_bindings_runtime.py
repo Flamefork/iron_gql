@@ -5,6 +5,8 @@ import subprocess
 import sys
 from collections.abc import Callable
 from typing import Any
+from typing import cast
+from typing import override
 
 import pydantic
 import pytest
@@ -14,7 +16,10 @@ from werkzeug import Request
 from werkzeug import Response
 
 from iron_gql.codegen import GraphQLGenerationError
+from iron_gql.runtime import FileVar
+from iron_gql.slots import GQLBindableFragment
 from iron_gql.slots import GQLFragment
+from tests.conftest import UPLOAD_SCALARS
 from tests.conftest import GraphQLRequest
 from tests.conftest import ProjectBuilder
 from tests.conftest import generated_package
@@ -37,7 +42,7 @@ type LinkAttachment {
 }
 """
 
-# --- list binding with two disjoint fragments ----------------------
+# --- tuple binding with two disjoint fragments ---------------------
 
 DISJOINT_SCHEMA = f"""
 type Query {{
@@ -93,7 +98,7 @@ generated_package(
         """
     )
 
-    both = get_attachment.bind(attachment=[image_parts, link_parts])
+    both = get_attachment.bind(attachment=(image_parts, link_parts))
     foreign = get_attachment.bind(attachment=other_parts)
     ''',
 )
@@ -111,7 +116,7 @@ def _resolve_disjoint_post(
     return {"id": id, "attachment": {"__typename": "LinkAttachment", "href": "h1"}}
 
 
-async def test_disjoint_list_binding_reads_each_slice_and_rejects_foreign_handle(
+async def test_disjoint_tuple_binding_reads_each_slice_and_rejects_foreign_definition(
     httpserver: HTTPServer,
 ):
     async with gql_server(
@@ -124,16 +129,15 @@ async def test_disjoint_list_binding_reads_each_slice_and_rejects_foreign_handle
         image_node = image_result.post.attachment
         link_node = link_result.post.attachment
 
-        # Each handle reads its own slice directly.
+        # Каждый definition читает свою projection напрямую.
         image = disjoint_queries.image_parts.read(image_node)
         link = disjoint_queries.link_parts.read(link_node)
         assert isinstance(image, ImagePartsData)
         assert isinstance(link, LinkPartsData)
         assert image.url == "u1"
         assert link.href == "h1"
-        # An offered handle answers None, not raise, on a typename it does
-        # not cover -- only a handle never offered to this slot is a wiring
-        # bug (below).
+        # Предложенный definition возвращает None для typename вне coverage;
+        # definition, которого в этом slot не было, остаётся wiring bug.
         assert disjoint_queries.image_parts.read(link_node) is None
         assert disjoint_queries.link_parts.read(image_node) is None
 
@@ -148,25 +152,12 @@ async def test_disjoint_list_binding_reads_each_slice_and_rejects_foreign_handle
             read_type_erased(disjoint_queries.other_parts, image_node)
 
 
-async def test_a_second_handle_of_a_bound_fragment_is_not_the_singleton(
+async def test_a_second_definition_value_reads_the_bound_fragment(
     httpserver: HTTPServer,
 ):
-    # `GQLSlotNode._slot_data` (src/iron_gql/slots.py) is keyed by
-    # `id(handle)`, not by fragment name or class -- precisely so a subclass
-    # overriding `__eq__`/`__hash__` cannot alias one fragment's data to
-    # another. Nothing else in this suite exercises that: every other "is not
-    # part of the binding" test uses a *differently named* fragment, which
-    # would pass identically under name-keyed storage. Here `twin` shares the
-    # fragment name ('ImageParts') and the model with the singleton that was
-    # actually bound (`image_parts`) -- only identity-keying, not name-keying,
-    # tells them apart.
-    #
-    # Built from the runtime base, the shortest spelling of a second handle;
-    # the generated class takes the same metadata arguments and accepts them
-    # just as well (what its zero-argument spelling does and does not stop is
-    # pinned in tests/test_slots_typing.py). Either way the mistake
-    # type-checks everywhere the singleton does and surfaces only here, at
-    # the read.
+    # Slot data is indexed by the generated definition class. A fresh value of
+    # that class therefore reads the same projection; object identity and the
+    # particular value returned by the original `api_gql()` call are irrelevant.
     async with gql_server(
         httpserver, "bindings_disjoint", {"Query": {"post": _resolve_disjoint_post}}
     ):
@@ -174,27 +165,17 @@ async def test_a_second_handle_of_a_bound_fragment_is_not_the_singleton(
         assert result.post is not None
         node = result.post.attachment
 
-        # The bound singleton reads its slice with real field data -- proves
-        # the distinction below is about identity, not that reading is broken.
         image = disjoint_queries.image_parts.read(node)
         assert image is not None
         assert image.url == "u1"
 
-        twin = GQLFragment(
-            fragment_name="ImageParts",
-            adapter=pydantic.TypeAdapter(ImagePartsData),
-        )
-        with pytest.raises(
-            ValueError,
-            match=(
-                "fragment 'ImageParts' is not part of the binding that "
-                "produced slot 'attachment'"
-            ),
-        ):
-            read_type_erased(twin, node)
+        twin = type(disjoint_queries.image_parts)()
+        twin_image = twin.read(node)
+        assert twin_image is not None
+        assert twin_image.url == "u1"
 
 
-# --- list binding with two overlapping fragments ---------------------
+# --- tuple binding with two overlapping fragments --------------------
 
 OVERLAP_SCHEMA = """
 type Query {
@@ -253,7 +234,7 @@ generated_package(
 
     # Two fragments covering the SAME runtime type in one slot: each reads its
     # own slice independently, so overlap is legal (see the slot-read spec).
-    both = get_attachment.bind(attachment=[image_caption, image_size])
+    both = get_attachment.bind(attachment=(image_caption, image_size))
     ''',
 )
 
@@ -276,7 +257,7 @@ def _resolve_overlap_post(
 async def test_overlapping_fragments_in_one_slot_each_read_their_slice(
     httpserver: HTTPServer,
 ):
-    # ImageCaption and ImageSize both cover ImageAttachment: each handle reads
+    # ImageCaption and ImageSize both cover ImageAttachment: each definition reads
     # its own slice of the same node independently, so overlapping coverage
     # in one slot is legal.
     async with gql_server(
@@ -356,7 +337,7 @@ def test_overlapping_fragments_with_conflicting_fields_are_rejected(
             '''
         )
 
-        both = get_attachment.bind(attachment=[thumb_small, thumb_large])
+        both = get_attachment.bind(attachment=(thumb_small, thumb_large))
         """,
     )
     with pytest.raises(GraphQLGenerationError, match="Fields 'thumbnail' conflict"):
@@ -420,13 +401,11 @@ generated_package(
     )
 
     bound = get_attachment.bind(attachment=image_parts)
-    # A second bind of the same template, so `foreign_parts` is genuinely
-    # bind-reachable (gets a real typed handle) while still being foreign to
-    # `bound`'s own closure -- an orphan fragment (bound nowhere) never
-    # becomes a handle at all (`parser.bind_closures` drops it), so
-    # this is the only way to test "outside this binding's closure" rather
-    # than "outside every binding".
-    elsewhere = get_attachment.bind(attachment=foreign_parts)
+    # `foreign_parts` is a typed definition like every fragment of a package
+    # with a template, and its own combination is enumerated whether or not
+    # anybody writes it -- so it is foreign to `bound`'s closure while still
+    # being a real definition, which is what "outside this binding's closure"
+    # (rather than "outside every binding") needs.
     ''',
 )
 
@@ -440,16 +419,16 @@ def _resolve_composition_post(
     return {"id": id, "attachment": {"__typename": "ImageAttachment", "url": "u1"}}
 
 
-async def test_composed_fragment_inner_handle_reads_its_own_slice(
+async def test_composed_fragment_inner_definition_reads_its_own_slice(
     httpserver: HTTPServer,
 ):
     # `ImageParts` spreads `BaseParts` at its own root level, so `BaseParts`
     # is reachable only through that spread -- and its fields still land on
     # the slot's root payload, which is what makes it independently readable
-    # through its own handle. That is the whole point of keeping a read layer
+    # through its own definition. That is the whole point of keeping a read layer
     # instead of exact per-binding models: the outer, bound fragment and the
     # inner, merged-in one both read their own model from the same node,
-    # through their own handles.
+    # through their own definitions.
     async with gql_server(
         httpserver,
         "bindings_composition",
@@ -464,23 +443,20 @@ async def test_composed_fragment_inner_handle_reads_its_own_slice(
         assert outer.url == "u1"
 
         # The inner brick reads its own slice directly through its own
-        # handle, with real field data -- not merely merged into the outer
+        # definition, with real field data -- not merely merged into the outer
         # fragment's model.
         inner = composition_queries.base_parts.read(node)
         assert inner is not None
         assert inner.url == "u1"
 
-        # Erasing a handle's type erases the static check and nothing else:
-        # the object is the same one the binding offered, and `_slot_data` is
-        # keyed by its identity, so it still reads its own slice with real
-        # field data (the README's type-erased-path paragraph, at runtime --
-        # its static half is pinned in tests/test_slots_typing.py).
-        erased: GQLFragment[pydantic.BaseModel] = composition_queries.image_parts
+        # Стирание типа definition убирает только static check: runtime
+        # продолжает находить projection по generated definition class.
+        erased: GQLFragment[pydantic.BaseModel, Any] = composition_queries.image_parts
         erased_read = read_type_erased(erased, node)
         assert isinstance(erased_read, composition_api.ImagePartsData)
         assert erased_read.url == "u1"
 
-        # `foreign_parts` is bind-reachable (bound to `elsewhere`, a
+        # `foreign_parts` has a combination of its own (enumerated, a
         # *different* combination of this same template) but never spread by
         # anything reachable from `bound`'s own closure -- reading it against
         # `bound`'s result is still a wiring bug, not a soft None: the
@@ -498,12 +474,23 @@ def test_composed_fragment_definition_reaches_the_exec_source():
     # The positive half of composition: the closure fragment's own definition
     # text is present in what actually gets sent to the server, so the spread
     # `...BaseParts` the merged-read test above depends on is valid GraphQL.
-    exec_source = composition_api.GetAttachmentWithAttachmentImageParts.exec_source__
+    # `exec_source` is an instance attribute now (`bound__` fills it in at
+    # `bind()` time), not a per-combination `ClassVar`.
+    exec_source = composition_queries.bound.exec_source
     assert "...BaseParts" in exec_source
     assert "fragment BaseParts on ImageAttachment" in exec_source
 
 
-# --- two-level spread chain -- the deepest handle still reads -----
+def test_the_bind_constructs_a_reader_from_the_factory_definition():
+    my_instance = fragvars_queries.image_parts.with_args(width=17)
+    bound = fragvars_queries.get_attachment.bind(attachment=my_instance)
+    [reader] = bound.slot_readers["attachment"]
+    assert type(reader.definition) is type(fragvars_queries.image_parts)
+    assert reader.definition is not fragvars_queries.image_parts
+    assert reader.definition is not my_instance
+
+
+# --- two-level spread chain -- the deepest definition still reads -----
 
 CHAIN_SCHEMA = """
 type Query {
@@ -592,7 +579,9 @@ def _resolve_chain_post(
     }
 
 
-async def test_two_level_spread_chain_deepest_handle_reads(httpserver: HTTPServer):
+async def test_two_level_spread_chain_deepest_definition_reads(
+    httpserver: HTTPServer,
+):
     # `RootParts` spreads `MiddleParts` spreads `LeafParts` -- only `RootParts`
     # is named in `bind()`. `LeafParts` sits two hops deep in the transitive
     # closure, proving the closure walk isn't limited to a single level of
@@ -777,15 +766,17 @@ async def test_unread_closure_only_brick_still_validates_eagerly(
     assert exc_info.value.errors()[0]["type"] == "missing"
 
 
-async def test_bound_operation_validation_error_names_the_bindings_result_class(
+async def test_bound_operation_validation_error_names_the_shared_result_class(
     httpserver: HTTPServer,
 ):
-    # A binding validates against its template's result model parametrised by
-    # its own fragments, so the ValidationError title names both: the model
-    # that failed and the combination it was read for. The bare
-    # `GetAttachmentResult` would name only the first, and two bindings of one
-    # template fail identically-shaped models -- the arguments are what tells
-    # a reader which of them was being validated.
+    # One bound class serves every combination of a template now, and its
+    # `execute` always hands pydantic the same bare result class -- every
+    # phantom at its `Never` default, `cast` to the caller's own binding's
+    # promised type (see `render_template_bases`'s comment on that `cast`, and
+    # `tests/test_slots_runtime.py` for the proof a bare class validates
+    # identically to a parametrised one). The ValidationError title reflects
+    # that: it no longer names a combination-specific parametrisation, because
+    # no such runtime class exists to name any more.
     httpserver.expect_request("/graphql/", method="POST").respond_with_json(
         BOUNDARY_BODY
     )
@@ -795,22 +786,18 @@ async def test_bound_operation_validation_error_names_the_bindings_result_class(
         with pytest.raises(pydantic.ValidationError) as exc_info:
             _ = await boundary_queries.bound.execute(id="1")
     title = str(exc_info.value).splitlines()[0]
-    assert title == (
-        "1 validation error for GetAttachmentResult[Union[ImageParts, NodeId]]"
-    )
+    assert title == "1 validation error for GetAttachmentResult"
 
 
-async def test_execute_validates_with_the_result_type_its_signature_promises(
+async def test_execute_validates_with_the_templates_shared_result_class(
     httpserver: HTTPServer,
 ):
-    # `execute` is written per binding for this reason. Inherited from the
-    # template's base, its body was evaluated with the base's own type
-    # parameter -- Python substitutes nothing when a method runs -- so the
-    # class handed to the client was not the one the signature named. Identity
-    # is what says `execute` validated with the binding's own parametrisation:
-    # pydantic hands out one class per (model, arguments) pair, so a result
-    # read under another binding's fragments is a different class even though
-    # the two have the same shape.
+    # `execute` is written once, on the template's shared bound base, and
+    # always validates against that one bare result class -- never a
+    # per-combination parametrisation, which no longer exists as a runtime
+    # object at all (only as the static phantom `bind()`'s own overload
+    # promised). Pins that the object the client actually receives is that one
+    # shared class, whichever combination produced it.
     httpserver.expect_request("/graphql/", method="POST").respond_with_json(
         COMPLETE_BOUNDARY_BODY
     )
@@ -818,12 +805,7 @@ async def test_execute_validates_with_the_result_type_its_signature_promises(
         "bindings_composition_boundary", httpserver.url_for("/graphql/")
     ):
         result = await boundary_queries.bound.execute(id="1")
-    assert (
-        type(result)
-        is boundary_api.GetAttachmentResult[
-            boundary_api.ImageParts | boundary_api.NodeId
-        ]
-    )
+    assert type(result) is boundary_api.GetAttachmentResult
 
 
 async def test_a_helper_generic_over_the_binding_reads_what_it_was_handed(
@@ -832,14 +814,14 @@ async def test_a_helper_generic_over_the_binding_reads_what_it_was_handed(
     # The shape shared infrastructure is written in: the helper owns the
     # operation and each caller owns the selection, so the helper spells the
     # phantom `Any` -- "whatever this binding offered" -- and reads with the
-    # handle it was given. That annotation is the whole of what it gives up:
+    # fragment it was given. That annotation is the whole of what it gives up:
     # the same `read`, and the runtime guard below still answers.
     def first_attachment[TData: pydantic.BaseModel](
         result: boundary_api.GetAttachmentResult[Any],
-        handle: GQLFragment[TData],
+        fragment: GQLFragment[TData, Any],
     ) -> TData | None:
         assert result.post is not None
-        return handle.read(result.post.attachment)
+        return fragment.read(result.post.attachment)
 
     httpserver.expect_request("/graphql/", method="POST").respond_with_json(
         COMPLETE_BOUNDARY_BODY
@@ -851,7 +833,7 @@ async def test_a_helper_generic_over_the_binding_reads_what_it_was_handed(
     image = first_attachment(result, boundary_queries.image_parts)
     assert image is not None
     assert image.url == "u"
-    # And the guard survives the erasure: a handle this binding never offered
+    # And the guard survives the erasure: a definition this binding never offered
     # is a wiring bug, not a type mismatch that reads back as None -- the
     # static check is gone, the runtime one is not.
     with pytest.raises(ValueError, match=r"is not part of the binding"):
@@ -861,10 +843,16 @@ async def test_a_helper_generic_over_the_binding_reads_what_it_was_handed(
 async def test_a_bound_result_with_a_populated_slot_does_not_pickle(
     httpserver: HTTPServer,
 ):
-    # The root parametrization has a module-level name because the generated
-    # module subscribes it while declaring the binding. A populated path to the
-    # slot also instantiates nested parametrizations that pydantic created
-    # without module-level names, and pickle cannot resolve those classes.
+    # `execute` always validates against the template's one bare result class
+    # (`GetAttachmentResult`, no combination-specific parametrisation exists
+    # any more -- see `render_template_bases`'s comment on the `cast`), so a
+    # populated path to the slot instantiates a nested model off that class's
+    # own unbound slot phantom rather than off a concrete union of fragment
+    # classes. Pydantic still creates it without a module-level name, and
+    # pickle still cannot resolve it -- the class just carries a different,
+    # less specific name in its error now (`Post[TypeVar]` rather than
+    # `Post[ImageParts | NodeId]`), because there is no concrete
+    # parametrisation left to report.
     httpserver.expect_request("/graphql/", method="POST").respond_with_json(
         COMPLETE_BOUNDARY_BODY
     )
@@ -872,17 +860,19 @@ async def test_a_bound_result_with_a_populated_slot_does_not_pickle(
         "bindings_composition_boundary", httpserver.url_for("/graphql/")
     ):
         result = await boundary_queries.bound.execute(id="1")
-    with pytest.raises(pickle.PicklingError, match=r"Post\[.*ImageParts"):
+    with pytest.raises(pickle.PicklingError, match=r"Post\[TypeVar\]"):
         pickle.dumps(result)
 
 
 def test_a_bound_result_with_a_null_slot_path_pickles_across_processes():
     # No nested parametrized model is instantiated when the nullable parent is
-    # null. The root specialization is registered at module scope, so a fresh
-    # interpreter can import it and restore the result.
-    result = boundary_api.GetAttachmentResult[
-        boundary_api.ImageParts | boundary_api.NodeId
-    ].model_validate({"post": None})
+    # null, and the root class itself is the plain module-level
+    # `GetAttachmentResult` -- `execute` never subscripts a
+    # combination-specific parametrisation at module scope any more (there is
+    # no more per-combination class whose base-list expression used to do
+    # that; see `render_template_bases`'s comment on the `cast`), so a fresh
+    # interpreter can import the bare class as-is and restore the result.
+    result = boundary_api.GetAttachmentResult.model_validate({"post": None})
     assert result.post is None
 
     child = """
@@ -908,9 +898,14 @@ type Query {
     post(id: ID!): Post
 }
 
+# Two slots of one type, so the schema's own enumeration holds the row where
+# a single factory fills both of them -- the combination nobody has to write
+# for it to exist, and the one whose two applications supply two values for
+# the one `$width` the expanded document declares.
 type Post {
     id: ID!
     attachment: Attachment
+    preview: Attachment
 }
 
 union Attachment = ImageAttachment | LinkAttachment
@@ -947,6 +942,7 @@ generated_package(
             post(id: $id) {
                 id
                 attachment @slot { __typename }
+                preview @slot { __typename }
             }
         }
         """
@@ -959,21 +955,11 @@ generated_package(
         }
         """
     )
-
-    bound = get_attachment.bind(attachment=image_parts)
     ''',
 )
 
 from tests.generated.bindings_fragment_vars import queries as fragvars_queries
-
-
-async def test_missing_required_fragment_variable_raises_at_execute_naming_it():
-    # $width has no location default in the schema, so it is required --
-    # required_arg_names__ pulls it in and fragment_args__() (called from
-    # inside the generated execute()) must name it, before any request is
-    # made. No server is set up: this must fail before reaching the network.
-    with pytest.raises(ValueError, match=r"\$width"):
-        _ = await fragvars_queries.bound.execute(id="1")
+from tests.generated.bindings_fragment_vars.gql import api as fragvars_api
 
 
 def _fragment_vars_handler(
@@ -984,14 +970,17 @@ def _fragment_vars_handler(
         variables = payload.variables or {}
         seen.append((variables, dict(request.headers)))
         width = variables["width"]
+        # Both slots answer with the same `$width`, because the document
+        # declares it once -- the server has no way to tell the two spreads
+        # apart, which is the whole reason two disagreeing applications are
+        # rejected before the request is built.
+        attachment = {"__typename": "ImageAttachment", "url": f"img-{width}"}
         body = {
             "data": {
                 "post": {
                     "id": variables["id"],
-                    "attachment": {
-                        "__typename": "ImageAttachment",
-                        "url": f"img-{width}",
-                    },
+                    "attachment": attachment,
+                    "preview": dict(attachment),
                 }
             }
         }
@@ -1000,16 +989,15 @@ def _fragment_vars_handler(
     return handler
 
 
-async def test_with_args_roundtrip_and_with_headers_after_with_args_preserves_args(
+async def test_applied_fragment_carries_its_arguments_to_the_request(
     httpserver: HTTPServer,
 ):
-    # The underlying runtime primitives (with_args__/fragment_args__ merging,
-    # with_headers carrying fragment args forward) are already pinned at the
-    # unit level by test_bound_runtime.py::test_with_headers_preserves_fragment_args
-    # and ::test_missing_required_args_raise_with_names. This is the
-    # integration proof: the *generated* with_args() wiring actually reaches
-    # the server with the right variable name and value, and with_headers
-    # called after with_args does not drop them.
+    # The point of attachment the design moved: `image_parts` is a factory
+    # (its own `$width` has no schema default), so it has no `bind()` of its
+    # own -- only `with_args`, called where the value is known, returns the
+    # real application that `bind()` accepts and that reads the result. Headers
+    # applied after `bind()` -- the existing `_copy` machinery -- still carry
+    # the values through unchanged.
     seen: list[tuple[dict[str, object], dict[str, str]]] = []
     httpserver.expect_request("/graphql/", method="POST").respond_with_handler(
         _fragment_vars_handler(seen)
@@ -1017,12 +1005,13 @@ async def test_with_args_roundtrip_and_with_headers_after_with_args_preserves_ar
     async with use_package_client(
         "bindings_fragment_vars", httpserver.url_for("/graphql/")
     ):
-        bound = fragvars_queries.bound.with_args(width=800).with_headers({
+        applied = fragvars_queries.image_parts.with_args(width=800)
+        bound = fragvars_queries.get_attachment.bind(attachment=applied).with_headers({
             "X-Test": "y"
         })
         result = await bound.execute(id="1")
         assert result.post is not None
-        image = fragvars_queries.image_parts.read(result.post.attachment)
+        image = applied.read(result.post.attachment)
         assert image is not None
         assert image.url == "img-800"
 
@@ -1031,13 +1020,155 @@ async def test_with_args_roundtrip_and_with_headers_after_with_args_preserves_ar
     assert headers["X-Test"] == "y"
 
 
-# Three positions, three behaviours. `$width` is nullable with no default, so
-# it behaves exactly like an operation variable of `execute`: required keyword,
-# `None` sent as an explicit null. `$height` fills a non-null position that
-# declares a default, and `$pad` a nullable one that declares a default --
-# whether the declared type needed relaxing is not the question a caller asks,
-# so both may be left out, and leaving either out has to reach the server as an
-# absent variable so the schema's default applies.
+async def test_two_applications_of_one_factory_share_a_projection(
+    httpserver: HTTPServer,
+):
+    # Applications хранят request variables для `bind()`, но projection
+    # принадлежит общей generated definition. Поэтому другая application той
+    # же factory читает response независимо от своих arguments.
+    httpserver.expect_request("/graphql/", method="POST").respond_with_handler(
+        _fragment_vars_handler([])
+    )
+    async with use_package_client(
+        "bindings_fragment_vars", httpserver.url_for("/graphql/")
+    ):
+        bound_applied = fragvars_queries.image_parts.with_args(width=1)
+        unbound_applied = fragvars_queries.image_parts.with_args(width=1)
+        assert bound_applied is not unbound_applied
+        result = await fragvars_queries.get_attachment.bind(
+            attachment=bound_applied
+        ).execute(id="1")
+        assert result.post is not None
+        node = result.post.attachment
+        assert bound_applied.read(node) is not None
+        assert unbound_applied.read(node) is not None
+        assert fragvars_queries.image_parts.read(node) is not None
+
+
+def test_with_args_rejects_extra_variables_and_keeps_assignment_immutable():
+    with pytest.raises(TypeError, match="id"):
+        cast("Callable[..., object]", fragvars_queries.image_parts.with_args)(
+            width=800, id="injected"
+        )
+
+    applied = fragvars_queries.image_parts.with_args(width=800)
+    with pytest.raises(TypeError):
+        cast("dict[str, object]", applied.fragment_args__)["id"] = "injected"
+
+
+def test_bindable_base_constructor_cannot_accept_fragment_variables():
+    constructor = cast("Callable[..., object]", GQLBindableFragment)
+    with pytest.raises(TypeError, match="_fragment_args"):
+        constructor(
+            fragment_name="ImageParts",
+            adapter=pydantic.TypeAdapter(pydantic.BaseModel),
+            _fragment_args={"id": "injected"},
+        )
+
+
+def test_generated_bound_cannot_be_created_without_binding_state():
+    constructor = cast("Callable[[], object]", fragvars_api.GetAttachmentBound)
+    with pytest.raises(TypeError):
+        constructor()
+
+
+def test_one_factory_filling_two_slots_with_different_values_is_rejected():
+    # The combination is enumerated from the schema -- both slots take an
+    # `ImageAttachment` fragment -- so it exists whether or not a call site
+    # writes it, and both applications type-check against their own slot's
+    # on-type base. What cannot exist is the request: the expanded document
+    # declares `$width` once, so the two values cannot both be sent, and the
+    # flat merge used to answer with whichever slot came last while
+    # the old per-application readers kept both applications' own values.
+    with pytest.raises(ValueError, match=r"conflicting values.*\$width") as exc_info:
+        fragvars_queries.get_attachment.bind(
+            attachment=fragvars_queries.image_parts.with_args(
+                width=cast("int", cast("object", "secret-left"))
+            ),
+            preview=fragvars_queries.image_parts.with_args(
+                width=cast("int", cast("object", "secret-right"))
+            ),
+        )
+    assert "secret-left" not in str(exc_info.value)
+    assert "secret-right" not in str(exc_info.value)
+
+
+def test_one_factory_filling_two_slots_disagreeing_on_an_omitted_arg_is_rejected():
+    # The same rule for the other way two applications part: `$size` is
+    # omittable, and leaving it out is not "no opinion" but a request of its
+    # own -- the variable stays out of `variables` so the schema's default
+    # applies. One declaration of `$size` cannot both be absent and be
+    # 'LARGE', and comparing only the keys both applications wrote let the
+    # one that named it answer for the one that did not.
+    with pytest.raises(ValueError, match=r"conflicting values.*\$size"):
+        fragvars_queries.get_attachment.bind(
+            attachment=fragvars_queries.image_parts.with_args(width=100),
+            preview=fragvars_queries.image_parts.with_args(width=100, size="LARGE"),
+        )
+
+
+async def test_one_factory_filling_two_slots_with_equal_values_binds(
+    httpserver: HTTPServer,
+):
+    # The other half of the rule above: agreeing applications ask for a
+    # request the document *can* express, so they bind, send the one value
+    # both spreads share, and stay two applications reading their own slot.
+    seen: list[tuple[dict[str, object], dict[str, str]]] = []
+    httpserver.expect_request("/graphql/", method="POST").respond_with_handler(
+        _fragment_vars_handler(seen)
+    )
+    async with use_package_client(
+        "bindings_fragment_vars", httpserver.url_for("/graphql/")
+    ):
+        first = fragvars_queries.image_parts.with_args(width=300)
+        second = fragvars_queries.image_parts.with_args(width=300)
+        bound = fragvars_queries.get_attachment.bind(attachment=first, preview=second)
+        result = await bound.execute(id="1")
+
+    variables, _headers = seen[0]
+    assert variables["width"] == 300
+    assert result.post is not None
+    attachment = first.read(result.post.attachment)
+    preview = second.read(result.post.preview)
+    assert attachment is not None
+    assert preview is not None
+    assert (attachment.url, preview.url) == ("img-300", "img-300")
+
+
+def test_binding_a_factory_itself_is_rejected():
+    # A factory carries no values -- `with_args` builds the application that does
+    # -- so binding it would send a document declaring `$width` with nothing
+    # to fill it, and the server would be the first to notice. The generated
+    # signatures already refuse it (no on-type base, and a literal tuple names
+    # the applied class), so the path this guards is the type-erased one:
+    # here, `bind` reached as a plain callable.
+    bind = cast("Callable[..., object]", fragvars_queries.get_attachment.bind)
+    with pytest.raises(TypeError):
+        bind(attachment=fragvars_queries.image_parts)
+
+
+def test_user_on_type_subclass_cannot_select_a_generated_combination():
+    class ForgedImageParts(
+        fragvars_api.OnImageAttachment[fragvars_api.ImagePartsData, Any]
+    ):
+        @override
+        def __init__(self) -> None:
+            super().__init__(
+                fragment_name="ImageParts",
+                definition_type=ForgedImageParts,
+                adapter=pydantic.TypeAdapter(fragvars_api.ImagePartsData),
+            )
+
+    with pytest.raises(LookupError, match="unknown bind combination"):
+        fragvars_queries.get_attachment.bind(attachment=ForgedImageParts())
+
+
+# Четыре позиции, два поведения. `$width` nullable без default, поэтому ведёт
+# себя как operation variable в `execute`: keyword обязателен, а `None`
+# отправляется как явный null. `$height`, `$pad` и `$slots` имеют schema default
+# и могут быть пропущены. `$slots` намеренно совпадает с именем runtime-модуля,
+# который импортирует generated code: допустимое GraphQL-имя не должно менять
+# разрешение sentinel в теле `with_args`.
 FRAGMENT_VAR_NULLABILITY_SCHEMA = """
 type Query {
     post(id: ID!): Post
@@ -1051,7 +1182,7 @@ type Post {
 union Attachment = ImageAttachment | LinkAttachment
 
 type ImageAttachment {
-    url(width: Int, height: Int! = 10, pad: Int = 7): String!
+    url(width: Int, height: Int! = 10, pad: Int = 7, slots: Int! = 13): String!
 }
 
 type LinkAttachment {
@@ -1079,12 +1210,10 @@ generated_package(
     image_parts = api_gql(
         """
         fragment ImageParts on ImageAttachment {
-            url(width: $width, height: $height, pad: $pad)
+            url(width: $width, height: $height, pad: $pad, slots: $slots)
         }
         """
     )
-
-    bound = get_attachment.bind(attachment=image_parts)
     ''',
 )
 
@@ -1106,20 +1235,18 @@ def _resolve_sized_url(
     width: int | None,
     height: int,
     pad: int | None,
+    slots: int,
 ) -> str:
-    return f"{width}-{height}-{pad}"
+    return f"{width}-{height}-{pad}-{slots}"
 
 
 async def test_only_the_defaulted_fragment_variable_may_be_omitted(
     httpserver: HTTPServer,
 ):
-    # `$height` and `$pad` carry a Python default and drop out of the payload
-    # when left at None, so the schema's own `= 10` and `= 7` apply; `$width`
-    # has no Python default and its None crosses the wire as a real null.
-    # Answering "may this be left out?" with "was the declared type relaxed?"
-    # made `$pad` -- nullable already, so never relaxed -- a required keyword
-    # whose None was sent as an explicit null, putting the schema's `= 7`
-    # out of reach.
+    # `$height` and `$pad` carry a schema default and drop out of the request
+    # when the keyword is left out of `with_args` entirely, so the schema's
+    # own `= 10` and `= 7` apply; `$width` has no default and an explicit
+    # `None` crosses the wire as a real null.
     async with gql_server(
         httpserver,
         "bindings_fragment_var_nullability",
@@ -1128,38 +1255,230 @@ async def test_only_the_defaulted_fragment_variable_may_be_omitted(
             "ImageAttachment": {"url": _resolve_sized_url},
         },
     ):
-        bound = nullability_queries.bound.with_args(width=None)
+        applied = nullability_queries.image_parts.with_args(width=None)
+        bound = nullability_queries.get_attachment.bind(attachment=applied)
         result = await bound.execute(id="1")
         assert result.post is not None
-        image = nullability_queries.image_parts.read(result.post.attachment)
+        image = applied.read(result.post.attachment)
         assert image is not None
-        assert image.url == "None-10-7"
+        assert image.url == "None-10-7-13"
 
-        sized = nullability_queries.bound.with_args(width=5, height=20, pad=1)
-        result = await sized.execute(id="1")
+        sized_applied = nullability_queries.image_parts.with_args(
+            width=5, height=20, pad=1, slots=21
+        )
+        sized_bound = nullability_queries.get_attachment.bind(attachment=sized_applied)
+        result = await sized_bound.execute(id="1")
         assert result.post is not None
-        image = nullability_queries.image_parts.read(result.post.attachment)
+        image = sized_applied.read(result.post.attachment)
         assert image is not None
-        assert image.url == "5-20-1"
+        assert image.url == "5-20-1-21"
 
-        # Each call states the whole set: `height`/`pad` left out of this one
-        # go back to the schema's defaults instead of carrying over from the
-        # call above, which is the only way "leave it out" stays sayable.
-        again = sized.with_args(width=5)
-        result = await again.execute(id="1")
+        # Каждая application задаёт весь набор: пропущенные здесь `height` и
+        # `pad` возвращаются к schema defaults независимо от предыдущей
+        # application. Повторное применение создаёт новую application и bind, а не
+        # изменяет предыдущий.
+        again_applied = nullability_queries.image_parts.with_args(width=5)
+        again_bound = nullability_queries.get_attachment.bind(attachment=again_applied)
+        result = await again_bound.execute(id="1")
         assert result.post is not None
-        image = nullability_queries.image_parts.read(result.post.attachment)
+        image = again_applied.read(result.post.attachment)
         assert image is not None
-        assert image.url == "5-10-7"
+        assert image.url == "5-10-7-13"
+
+        null_applied = nullability_queries.image_parts.with_args(width=5, pad=None)
+        null_bound = nullability_queries.get_attachment.bind(attachment=null_applied)
+        result = await null_bound.execute(id="1")
+        assert result.post is not None
+        image = null_applied.read(result.post.attachment)
+        assert image is not None
+        assert image.url == "5-10-None-13"
 
 
-async def test_a_defaulted_fragment_variable_is_not_required_but_a_nullable_one_is():
-    # `required_arg_names__` follows the same split: only `$width` is missing
-    # when nothing was passed, and no request is made.
-    with pytest.raises(
-        ValueError, match=r"^missing fragment variable values \(\$width\)"
+# --- two applications judged by the request, not by `==` --------------
+
+# A JSON scalar is the position where the distinction is visible: it accepts
+# `1` and `true` alike, so two applications can ask for genuinely different
+# requests with values Python calls equal (`1 == True`). Two slots of one
+# type, so a single factory fills both and their values meet in the merge.
+#
+# `[Upload]` is the position where the *other* erasure is visible: a file
+# serializes to `null` and rides in the multipart body instead, so what tells
+# two upload arguments apart is which file each carries and where it sits --
+# a list is the shortest value with two "wheres" in it.
+WIRE_SHAPE_SCHEMA = """
+scalar JSON
+scalar Upload
+
+type Query {
+    post(id: ID!): Post
+}
+
+type Post {
+    id: ID!
+    attachment: Attachment
+    preview: Attachment
+}
+
+union Attachment = ImageAttachment | LinkAttachment
+
+type ImageAttachment {
+    url(payload: JSON, files: [Upload]): String!
+}
+
+type LinkAttachment {
+    href: String!
+}
+"""
+
+generated_package(
+    "bindings_wire_shape",
+    schema=WIRE_SHAPE_SCHEMA,
+    scalars=UPLOAD_SCALARS,
+    queries='''
+    from tests.generated.bindings_wire_shape.gql.api import api_gql
+
+    get_attachment = api_gql(
+        """
+        query GetAttachment($id: ID!) {
+            post(id: $id) {
+                id
+                attachment @slot { __typename }
+                preview @slot { __typename }
+            }
+        }
+        """
+    )
+
+    image_parts = api_gql(
+        """
+        fragment ImageParts on ImageAttachment {
+            url(payload: $payload)
+        }
+        """
+    )
+
+    image_files = api_gql(
+        """
+        fragment ImageFiles on ImageAttachment {
+            url(files: $files)
+        }
+        """
+    )
+    ''',
+)
+
+from tests.generated.bindings_wire_shape import queries as wire_shape_queries
+
+
+@pytest.mark.parametrize(
+    ("left", "right"),
+    [(1, True), (0, False), (1, 1.0), ({"a": 1}, {"a": True})],
+    ids=["int-bool", "zero-false", "int-float", "nested"],
+)
+def test_applications_python_calls_equal_but_the_wire_does_not_are_rejected(
+    left: object, right: object
+):
+    # `1 == True` and `1 == 1.0` are true in Python and false on the wire: a
+    # JSON scalar receives `1`, `true` and `1.0` as three different values.
+    # Judging agreement by `==` therefore kept whichever application came
+    # first and sent its value for both spreads, which is the silent
+    # mismatch the whole merge check exists to prevent -- so the comparison
+    # is over what `serialize_variables` would send (`runtime._same_request`),
+    # nesting included.
+    with pytest.raises(ValueError, match=r"conflicting values.*\$payload"):
+        wire_shape_queries.get_attachment.bind(
+            attachment=wire_shape_queries.image_parts.with_args(payload=left),
+            preview=wire_shape_queries.image_parts.with_args(payload=right),
+        )
+
+
+def test_applications_agreeing_on_the_wire_bind_whatever_python_shape_they_have():
+    # The other side of judging by the request: a list and a tuple serialize
+    # to the same JSON array, so two applications spelling one value either
+    # way ask for the same request and bind.
+    bound = wire_shape_queries.get_attachment.bind(
+        attachment=wire_shape_queries.image_parts.with_args(payload=[1, 2]),
+        preview=wire_shape_queries.image_parts.with_args(payload=(1, 2)),
+    )
+    assert bound.fragment_args == {"payload": [1, 2]}
+
+
+async def test_mixed_mapping_keys_are_compared_after_wire_json_normalization(
+    httpserver: HTTPServer,
+):
+    # Python не сортирует вместе int и str keys, а HTTP JSON encoder сначала
+    # превращает оба в строки имён JSON object. Две applications с этим value
+    # задают один request и обязаны bind-иться; execute доказывает, что сравнение
+    # и transport используют одну normalized shape.
+    seen: list[dict[str, object]] = []
+
+    def handler(request: Request) -> Response:
+        payload = GraphQLRequest.model_validate_json(request.get_data())
+        seen.append(payload.variables or {})
+        attachment = {"__typename": "ImageAttachment", "url": "ok"}
+        body = {
+            "data": {
+                "post": {
+                    "id": "1",
+                    "attachment": attachment,
+                    "preview": dict(attachment),
+                }
+            }
+        }
+        return Response(json.dumps(body), status=200, mimetype="application/json")
+
+    httpserver.expect_request("/graphql/", method="POST").respond_with_handler(handler)
+    async with use_package_client(
+        "bindings_wire_shape", httpserver.url_for("/graphql/")
     ):
-        _ = await nullability_queries.bound.execute(id="1")
+        value = {1: "a", "2": "b"}
+        bound = wire_shape_queries.get_attachment.bind(
+            attachment=wire_shape_queries.image_parts.with_args(payload=value),
+            preview=wire_shape_queries.image_parts.with_args(payload=dict(value)),
+        )
+        await bound.execute(id="1")
+
+    assert seen == [{"id": "1", "payload": {"1": "a", "2": "b"}}]
+
+
+def test_one_file_offered_at_two_places_is_two_requests():
+    # The same file is not the same request when the two applications put it
+    # somewhere else: `[file, None]` and `[None, file]` have identical JSON
+    # (`[null, null]`, the file rides in the multipart body) and identical
+    # file identity, so a comparison carrying only "which file" called them
+    # one request -- the merge kept the first, and the second slot's spread
+    # asked for position 1 while the map that went out named position 0.
+    # Nothing was raised and nothing was wrong on the wire to see.
+    one = FileVar(b"one", filename="one.txt")
+    with pytest.raises(ValueError, match=r"conflicting values.*\$files"):
+        wire_shape_queries.get_attachment.bind(
+            attachment=wire_shape_queries.image_files.with_args(files=[one, None]),
+            preview=wire_shape_queries.image_files.with_args(files=[None, one]),
+        )
+
+
+def test_one_file_offered_at_the_same_place_twice_is_one_request():
+    # The positive twin, and what keeps the path from being the whole answer:
+    # two applications naming the same file at the same place ask for one
+    # request and bind, with the file itself carried through to `execute`.
+    one = FileVar(b"one", filename="one.txt")
+    bound = wire_shape_queries.get_attachment.bind(
+        attachment=wire_shape_queries.image_files.with_args(files=[one, None]),
+        preview=wire_shape_queries.image_files.with_args(files=[one, None]),
+    )
+    assert bound.fragment_args == {"files": [one, None]}
+
+
+def test_two_files_swapped_between_two_places_are_two_requests():
+    # The path alone is no more the answer than the identity alone was: these
+    # two applications fill the same two positions, so the paths agree, and
+    # they differ only in which file each position carries.
+    one, two = FileVar(b"one", filename="one.txt"), FileVar(b"two", filename="two.txt")
+    with pytest.raises(ValueError, match=r"conflicting values.*\$files"):
+        wire_shape_queries.get_attachment.bind(
+            attachment=wire_shape_queries.image_files.with_args(files=[one, two]),
+            preview=wire_shape_queries.image_files.with_args(files=[two, one]),
+        )
 
 
 # --- subscription template ------------------------------------------
@@ -1305,7 +1624,7 @@ def _discovery_queries(*bind_lines: str) -> str:
     )
 
     # A second ImageAttachment fragment, distinct from `image_parts`: the
-    # list bind below must not reuse a fragment already bound alone to the
+    # tuple bind below must not reuse a fragment already bound alone to the
     # same slot elsewhere -- that combination is rejected.
     other_image_parts = api_gql(
         """
@@ -1319,32 +1638,59 @@ def _discovery_queries(*bind_lines: str) -> str:
     '''
 
 
-def test_undiscovered_bind_combination_raises_lookuperror_at_import(
+def test_undiscovered_tuple_bind_raises_lookuperror_at_import(
     test_project: ProjectBuilder,
 ):
+    # "Forgot to regenerate" now only reaches the multi-fragment
+    # combinations: every single-fragment and empty combination comes from the
+    # schema, so nothing a caller spells with one fragment per slot can be
+    # missing. A tuple is still written by a call site alone, so a tuple
+    # nobody wrote is still a combination the dispatch table has never been
+    # given.
     test_project.prepare(
         schema=DISCOVERY_SCHEMA,
         queries=_discovery_queries(
-            "bound = get_attachment.bind(attachment=image_parts)",
-            "both = get_attachment.bind(attachment=[other_image_parts, link_parts])",
+            "both = get_attachment.bind(attachment=(other_image_parts, link_parts))",
         ),
     )
     _ = test_project.generate_and_import()
 
     # Same fragment/template literal text (still resolvable through the
-    # already-generated dispatch dicts) but a *different* bind combination --
-    # one the generated package's `_..._GQL_BIND_DISPATCH` was never given.
-    # Rewriting queries.py without regenerating and re-importing reproduces
-    # exactly the "call site changed, forgot to regenerate" mistake this
-    # error exists to catch.
+    # already-generated dispatch dicts) but a *different* list. Rewriting
+    # queries.py without regenerating and re-importing reproduces exactly the
+    # "call site changed, forgot to regenerate" mistake this error exists to
+    # catch.
     test_project.write_file(
         test_project.root / f"{test_project.package}/queries.py",
-        _discovery_queries("bound = get_attachment.bind(attachment=link_parts)"),
+        _discovery_queries(
+            "both = get_attachment.bind(attachment=(image_parts, link_parts))"
+        ),
     )
     importlib.invalidate_caches()
     test_project.clear_modules()
     with pytest.raises(LookupError, match="unknown bind combination"):
         importlib.import_module(f"{test_project.package}.queries")
+
+
+def test_a_bind_the_scan_cannot_read_is_sent_to_the_ignored_binds_file(
+    test_project: ProjectBuilder,
+):
+    # The other way into the same `LookupError`, and the reason its message
+    # names two: here the combination *is* written, on a call no scan can
+    # read -- the template is the value under a dict key, which is a runtime
+    # question. Nothing is generated for it, so advising a regeneration alone
+    # sends the reader after a fix that changes nothing; the call is recorded
+    # in `ignored_binds.json` instead (`test_bind_discovery` pins that
+    # artifact), and the message has to say so.
+    test_project.prepare(
+        schema=DISCOVERY_SCHEMA,
+        queries=_discovery_queries(
+            "templates = {'q': get_attachment}",
+            "both = templates['q'].bind(attachment=(image_parts, link_parts))",
+        ),
+    )
+    with pytest.raises(LookupError, match=r"ignored_binds\.json"):
+        _ = test_project.generate_and_import()
 
 
 # --- the same fragment bound into two different templates ----------
@@ -1445,16 +1791,14 @@ async def test_same_fragment_bound_into_two_templates_reads_each_result(
 # --- a template with no binds ---------------------------------------
 
 
-def test_bindless_template_imports_cleanly_and_bind_raises_lookuperror(
+def test_a_template_no_call_site_binds_is_bindable_anyway(
     test_project: ProjectBuilder,
 ):
-    # `get_highlight` has no `.bind()` anywhere in the package -- generation
-    # and import must still succeed (a template is a real, standalone class
-    # even with an empty dispatch table). `image_parts` is bind-reachable
-    # (bound to the *other* template), so it is a real GQLFragment handle;
-    # calling get_highlight.bind() with it still misses the empty dispatch
-    # table and must raise, the same LookupError shape as any other unknown
-    # combination.
+    # `get_highlight` has no `.bind()` anywhere in the package, and binding it
+    # still works: the combinations come from the schema, so a helper handed a
+    # fragment as a parameter finds a text for it. This is the whole point of
+    # the redesign, and the case that used to raise `LookupError`. A list is
+    # still the one shape a call site has to write, so that one still raises.
     test_project.prepare(
         schema=TWO_TEMPLATES_SCHEMA,
         queries="""
@@ -1479,6 +1823,14 @@ def test_bindless_template_imports_cleanly_and_bind_raises_lookuperror(
             '''
         )
 
+        link_parts = api_gql(
+            '''
+            fragment LinkParts on LinkAttachment {
+                href
+            }
+            '''
+        )
+
         get_highlight = api_gql(
             '''
             query GetHighlight($id: ID!) {
@@ -1495,9 +1847,13 @@ def test_bindless_template_imports_cleanly_and_bind_raises_lookuperror(
     )
     _api_module, queries_module = test_project.generate_and_import()
     fragment = queries_module.image_parts  # pyright: ignore[reportAny]
+    other = queries_module.link_parts  # pyright: ignore[reportAny]
     get_highlight = queries_module.get_highlight  # pyright: ignore[reportAny]
+    bound = get_highlight.bind(highlight=fragment)  # pyright: ignore[reportAny]
+    [reader] = bound.slot_readers["highlight"]  # pyright: ignore[reportAny]
+    assert type(reader.definition) is type(fragment)  # pyright: ignore[reportAny]
     with pytest.raises(LookupError, match="unknown bind combination"):
-        get_highlight.bind(highlight=fragment)  # pyright: ignore[reportAny]
+        get_highlight.bind(highlight=(fragment, other))  # pyright: ignore[reportAny]
 
 
 # --- statically excluded slot rule still enforced with a bind -----
@@ -1629,7 +1985,7 @@ generated_package(
         """
     )
 
-    bound = get_attachment.bind(attachment=[image_parts, link_parts])
+    bound = get_attachment.bind(attachment=(image_parts, link_parts))
     ''',
 )
 
@@ -1685,7 +2041,7 @@ async def test_a_fragment_spread_under_a_field_stays_readable_through_its_owner(
     httpserver: HTTPServer,
 ):
     # `ThumbAlt`'s `alt` arrives under `thumb`, never on the slot's root
-    # payload. Offering it as a slot handle validated it against the root and
+    # payload. Offering it as a readable definition validated it against the root and
     # failed every response; its data is reached through `ImageParts`'s own
     # model instead, and asking the slot for it is a wiring error.
     async with gql_server(
@@ -1701,3 +2057,102 @@ async def test_a_fragment_spread_under_a_field_stays_readable_through_its_owner(
         assert image.thumb.alt == "a"
         with pytest.raises(ValueError, match=r"'ThumbAlt' is not part of"):
             read_type_erased(shape_queries.thumb_alt, node)
+
+
+# --- a brick reached through two tuple elements of different types ---
+
+TWO_TYPENAME_BRICK_SCHEMA = """
+type Query {
+    post(id: ID!): Post
+}
+
+type Post {
+    id: ID!
+    attachment: Attachment
+}
+
+interface Node {
+    id: ID!
+}
+
+type ImageAttachment implements Node {
+    id: ID!
+    url: String!
+}
+
+type LinkAttachment implements Node {
+    id: ID!
+    href: String!
+}
+
+union Attachment = ImageAttachment | LinkAttachment
+"""
+
+generated_package(
+    "bindings_two_typename_brick",
+    schema=TWO_TYPENAME_BRICK_SCHEMA,
+    queries='''
+    from tests.generated.bindings_two_typename_brick.gql.api import api_gql
+
+    node_id = api_gql(
+        """
+        fragment NodeId on Node {
+            id
+        }
+        """
+    )
+
+    image_parts = api_gql(
+        """
+        fragment ImageParts on ImageAttachment {
+            url
+            ...NodeId
+        }
+        """
+    )
+
+    link_parts = api_gql(
+        """
+        fragment LinkParts on LinkAttachment {
+            href
+            ...NodeId
+        }
+        """
+    )
+
+    get_attachment = api_gql(
+        """
+        query GetAttachment($id: ID!) {
+            post(id: $id) {
+                id
+                attachment @slot { __typename }
+            }
+        }
+        """
+    )
+
+    bound = get_attachment.bind(attachment=(image_parts, link_parts))
+    ''',
+)
+
+from tests.generated.bindings_two_typename_brick import queries as two_typename_queries
+
+
+def test_a_brick_reached_through_two_tuple_elements_keeps_both_typenames():
+    # `readable_fragments` unions the typenames a brick is reachable at over
+    # every path inside one binding. The table has to carry that union, not
+    # recompute it per tuple element -- otherwise the brick reads back `None`
+    # on a payload that genuinely carries its fields, for whichever typename
+    # the table forgot. `NodeId` is spread by both `ImageParts` and
+    # `LinkParts`, which cover the slot's two disjoint runtime types, so a
+    # bind naming both tuple elements is the only way to observe the union
+    # rather than either single path's narrower set.
+    bound = two_typename_queries.get_attachment.bind(
+        attachment=(two_typename_queries.image_parts, two_typename_queries.link_parts)
+    )
+    brick = next(
+        reader
+        for reader in bound.slot_readers["attachment"]
+        if type(reader.definition) is type(two_typename_queries.node_id)
+    )
+    assert brick.typenames == frozenset({"ImageAttachment", "LinkAttachment"})

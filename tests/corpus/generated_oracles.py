@@ -15,13 +15,17 @@ against the schema it wrote them from.
 import inspect
 import symtable
 import typing
+from collections.abc import Iterator
 from pathlib import Path
 from types import ModuleType
+from typing import TypeAliasType
 from typing import cast
 
 import graphql
 
-from iron_gql.codegen.render import BIND_BODY_FREE_NAMES
+from iron_gql.codegen.render import method_body_fixed_names
+from iron_gql.runtime import BoundSpec
+from iron_gql.runtime import GQLTemplate
 
 
 def _namespace(module: ModuleType) -> dict[str, object]:
@@ -107,24 +111,32 @@ def assert_method_namespaces_are_closed(module: ModuleType) -> None:
     #
     # 1. No method body binds a local at all. Then a method's namespace is its
     #    parameters and nothing else, and no parameter can shadow anything.
-    # 2. Every name a body reads from an enclosing scope and that could be
-    #    the spelling of a generated parameter is claimed. "Could be" is
-    #    "holds no upper-case letter": everything the generator reaches for at
-    #    module scope it spells in upper case (`API_CLIENT`, the dispatch
-    #    dicts) or in PascalCase (every generated class), so the names left
-    #    over are the modules it imports -- which is exactly what the claim
-    #    list is for.
+    # 2. Every name a body reads from an enclosing scope is claimed. No
+    #    spelling is exempt from this: `to_snake_fn` is a documented hook, and
+    #    nothing stops one from returning `_API_GQL_CAST` for a variable named
+    #    that -- which is how a parameter came to shadow the cast alias its own
+    #    body calls, and `execute` raised "'str' object is not callable". The
+    #    generated classes are the one kind of name checked by shape rather
+    #    than by list: each is claimed against the single scope that reaches
+    #    for it (`render.bind_body_free_names` and the `execute` lists beside
+    #    it), and a symbol table says which names a body reads without saying
+    #    which artifact wrote the body.
     #
     # Methods only: the module-level `api_gql` takes no name from the schema,
     # so what its body binds is nobody's business but its own.
-    claimed = {name for name, _ in BIND_BODY_FREE_NAMES}
+    package_name = module.__name__.rsplit(".", maxsplit=1)[-1]
+    claimed = method_body_fixed_names(package_name)
     problems: list[str] = []
     for label, function in _generated_methods(module):
         bound = sorted(set(function.get_locals()) - set(function.get_parameters()))
         if bound:
             problems.append(f"{label} binds {', '.join(bound)}")
         read = set(function.get_globals()) | set(function.get_frees())
-        unclaimed = sorted(name for name in read - claimed if name.lower() == name)
+        unclaimed = sorted(
+            name
+            for name in read - claimed
+            if not isinstance(getattr(module, name, None), (type, TypeAliasType))
+        )
         if unclaimed:
             problems.append(f"{label} reads unclaimed {', '.join(unclaimed)}")
     if problems:
@@ -138,27 +150,56 @@ def _generated_methods(module: ModuleType) -> list[tuple[str, symtable.Function]
     # (label, table) for every function written inside a generated class. A
     # class body's own table holds the methods it declares, so no name-based
     # guess about which functions are methods is needed.
+    #
+    # Every table, not just the module's own children: PEP 695 wraps a generic
+    # class or method in a "type parameters" table of its own and hangs the
+    # real one under it, so a walk of the top level alone sees only the
+    # non-generic classes. That is how every bound base's `execute` -- the one
+    # body in the package that reads `cast` -- stayed outside this check while
+    # it read an unclaimed name.
     source = Path(str(module.__file__)).read_text(encoding="utf-8")
     top = symtable.symtable(source, str(module.__file__), "exec")
     return [
         (f"{owner.get_name()}.{member.get_name()}", member)
-        for owner in top.get_children()
+        for owner in _tables(top)
         if isinstance(owner, symtable.Class)
         for member in owner.get_children()
         if isinstance(member, symtable.Function)
     ]
 
 
+def _tables(table: symtable.SymbolTable) -> Iterator[symtable.SymbolTable]:
+    for child in table.get_children():
+        yield child
+        yield from _tables(child)
+
+
 def assert_documents_are_valid(
     module: ModuleType, schema: graphql.GraphQLSchema
 ) -> None:
-    # Every document the generator synthesized -- a bound operation's expanded
-    # source above all, where fragments are spliced into slots and variables
-    # are invented for them -- has to be a valid document against the schema it
-    # was built from. The IR tests can only say the generator agrees with
-    # itself; graphql-core is the authority on whether the result is GraphQL.
+    # Every document the generator synthesized -- a combination's expanded
+    # source, where fragments are spliced into slots and variables are invented
+    # for them -- has to be a valid document against the schema it was built
+    # from. The IR tests can only say the generator agrees with itself, and
+    # `bindings.expand_binding`'s own `graphql.validate` runs on the AST before
+    # anything is rendered; graphql-core reading what actually reached the
+    # module is a different question, and this is where it is asked.
+    documents = _documents(module)
+    if _template_names(module) and not documents:
+        # A silent zero is how this oracle went vacuous once already: it used
+        # to read a per-combination `exec_source__` ClassVar, that ClassVar
+        # stopped being generated, and every package kept "passing" with
+        # nothing checked. A template always has at least the empty
+        # combination, so "no documents" can only mean this walk has lost
+        # track of where they are kept.
+        msg = (
+            f"generated module {module.__name__} declares templates "
+            f"({', '.join(_template_names(module))}) but this oracle found no "
+            "document to validate -- the bind dispatch table has moved"
+        )
+        raise AssertionError(msg)
     problems: list[str] = []
-    for name, source in _documents(module):
+    for name, source in documents:
         errors = graphql.validate(schema, graphql.parse(source))
         problems.extend(f"{name}: {error}" for error in errors)
     if problems:
@@ -168,16 +209,30 @@ def assert_documents_are_valid(
         raise AssertionError(msg)
 
 
+def _template_names(module: ModuleType) -> list[str]:
+    return sorted(
+        name
+        for name, value in _namespace(module).items()
+        if inspect.isclass(value) and issubclass(value, GQLTemplate)
+    )
+
+
 def _documents(module: ModuleType) -> list[tuple[str, str]]:
-    found: list[tuple[str, str]] = []
-    for name, value in _namespace(module).items():
-        if not inspect.isclass(value):
-            continue
-        # `exec_source__` is the one place a generated class keeps the document
-        # it will send; a subclass inherits its base's, so only the class that
-        # declares it is asked.
-        own = cast("dict[str, object]", dict(value.__dict__))
-        source = own.get("exec_source__")
-        if isinstance(source, str):
-            found.append((name, source))
-    return found
+    # The package's bind dispatch table is where a combination's document is
+    # kept: one row per combination, the document its first element (see
+    # `runtime.BoundSpec`). Found by the suffix the renderer spells it with,
+    # because the rest of the name is the package's own
+    # (`render._module_binding_name`).
+    #
+    # Plain operations are deliberately absent: their document is a literal
+    # inside `execute`'s body, reachable by no reflection, and it is the
+    # statement the developer wrote rather than one the generator synthesized.
+    tables = [
+        cast("dict[object, BoundSpec]", value)
+        for name, value in _namespace(module).items()
+        if name.endswith("_GQL_BIND_DISPATCH") and isinstance(value, dict)
+    ]
+    if not tables:
+        return []
+    [table] = tables
+    return [(str(key), exec_source) for key, (exec_source, _readers) in table.items()]

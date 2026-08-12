@@ -1,0 +1,34 @@
+type Query {
+    post(id: ID!): Post
+    page(id: ID!): Page
+}
+
+type Post {
+    id: ID!
+    attachment: Attachment
+}
+
+type Page {
+    id: ID!
+    attachment: Media
+}
+
+union Attachment = ImageAttachment | LinkAttachment
+
+type ImageAttachment {
+    url: String!
+}
+
+type LinkAttachment {
+    href: String!
+}
+
+union Media = VideoMedia | AudioMedia
+
+type VideoMedia {
+    videoUrl: String!
+}
+
+type AudioMedia {
+    audioUrl: String!
+}

@@ -35,5 +35,5 @@ other_parts = api_gql(
     """
 )
 
-both = get_attachment.bind(attachment=[image_parts, link_parts])
+both = get_attachment.bind(attachment=(image_parts, link_parts))
 foreign = get_attachment.bind(attachment=other_parts)

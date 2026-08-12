@@ -10,7 +10,7 @@ type Post {
 union Attachment = ImageAttachment | LinkAttachment
 
 type ImageAttachment {
-    url(width: Int, height: Int! = 10, pad: Int = 7): String!
+    url(width: Int, height: Int! = 10, pad: Int = 7, slots: Int! = 13): String!
 }
 
 type LinkAttachment {

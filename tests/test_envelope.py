@@ -357,7 +357,7 @@ CASES = [
 
         bound = s.bind(user=f)
         """,
-        "expect": "reject",
+        "expect": "ok",
     },
 ]
 

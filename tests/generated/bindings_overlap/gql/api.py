@@ -9,13 +9,17 @@ import datetime
 from abc import ABC
 from abc import abstractmethod
 from collections.abc import AsyncGenerator
+from collections.abc import Callable
 from collections.abc import Sequence
 from contextlib import AbstractAsyncContextManager
 from typing import Annotated
+from typing import Any
 from typing import ClassVar
 from typing import Literal
 from typing import Never
-from typing import Self
+from typing import TypeVar
+from typing import cast
+from typing import final
 from typing import overload
 from typing import override
 
@@ -34,6 +38,8 @@ from tests.generated.bindings_overlap.settings import GRAPHQL_URL
 API_CLIENT = runtime.AsyncGQLClient(
     base_url=GRAPHQL_URL,
 )
+
+_API_GQL_CAST = cast
 
 
 class GQLModel(pydantic.BaseModel):
@@ -87,60 +93,89 @@ class ImageSizeData(GQLOpenModel):
     width: int
 
 
-class ImageCaption(slots.GQLFragment[ImageCaptionData]):
-    pass
+TModel = TypeVar("TModel", bound=pydantic.BaseModel, covariant=True)
+TReads = TypeVar("TReads", contravariant=True)
 
 
-IMAGE_CAPTION = ImageCaption(
-    fragment_name='ImageCaption',
-    adapter=pydantic.TypeAdapter(ImageCaptionData),
-)
-
-
-class ImageSize(slots.GQLFragment[ImageSizeData]):
-    pass
-
-
-IMAGE_SIZE = ImageSize(
-    fragment_name='ImageSize',
-    adapter=pydantic.TypeAdapter(ImageSizeData),
-)
-
-
-class GetAttachmentBound[TResult](runtime.GQLBoundOperation, ABC):
+class OnImageAttachment(slots.GQLBindableFragment[TModel, TReads], ABC):
     @abstractmethod
-    async def execute(self, *, id: builtins.str) -> TResult:
-        ...
+    def __init__(
+        self,
+        *,
+        fragment_name: str,
+        definition_type: type[slots.GQLFragment[
+            TModel, TReads,
+        ]],
+        adapter: pydantic.TypeAdapter[TModel],
+    ) -> None:
+        super().__init__(
+            fragment_name=fragment_name,
+            definition_type=definition_type,
+            adapter=adapter,
+        )
 
 
-class GetAttachmentWithAttachmentImageCaptionImageSize(GetAttachmentBound[GetAttachmentResult[ImageCaption | ImageSize]]):
-    # See: queries.py:32
-    exec_source__ = 'query GetAttachment($id: ID!) {\n  post(id: $id) {\n    id\n    attachment {\n      __typename\n      ...ImageCaption\n      ...ImageSize\n    }\n  }\n}\n\nfragment ImageCaption on ImageAttachment {\n  caption\n}\n\nfragment ImageSize on ImageAttachment {\n  width\n}'
-    slot_handles__ = {"attachment": (slots.SlotHandle(IMAGE_CAPTION, frozenset({'ImageAttachment'})), slots.SlotHandle(IMAGE_SIZE, frozenset({'ImageAttachment'})))}
+@final
+class ImageCaption(OnImageAttachment[ImageCaptionData, "ImageCaption"]):
+    adapter__: ClassVar[pydantic.TypeAdapter[ImageCaptionData]] = pydantic.TypeAdapter(ImageCaptionData)
+
     @override
-    async def execute(self, *, id: builtins.str) -> GetAttachmentResult[ImageCaption | ImageSize]:
+    def __init__(self) -> None:
+        super().__init__(
+            fragment_name='ImageCaption',
+            definition_type=ImageCaption,
+            adapter=self.adapter__,
+        )
+
+
+@final
+class ImageSize(OnImageAttachment[ImageSizeData, "ImageSize"]):
+    adapter__: ClassVar[pydantic.TypeAdapter[ImageSizeData]] = pydantic.TypeAdapter(ImageSizeData)
+
+    @override
+    def __init__(self) -> None:
+        super().__init__(
+            fragment_name='ImageSize',
+            definition_type=ImageSize,
+            adapter=self.adapter__,
+        )
+
+
+class GetAttachmentBound[TResult: pydantic.BaseModel](runtime.GQLBoundOperation):
+    async def execute(self, *, id: builtins.str) -> TResult:
         return await API_CLIENT.query(
-            GetAttachmentResult[ImageCaption | ImageSize],
-            self.exec_source__,
-            variables={"id": id, **self.fragment_args__()},
+            _API_GQL_CAST("type[TResult]", GetAttachmentResult),
+            self.exec_source,
+            variables={"id": id, **self.fragment_args},
             headers=self.headers,
-            slot_handles=self.slot_handles__,
+            slot_readers=self.slot_readers,
         )
 
 
 class GetAttachment(runtime.GQLTemplate):
     @overload
-    def bind(self, *, attachment: Sequence[Never] = ()) -> Never: ...
+    def bind(self, *, attachment: Sequence[Never] = ()) -> GetAttachmentBound[GetAttachmentResult[Never]]: ...
     @overload
-    def bind(self, *, attachment: Sequence[ImageCaption | ImageSize]) -> GetAttachmentWithAttachmentImageCaptionImageSize: ...
-    def bind(self, *, attachment: slots.GQLFragment[pydantic.BaseModel] | Sequence[slots.GQLFragment[pydantic.BaseModel]] = ()) -> runtime.GQLBoundOperation:
-        if _API_GQL_BIND_DISPATCH.get(slots.bind_key('GetAttachment', {'attachment': attachment})) is None:
-            raise LookupError("unknown bind combination for GetAttachment; every fragment a bind passes must be a discovered statement - check the call site, then regenerate the package")
-        return _API_GQL_BIND_DISPATCH[slots.bind_key('GetAttachment', {'attachment': attachment})]()
+    def bind[TModelAttachment: pydantic.BaseModel, TReadsAttachment](self, *, attachment: OnImageAttachment[TModelAttachment, TReadsAttachment]) -> GetAttachmentBound[GetAttachmentResult[OnImageAttachment[TModelAttachment, TReadsAttachment] | TReadsAttachment]]: ...
+    @overload
+    def bind[TFillAttachment1: (ImageCaption, ImageSize), TFillAttachment2: (ImageCaption, ImageSize)](self, *, attachment: tuple[TFillAttachment1, TFillAttachment2]) -> GetAttachmentBound[GetAttachmentResult[TFillAttachment1 | TFillAttachment2]]: ...
+    def bind(self, *, attachment: slots.GQLBindableFragment[pydantic.BaseModel, Any] | Sequence[slots.GQLBindableFragment[pydantic.BaseModel, Any]] = ()) -> runtime.GQLBoundOperation:
+        if _API_GQL_BIND_DISPATCH.get(slots.dispatch_key('GetAttachment', {'attachment': attachment})) is None:
+            raise LookupError("unknown bind combination for GetAttachment; single-fragment and empty combinations are generated from the schema, so this is a tuple combination no call site writes literally - write it, then regenerate the package. A call whose template is an expression the scan cannot follow is never read either: those are listed, with the reason, in the debug run's ignored_binds.json")
+        return GetAttachmentBound[GetAttachmentResult].bound__(
+            _API_GQL_BIND_DISPATCH[slots.dispatch_key('GetAttachment', {'attachment': attachment})], {'attachment': slots.as_bindable_fragments(attachment)},
+        )
 
 
-_API_GQL_BIND_DISPATCH: dict[slots.BindKey, type[runtime.GQLBoundOperation]] = {
-    ('GetAttachment', (('attachment', ('ImageCaption', 'ImageSize')),)): GetAttachmentWithAttachmentImageCaptionImageSize,
+_API_GQL_BIND_DISPATCH: dict[slots.DispatchKey, runtime.BoundSpec] = {
+    # See: queries.py:19
+    ('GetAttachment', ()): ('query GetAttachment($id: ID!) {\n  post(id: $id) {\n    id\n    attachment {\n      __typename\n    }\n  }\n}', {"attachment": ()}),
+    # See: queries.py:19, queries.py:3
+    ('GetAttachment', (('attachment', (ImageCaption,)),)): ('query GetAttachment($id: ID!) {\n  post(id: $id) {\n    id\n    attachment {\n      __typename\n      ...ImageCaption\n    }\n  }\n}\n\nfragment ImageCaption on ImageAttachment {\n  caption\n}', {"attachment": ((ImageCaption, frozenset({'ImageAttachment'})),)}),
+    # See: queries.py:19, queries.py:11
+    ('GetAttachment', (('attachment', (ImageSize,)),)): ('query GetAttachment($id: ID!) {\n  post(id: $id) {\n    id\n    attachment {\n      __typename\n      ...ImageSize\n    }\n  }\n}\n\nfragment ImageSize on ImageAttachment {\n  width\n}', {"attachment": ((ImageSize, frozenset({'ImageAttachment'})),)}),
+    # See: queries.py:32
+    ('GetAttachment', (('attachment', (ImageCaption, ImageSize)),)): ('query GetAttachment($id: ID!) {\n  post(id: $id) {\n    id\n    attachment {\n      __typename\n      ...ImageCaption\n      ...ImageSize\n    }\n  }\n}\n\nfragment ImageCaption on ImageAttachment {\n  caption\n}\n\nfragment ImageSize on ImageAttachment {\n  width\n}', {"attachment": ((ImageCaption, frozenset({'ImageAttachment'})), (ImageSize, frozenset({'ImageAttachment'})))}),
 }
 
 
@@ -151,12 +186,12 @@ def api_gql(stmt: Literal['\n    fragment ImageSize on ImageAttachment {\n      
 @overload
 def api_gql(stmt: Literal['\n    query GetAttachment($id: ID!) {\n        post(id: $id) {\n            id\n            attachment @slot { __typename }\n        }\n    }\n    ']) -> GetAttachment: ...
 @overload
-def api_gql(stmt: str) -> runtime.GQLOperation | slots.GQLFragment[pydantic.BaseModel] | runtime.GQLTemplate: ...
+def api_gql(stmt: str) -> runtime.GQLOperation | slots.GQLFragment[pydantic.BaseModel, Any] | runtime.GQLTemplate: ...
 
 
-_API_GQL_FRAGMENTS: dict[str, slots.GQLFragment[pydantic.BaseModel]] = {
-    '\n    fragment ImageCaption on ImageAttachment {\n        caption\n    }\n    ': IMAGE_CAPTION,
-    '\n    fragment ImageSize on ImageAttachment {\n        width\n    }\n    ': IMAGE_SIZE,
+_API_GQL_FRAGMENTS: dict[str, type[slots.GQLFragment[pydantic.BaseModel, Any]]] = {
+    '\n    fragment ImageCaption on ImageAttachment {\n        caption\n    }\n    ': ImageCaption,
+    '\n    fragment ImageSize on ImageAttachment {\n        width\n    }\n    ': ImageSize,
 }
 
 
@@ -165,10 +200,10 @@ _API_GQL_TEMPLATES: dict[str, type[runtime.GQLTemplate]] = {
 }
 
 
-def api_gql(stmt: str) -> runtime.GQLOperation | slots.GQLFragment[pydantic.BaseModel] | runtime.GQLTemplate:
-    fragment = _API_GQL_FRAGMENTS.get(stmt)
-    if fragment is not None:
-        return fragment
+def api_gql(stmt: str) -> runtime.GQLOperation | slots.GQLFragment[pydantic.BaseModel, Any] | runtime.GQLTemplate:
+    fragment_cls = _API_GQL_FRAGMENTS.get(stmt)
+    if fragment_cls is not None:
+        return _API_GQL_CAST("Callable[[], slots.GQLFragment[pydantic.BaseModel, Any]]", fragment_cls)()
     template_cls = _API_GQL_TEMPLATES.get(stmt)
     if template_cls is not None:
         return template_cls()

@@ -9,13 +9,17 @@ import datetime
 from abc import ABC
 from abc import abstractmethod
 from collections.abc import AsyncGenerator
+from collections.abc import Callable
 from collections.abc import Sequence
 from contextlib import AbstractAsyncContextManager
 from typing import Annotated
+from typing import Any
 from typing import ClassVar
 from typing import Literal
 from typing import Never
-from typing import Self
+from typing import TypeVar
+from typing import cast
+from typing import final
 from typing import overload
 from typing import override
 
@@ -34,6 +38,8 @@ from tests.generated.type_matrix.settings import GRAPHQL_URL
 API_CLIENT = runtime.AsyncGQLClient(
     base_url=GRAPHQL_URL,
 )
+
+_API_GQL_CAST = cast
 
 
 class GQLModel(pydantic.BaseModel):
@@ -142,53 +148,85 @@ class Defaults(runtime.GQLOperation):
         )
 
 
-class SizeParts(slots.GQLFragment[SizePartsData]):
-    pass
+TModel = TypeVar("TModel", bound=pydantic.BaseModel, covariant=True)
+TReads = TypeVar("TReads", contravariant=True)
 
 
-SIZE_PARTS = SizeParts(
-    fragment_name='SizeParts',
-    adapter=pydantic.TypeAdapter(SizePartsData),
-)
-
-
-class SlottedBound[TResult](runtime.GQLBoundOperation, ABC):
+class OnEcho(slots.GQLBindableFragment[TModel, TReads], ABC):
     @abstractmethod
-    async def execute(self, *, payload: Payload) -> TResult:
-        ...
+    def __init__(
+        self,
+        *,
+        fragment_name: str,
+        definition_type: type[slots.GQLFragment[
+            TModel, TReads,
+        ]],
+        adapter: pydantic.TypeAdapter[TModel],
+    ) -> None:
+        super().__init__(
+            fragment_name=fragment_name,
+            definition_type=definition_type,
+            adapter=adapter,
+        )
 
 
-class SlottedWithEchoSizeParts(SlottedBound[SlottedResult[SizeParts]]):
-    # See: queries.py:40
-    exec_source__ = 'query Slotted($payload: Payload!, $frag_size: Size!, $frag_term: String) {\n  echo(payload: $payload) {\n    __typename\n    ...SizeParts\n  }\n}\n\nfragment SizeParts on Echo {\n  seen\n  tagged(size: $frag_size, term: $frag_term)\n}'
-    slot_handles__ = {"echo": (slots.SlotHandle(SIZE_PARTS, frozenset({'Echo'})),)}
-    required_arg_names__ = frozenset({'frag_size', 'frag_term'})
-    def with_args(self, *, frag_size: Size, frag_term: str | None) -> Self:
-        return self.with_args__({"frag_size": frag_size, "frag_term": frag_term})
+@final
+class SizeParts(slots.GQLFragment[SizePartsData, "_SizePartsApplied"]):
+    adapter__: ClassVar[pydantic.TypeAdapter[SizePartsData]] = pydantic.TypeAdapter(SizePartsData)
+
     @override
-    async def execute(self, *, payload: Payload) -> SlottedResult[SizeParts]:
+    def __init__(self) -> None:
+        super().__init__(
+            fragment_name='SizeParts',
+            definition_type=SizeParts,
+            adapter=self.adapter__,
+        )
+
+    def with_args(self, *, frag_size: Size, frag_term: str | None) -> _SizePartsApplied:
+        return _SizePartsApplied({"frag_size": frag_size, "frag_term": frag_term})
+
+
+@final
+class _SizePartsApplied(OnEcho[SizePartsData, "_SizePartsApplied"]):
+    @override
+    def __init__(self, fragment_args: dict[str, object], /) -> None:
+        super().__init__(
+            fragment_name='SizeParts',
+            definition_type=SizeParts,
+            adapter=SizeParts.adapter__,
+        )
+        self._set_fragment_args(fragment_args)
+
+
+class SlottedBound[TResult: pydantic.BaseModel](runtime.GQLBoundOperation):
+    async def execute(self, *, payload: Payload) -> TResult:
         return await API_CLIENT.query(
-            SlottedResult[SizeParts],
-            self.exec_source__,
-            variables={"payload": payload, **self.fragment_args__()},
+            _API_GQL_CAST("type[TResult]", SlottedResult),
+            self.exec_source,
+            variables={"payload": payload, **self.fragment_args},
             headers=self.headers,
-            slot_handles=self.slot_handles__,
+            slot_readers=self.slot_readers,
         )
 
 
 class Slotted(runtime.GQLTemplate):
     @overload
-    def bind(self, *, echo: Sequence[Never] = ()) -> Never: ...
+    def bind(self, *, echo: Sequence[Never] = ()) -> SlottedBound[SlottedResult[Never]]: ...
     @overload
-    def bind(self, *, echo: SizeParts | Sequence[SizeParts]) -> SlottedWithEchoSizeParts: ...
-    def bind(self, *, echo: slots.GQLFragment[pydantic.BaseModel] | Sequence[slots.GQLFragment[pydantic.BaseModel]] = ()) -> runtime.GQLBoundOperation:
-        if _API_GQL_BIND_DISPATCH.get(slots.bind_key('Slotted', {'echo': echo})) is None:
-            raise LookupError("unknown bind combination for Slotted; every fragment a bind passes must be a discovered statement - check the call site, then regenerate the package")
-        return _API_GQL_BIND_DISPATCH[slots.bind_key('Slotted', {'echo': echo})]()
+    def bind[TModelEcho: pydantic.BaseModel, TReadsEcho](self, *, echo: OnEcho[TModelEcho, TReadsEcho]) -> SlottedBound[SlottedResult[OnEcho[TModelEcho, TReadsEcho] | TReadsEcho]]: ...
+    def bind(self, *, echo: slots.GQLBindableFragment[pydantic.BaseModel, Any] | Sequence[slots.GQLBindableFragment[pydantic.BaseModel, Any]] = ()) -> runtime.GQLBoundOperation:
+        if _API_GQL_BIND_DISPATCH.get(slots.dispatch_key('Slotted', {'echo': echo})) is None:
+            raise LookupError("unknown bind combination for Slotted; single-fragment and empty combinations are generated from the schema, so this is a tuple combination no call site writes literally - write it, then regenerate the package. A call whose template is an expression the scan cannot follow is never read either: those are listed, with the reason, in the debug run's ignored_binds.json")
+        return SlottedBound[SlottedResult].bound__(
+            _API_GQL_BIND_DISPATCH[slots.dispatch_key('Slotted', {'echo': echo})], {'echo': slots.as_bindable_fragments(echo)},
+        )
 
 
-_API_GQL_BIND_DISPATCH: dict[slots.BindKey, type[runtime.GQLBoundOperation]] = {
-    ('Slotted', (('echo', ('SizeParts',)),)): SlottedWithEchoSizeParts,
+_API_GQL_BIND_DISPATCH: dict[slots.DispatchKey, runtime.BoundSpec] = {
+    # See: queries.py:23
+    ('Slotted', ()): ('query Slotted($payload: Payload!) {\n  echo(payload: $payload) {\n    __typename\n  }\n}', {"echo": ()}),
+    # See: queries.py:23, queries.py:31
+    ('Slotted', (('echo', (_SizePartsApplied,)),)): ('query Slotted($payload: Payload!, $frag_size: Size!, $frag_term: String) {\n  echo(payload: $payload) {\n    __typename\n    ...SizeParts\n  }\n}\n\nfragment SizeParts on Echo {\n  seen\n  tagged(size: $frag_size, term: $frag_term)\n}', {"echo": ((SizeParts, frozenset({'Echo'})),)}),
 }
 
 
@@ -201,7 +239,7 @@ def api_gql(stmt: Literal['\n    fragment SizeParts on Echo {\n        seen\n   
 @overload
 def api_gql(stmt: Literal['\n    query Slotted($payload: Payload!) {\n        echo(payload: $payload) @slot { __typename }\n    }\n    ']) -> Slotted: ...
 @overload
-def api_gql(stmt: str) -> runtime.GQLOperation | slots.GQLFragment[pydantic.BaseModel] | runtime.GQLTemplate: ...
+def api_gql(stmt: str) -> runtime.GQLOperation | slots.GQLFragment[pydantic.BaseModel, Any] | runtime.GQLTemplate: ...
 
 
 _API_GQL_DISPATCH: dict[str, type[runtime.GQLOperation]] = {
@@ -210,8 +248,8 @@ _API_GQL_DISPATCH: dict[str, type[runtime.GQLOperation]] = {
 }
 
 
-_API_GQL_FRAGMENTS: dict[str, slots.GQLFragment[pydantic.BaseModel]] = {
-    '\n    fragment SizeParts on Echo {\n        seen\n        tagged(size: $frag_size, term: $frag_term)\n    }\n    ': SIZE_PARTS,
+_API_GQL_FRAGMENTS: dict[str, type[slots.GQLFragment[pydantic.BaseModel, Any]]] = {
+    '\n    fragment SizeParts on Echo {\n        seen\n        tagged(size: $frag_size, term: $frag_term)\n    }\n    ': SizeParts,
 }
 
 
@@ -220,13 +258,13 @@ _API_GQL_TEMPLATES: dict[str, type[runtime.GQLTemplate]] = {
 }
 
 
-def api_gql(stmt: str) -> runtime.GQLOperation | slots.GQLFragment[pydantic.BaseModel] | runtime.GQLTemplate:
+def api_gql(stmt: str) -> runtime.GQLOperation | slots.GQLFragment[pydantic.BaseModel, Any] | runtime.GQLTemplate:
     query_cls = _API_GQL_DISPATCH.get(stmt)
     if query_cls is not None:
         return query_cls()
-    fragment = _API_GQL_FRAGMENTS.get(stmt)
-    if fragment is not None:
-        return fragment
+    fragment_cls = _API_GQL_FRAGMENTS.get(stmt)
+    if fragment_cls is not None:
+        return _API_GQL_CAST("Callable[[], slots.GQLFragment[pydantic.BaseModel, Any]]", fragment_cls)()
     template_cls = _API_GQL_TEMPLATES.get(stmt)
     if template_cls is not None:
         return template_cls()

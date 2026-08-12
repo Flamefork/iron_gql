@@ -9,13 +9,17 @@ import datetime
 from abc import ABC
 from abc import abstractmethod
 from collections.abc import AsyncGenerator
+from collections.abc import Callable
 from collections.abc import Sequence
 from contextlib import AbstractAsyncContextManager
 from typing import Annotated
+from typing import Any
 from typing import ClassVar
 from typing import Literal
 from typing import Never
-from typing import Self
+from typing import TypeVar
+from typing import cast
+from typing import final
 from typing import overload
 from typing import override
 
@@ -34,6 +38,8 @@ from tests.generated.slots_multi.settings import GRAPHQL_URL
 API_CLIENT = runtime.AsyncGQLClient(
     base_url=GRAPHQL_URL,
 )
+
+_API_GQL_CAST = cast
 
 
 class GQLModel(pydantic.BaseModel):
@@ -122,136 +128,258 @@ class OwnerIdentityDataUserOwner(GQLOpenModel):
 type OwnerIdentityData = Annotated[OwnerIdentityDataTeamOwner | OwnerIdentityDataUserOwner, pydantic.Field(discriminator="typename__")]
 
 
+class AlbumSummaryData(GQLOpenModel):
+    id: builtins.str
+
+
 class LinkHrefData(GQLOpenModel):
     href: str
 
 
-class AlbumTitle(slots.GQLFragment[AlbumTitleData]):
-    pass
+TModel = TypeVar("TModel", bound=pydantic.BaseModel, covariant=True)
+TReads = TypeVar("TReads", contravariant=True)
 
 
-ALBUM_TITLE = AlbumTitle(
-    fragment_name='AlbumTitle',
-    adapter=pydantic.TypeAdapter(AlbumTitleData),
-)
-
-
-class AlbumCover(slots.GQLFragment[AlbumCoverData]):
-    pass
-
-
-ALBUM_COVER = AlbumCover(
-    fragment_name='AlbumCover',
-    adapter=pydantic.TypeAdapter(AlbumCoverData),
-)
-
-
-class OwnerIdentity(slots.GQLFragment[OwnerIdentityData]):
-    pass
-
-
-OWNER_IDENTITY = OwnerIdentity(
-    fragment_name='OwnerIdentity',
-    adapter=pydantic.TypeAdapter(OwnerIdentityData),
-)
-
-
-class LinkHref(slots.GQLFragment[LinkHrefData]):
-    pass
-
-
-LINK_HREF = LinkHref(
-    fragment_name='LinkHref',
-    adapter=pydantic.TypeAdapter(LinkHrefData),
-)
-
-
-class ListPostsBound[TResult](runtime.GQLBoundOperation, ABC):
+class OnAlbum(slots.GQLBindableFragment[TModel, TReads], ABC):
     @abstractmethod
+    def __init__(
+        self,
+        *,
+        fragment_name: str,
+        definition_type: type[slots.GQLFragment[
+            TModel, TReads,
+        ]],
+        adapter: pydantic.TypeAdapter[TModel],
+    ) -> None:
+        super().__init__(
+            fragment_name=fragment_name,
+            definition_type=definition_type,
+            adapter=adapter,
+        )
+
+
+class OnImageAttachment(slots.GQLBindableFragment[TModel, TReads], ABC):
+    @abstractmethod
+    def __init__(
+        self,
+        *,
+        fragment_name: str,
+        definition_type: type[slots.GQLFragment[
+            TModel, TReads,
+        ]],
+        adapter: pydantic.TypeAdapter[TModel],
+    ) -> None:
+        super().__init__(
+            fragment_name=fragment_name,
+            definition_type=definition_type,
+            adapter=adapter,
+        )
+
+
+class OnLinkAttachment(slots.GQLBindableFragment[TModel, TReads], ABC):
+    @abstractmethod
+    def __init__(
+        self,
+        *,
+        fragment_name: str,
+        definition_type: type[slots.GQLFragment[
+            TModel, TReads,
+        ]],
+        adapter: pydantic.TypeAdapter[TModel],
+    ) -> None:
+        super().__init__(
+            fragment_name=fragment_name,
+            definition_type=definition_type,
+            adapter=adapter,
+        )
+
+
+class OnOwner(slots.GQLBindableFragment[TModel, TReads], ABC):
+    @abstractmethod
+    def __init__(
+        self,
+        *,
+        fragment_name: str,
+        definition_type: type[slots.GQLFragment[
+            TModel, TReads,
+        ]],
+        adapter: pydantic.TypeAdapter[TModel],
+    ) -> None:
+        super().__init__(
+            fragment_name=fragment_name,
+            definition_type=definition_type,
+            adapter=adapter,
+        )
+
+
+@final
+class AlbumTitle(OnImageAttachment[AlbumTitleData, "AlbumTitle"]):
+    adapter__: ClassVar[pydantic.TypeAdapter[AlbumTitleData]] = pydantic.TypeAdapter(AlbumTitleData)
+
+    @override
+    def __init__(self) -> None:
+        super().__init__(
+            fragment_name='AlbumTitle',
+            definition_type=AlbumTitle,
+            adapter=self.adapter__,
+        )
+
+
+@final
+class AlbumCover(OnImageAttachment[AlbumCoverData, "AlbumCover"]):
+    adapter__: ClassVar[pydantic.TypeAdapter[AlbumCoverData]] = pydantic.TypeAdapter(AlbumCoverData)
+
+    @override
+    def __init__(self) -> None:
+        super().__init__(
+            fragment_name='AlbumCover',
+            definition_type=AlbumCover,
+            adapter=self.adapter__,
+        )
+
+
+@final
+class OwnerIdentity(OnOwner[OwnerIdentityData, "OwnerIdentity"]):
+    adapter__: ClassVar[pydantic.TypeAdapter[OwnerIdentityData]] = pydantic.TypeAdapter(OwnerIdentityData)
+
+    @override
+    def __init__(self) -> None:
+        super().__init__(
+            fragment_name='OwnerIdentity',
+            definition_type=OwnerIdentity,
+            adapter=self.adapter__,
+        )
+
+
+@final
+class AlbumSummary(OnAlbum[AlbumSummaryData, "AlbumSummary"]):
+    adapter__: ClassVar[pydantic.TypeAdapter[AlbumSummaryData]] = pydantic.TypeAdapter(AlbumSummaryData)
+
+    @override
+    def __init__(self) -> None:
+        super().__init__(
+            fragment_name='AlbumSummary',
+            definition_type=AlbumSummary,
+            adapter=self.adapter__,
+        )
+
+
+@final
+class LinkHref(OnLinkAttachment[LinkHrefData, "LinkHref"]):
+    adapter__: ClassVar[pydantic.TypeAdapter[LinkHrefData]] = pydantic.TypeAdapter(LinkHrefData)
+
+    @override
+    def __init__(self) -> None:
+        super().__init__(
+            fragment_name='LinkHref',
+            definition_type=LinkHref,
+            adapter=self.adapter__,
+        )
+
+
+class ListPostsBound[TResult: pydantic.BaseModel](runtime.GQLBoundOperation):
     async def execute(self) -> TResult:
-        ...
-
-
-class ListPostsWithAttachmentAlbumTitleWithOwnerOwnerIdentityWithPreviewAlbumCover(ListPostsBound[ListPostsResult[AlbumTitle, AlbumCover, OwnerIdentity]]):
-    # See: queries.py:63
-    exec_source__ = 'query ListPosts {\n  posts {\n    id\n    attachment {\n      __typename\n      ...AlbumTitle\n    }\n    preview {\n      __typename\n      ...AlbumCover\n    }\n    owner {\n      __typename\n      ...OwnerIdentity\n    }\n  }\n}\n\nfragment AlbumCover on ImageAttachment {\n  album {\n    cover\n  }\n}\n\nfragment AlbumTitle on ImageAttachment {\n  album {\n    title\n  }\n}\n\nfragment OwnerIdentity on Owner {\n  __typename\n  id\n  ... on UserOwner {\n    email\n  }\n  ... on TeamOwner {\n    memberCount\n  }\n}'
-    slot_handles__ = {"attachment": (slots.SlotHandle(ALBUM_TITLE, frozenset({'ImageAttachment'})),), "preview": (slots.SlotHandle(ALBUM_COVER, frozenset({'ImageAttachment'})),), "owner": (slots.SlotHandle(OWNER_IDENTITY, frozenset({'TeamOwner', 'UserOwner'})),)}
-    @override
-    async def execute(self) -> ListPostsResult[AlbumTitle, AlbumCover, OwnerIdentity]:
         return await API_CLIENT.query(
-            ListPostsResult[AlbumTitle, AlbumCover, OwnerIdentity],
-            self.exec_source__,
-            variables={**self.fragment_args__()},
+            _API_GQL_CAST("type[TResult]", ListPostsResult),
+            self.exec_source,
+            variables={**self.fragment_args},
             headers=self.headers,
-            slot_handles=self.slot_handles__,
-        )
-
-
-class ListPostsWithAttachmentAlbumCoverLinkHrefWithOwnerOwnerIdentityWithPreviewAlbumCover(ListPostsBound[ListPostsResult[AlbumCover | LinkHref, AlbumCover, OwnerIdentity]]):
-    # See: queries.py:80
-    exec_source__ = 'query ListPosts {\n  posts {\n    id\n    attachment {\n      __typename\n      ...AlbumCover\n      ...LinkHref\n    }\n    preview {\n      __typename\n      ...AlbumCover\n    }\n    owner {\n      __typename\n      ...OwnerIdentity\n    }\n  }\n}\n\nfragment AlbumCover on ImageAttachment {\n  album {\n    cover\n  }\n}\n\nfragment LinkHref on LinkAttachment {\n  href\n}\n\nfragment OwnerIdentity on Owner {\n  __typename\n  id\n  ... on UserOwner {\n    email\n  }\n  ... on TeamOwner {\n    memberCount\n  }\n}'
-    slot_handles__ = {"attachment": (slots.SlotHandle(ALBUM_COVER, frozenset({'ImageAttachment'})), slots.SlotHandle(LINK_HREF, frozenset({'LinkAttachment'}))), "preview": (slots.SlotHandle(ALBUM_COVER, frozenset({'ImageAttachment'})),), "owner": (slots.SlotHandle(OWNER_IDENTITY, frozenset({'TeamOwner', 'UserOwner'})),)}
-    @override
-    async def execute(self) -> ListPostsResult[AlbumCover | LinkHref, AlbumCover, OwnerIdentity]:
-        return await API_CLIENT.query(
-            ListPostsResult[AlbumCover | LinkHref, AlbumCover, OwnerIdentity],
-            self.exec_source__,
-            variables={**self.fragment_args__()},
-            headers=self.headers,
-            slot_handles=self.slot_handles__,
-        )
-
-
-class ListPostsWithAttachmentAlbumTitleWithOwnerOwnerIdentityWithPreviewAlbumTitle(ListPostsBound[ListPostsResult[AlbumTitle, AlbumTitle, OwnerIdentity]]):
-    # See: queries.py:85
-    exec_source__ = 'query ListPosts {\n  posts {\n    id\n    attachment {\n      __typename\n      ...AlbumTitle\n    }\n    preview {\n      __typename\n      ...AlbumTitle\n    }\n    owner {\n      __typename\n      ...OwnerIdentity\n    }\n  }\n}\n\nfragment AlbumTitle on ImageAttachment {\n  album {\n    title\n  }\n}\n\nfragment OwnerIdentity on Owner {\n  __typename\n  id\n  ... on UserOwner {\n    email\n  }\n  ... on TeamOwner {\n    memberCount\n  }\n}'
-    slot_handles__ = {"attachment": (slots.SlotHandle(ALBUM_TITLE, frozenset({'ImageAttachment'})),), "preview": (slots.SlotHandle(ALBUM_TITLE, frozenset({'ImageAttachment'})),), "owner": (slots.SlotHandle(OWNER_IDENTITY, frozenset({'TeamOwner', 'UserOwner'})),)}
-    @override
-    async def execute(self) -> ListPostsResult[AlbumTitle, AlbumTitle, OwnerIdentity]:
-        return await API_CLIENT.query(
-            ListPostsResult[AlbumTitle, AlbumTitle, OwnerIdentity],
-            self.exec_source__,
-            variables={**self.fragment_args__()},
-            headers=self.headers,
-            slot_handles=self.slot_handles__,
-        )
-
-
-class ListPostsWithNothing(ListPostsBound[ListPostsResult[Never, Never, Never]]):
-    # See: queries.py:88
-    exec_source__ = 'query ListPosts {\n  posts {\n    id\n    attachment {\n      __typename\n    }\n    preview {\n      __typename\n    }\n    owner {\n      __typename\n    }\n  }\n}'
-    slot_handles__ = {"attachment": (), "preview": (), "owner": ()}
-    @override
-    async def execute(self) -> ListPostsResult[Never, Never, Never]:
-        return await API_CLIENT.query(
-            ListPostsResult[Never, Never, Never],
-            self.exec_source__,
-            variables={**self.fragment_args__()},
-            headers=self.headers,
-            slot_handles=self.slot_handles__,
+            slot_readers=self.slot_readers,
         )
 
 
 class ListPosts(runtime.GQLTemplate):
     @overload
-    def bind(self, *, attachment: Sequence[Never] = (), preview: Sequence[Never] = (), owner: Sequence[Never] = ()) -> ListPostsWithNothing: ...
+    def bind(self, *, attachment: Sequence[Never] = (), preview: Sequence[Never] = (), owner: Sequence[Never] = ()) -> ListPostsBound[ListPostsResult[Never, Never, Never]]: ...
     @overload
-    def bind(self, *, attachment: AlbumTitle | Sequence[AlbumTitle], preview: AlbumCover | Sequence[AlbumCover], owner: OwnerIdentity | Sequence[OwnerIdentity]) -> ListPostsWithAttachmentAlbumTitleWithOwnerOwnerIdentityWithPreviewAlbumCover: ...
+    def bind[TModelOwner: pydantic.BaseModel, TReadsOwner](self, *, attachment: Sequence[Never] = (), preview: Sequence[Never] = (), owner: OnOwner[TModelOwner, TReadsOwner]) -> ListPostsBound[ListPostsResult[Never, Never, OnOwner[TModelOwner, TReadsOwner] | TReadsOwner]]: ...
     @overload
-    def bind(self, *, attachment: AlbumTitle | Sequence[AlbumTitle], preview: AlbumTitle | Sequence[AlbumTitle], owner: OwnerIdentity | Sequence[OwnerIdentity]) -> ListPostsWithAttachmentAlbumTitleWithOwnerOwnerIdentityWithPreviewAlbumTitle: ...
+    def bind[TModelPreview: pydantic.BaseModel, TReadsPreview](self, *, attachment: Sequence[Never] = (), preview: OnImageAttachment[TModelPreview, TReadsPreview], owner: Sequence[Never] = ()) -> ListPostsBound[ListPostsResult[Never, OnImageAttachment[TModelPreview, TReadsPreview] | TReadsPreview, Never]]: ...
     @overload
-    def bind(self, *, attachment: Sequence[AlbumCover | LinkHref], preview: AlbumCover | Sequence[AlbumCover], owner: OwnerIdentity | Sequence[OwnerIdentity]) -> ListPostsWithAttachmentAlbumCoverLinkHrefWithOwnerOwnerIdentityWithPreviewAlbumCover: ...
-    def bind(self, *, attachment: slots.GQLFragment[pydantic.BaseModel] | Sequence[slots.GQLFragment[pydantic.BaseModel]] = (), preview: slots.GQLFragment[pydantic.BaseModel] | Sequence[slots.GQLFragment[pydantic.BaseModel]] = (), owner: slots.GQLFragment[pydantic.BaseModel] | Sequence[slots.GQLFragment[pydantic.BaseModel]] = ()) -> runtime.GQLBoundOperation:
-        if _API_GQL_BIND_DISPATCH.get(slots.bind_key('ListPosts', {'attachment': attachment, 'preview': preview, 'owner': owner})) is None:
-            raise LookupError("unknown bind combination for ListPosts; every fragment a bind passes must be a discovered statement - check the call site, then regenerate the package")
-        return _API_GQL_BIND_DISPATCH[slots.bind_key('ListPosts', {'attachment': attachment, 'preview': preview, 'owner': owner})]()
+    def bind[TModelAttachment: pydantic.BaseModel, TReadsAttachment](self, *, attachment: OnImageAttachment[TModelAttachment, TReadsAttachment], preview: Sequence[Never] = (), owner: Sequence[Never] = ()) -> ListPostsBound[ListPostsResult[OnImageAttachment[TModelAttachment, TReadsAttachment] | TReadsAttachment, Never, Never]]: ...
+    @overload
+    def bind[TModelAttachment: pydantic.BaseModel, TReadsAttachment](self, *, attachment: OnLinkAttachment[TModelAttachment, TReadsAttachment], preview: Sequence[Never] = (), owner: Sequence[Never] = ()) -> ListPostsBound[ListPostsResult[OnLinkAttachment[TModelAttachment, TReadsAttachment] | TReadsAttachment, Never, Never]]: ...
+    @overload
+    def bind[TModelPreview: pydantic.BaseModel, TReadsPreview, TModelOwner: pydantic.BaseModel, TReadsOwner](self, *, attachment: Sequence[Never] = (), preview: OnImageAttachment[TModelPreview, TReadsPreview], owner: OnOwner[TModelOwner, TReadsOwner]) -> ListPostsBound[ListPostsResult[Never, OnImageAttachment[TModelPreview, TReadsPreview] | TReadsPreview, OnOwner[TModelOwner, TReadsOwner] | TReadsOwner]]: ...
+    @overload
+    def bind[TModelAttachment: pydantic.BaseModel, TReadsAttachment, TModelOwner: pydantic.BaseModel, TReadsOwner](self, *, attachment: OnImageAttachment[TModelAttachment, TReadsAttachment], preview: Sequence[Never] = (), owner: OnOwner[TModelOwner, TReadsOwner]) -> ListPostsBound[ListPostsResult[OnImageAttachment[TModelAttachment, TReadsAttachment] | TReadsAttachment, Never, OnOwner[TModelOwner, TReadsOwner] | TReadsOwner]]: ...
+    @overload
+    def bind[TModelAttachment: pydantic.BaseModel, TReadsAttachment, TModelPreview: pydantic.BaseModel, TReadsPreview](self, *, attachment: OnImageAttachment[TModelAttachment, TReadsAttachment], preview: OnImageAttachment[TModelPreview, TReadsPreview], owner: Sequence[Never] = ()) -> ListPostsBound[ListPostsResult[OnImageAttachment[TModelAttachment, TReadsAttachment] | TReadsAttachment, OnImageAttachment[TModelPreview, TReadsPreview] | TReadsPreview, Never]]: ...
+    @overload
+    def bind[TModelAttachment: pydantic.BaseModel, TReadsAttachment, TModelOwner: pydantic.BaseModel, TReadsOwner](self, *, attachment: OnLinkAttachment[TModelAttachment, TReadsAttachment], preview: Sequence[Never] = (), owner: OnOwner[TModelOwner, TReadsOwner]) -> ListPostsBound[ListPostsResult[OnLinkAttachment[TModelAttachment, TReadsAttachment] | TReadsAttachment, Never, OnOwner[TModelOwner, TReadsOwner] | TReadsOwner]]: ...
+    @overload
+    def bind[TModelAttachment: pydantic.BaseModel, TReadsAttachment, TModelPreview: pydantic.BaseModel, TReadsPreview](self, *, attachment: OnLinkAttachment[TModelAttachment, TReadsAttachment], preview: OnImageAttachment[TModelPreview, TReadsPreview], owner: Sequence[Never] = ()) -> ListPostsBound[ListPostsResult[OnLinkAttachment[TModelAttachment, TReadsAttachment] | TReadsAttachment, OnImageAttachment[TModelPreview, TReadsPreview] | TReadsPreview, Never]]: ...
+    @overload
+    def bind[TFillAttachment1: (AlbumCover, LinkHref), TFillAttachment2: (AlbumCover, LinkHref)](self, *, attachment: tuple[TFillAttachment1, TFillAttachment2], preview: Sequence[Never] = (), owner: Sequence[Never] = ()) -> ListPostsBound[ListPostsResult[TFillAttachment1 | TFillAttachment2, Never, Never]]: ...
+    @overload
+    def bind[TModelAttachment: pydantic.BaseModel, TReadsAttachment, TModelPreview: pydantic.BaseModel, TReadsPreview, TModelOwner: pydantic.BaseModel, TReadsOwner](self, *, attachment: OnImageAttachment[TModelAttachment, TReadsAttachment], preview: OnImageAttachment[TModelPreview, TReadsPreview], owner: OnOwner[TModelOwner, TReadsOwner]) -> ListPostsBound[ListPostsResult[OnImageAttachment[TModelAttachment, TReadsAttachment] | TReadsAttachment, OnImageAttachment[TModelPreview, TReadsPreview] | TReadsPreview, OnOwner[TModelOwner, TReadsOwner] | TReadsOwner]]: ...
+    @overload
+    def bind[TModelAttachment: pydantic.BaseModel, TReadsAttachment, TModelPreview: pydantic.BaseModel, TReadsPreview, TModelOwner: pydantic.BaseModel, TReadsOwner](self, *, attachment: OnLinkAttachment[TModelAttachment, TReadsAttachment], preview: OnImageAttachment[TModelPreview, TReadsPreview], owner: OnOwner[TModelOwner, TReadsOwner]) -> ListPostsBound[ListPostsResult[OnLinkAttachment[TModelAttachment, TReadsAttachment] | TReadsAttachment, OnImageAttachment[TModelPreview, TReadsPreview] | TReadsPreview, OnOwner[TModelOwner, TReadsOwner] | TReadsOwner]]: ...
+    @overload
+    def bind[TFillAttachment1: (AlbumCover, LinkHref), TFillAttachment2: (AlbumCover, LinkHref), TModelOwner: pydantic.BaseModel, TReadsOwner](self, *, attachment: tuple[TFillAttachment1, TFillAttachment2], preview: Sequence[Never] = (), owner: OnOwner[TModelOwner, TReadsOwner]) -> ListPostsBound[ListPostsResult[TFillAttachment1 | TFillAttachment2, Never, OnOwner[TModelOwner, TReadsOwner] | TReadsOwner]]: ...
+    @overload
+    def bind[TFillAttachment1: (AlbumCover, LinkHref), TFillAttachment2: (AlbumCover, LinkHref), TModelPreview: pydantic.BaseModel, TReadsPreview](self, *, attachment: tuple[TFillAttachment1, TFillAttachment2], preview: OnImageAttachment[TModelPreview, TReadsPreview], owner: Sequence[Never] = ()) -> ListPostsBound[ListPostsResult[TFillAttachment1 | TFillAttachment2, OnImageAttachment[TModelPreview, TReadsPreview] | TReadsPreview, Never]]: ...
+    @overload
+    def bind[TFillAttachment1: (AlbumCover, LinkHref), TFillAttachment2: (AlbumCover, LinkHref), TModelPreview: pydantic.BaseModel, TReadsPreview, TModelOwner: pydantic.BaseModel, TReadsOwner](self, *, attachment: tuple[TFillAttachment1, TFillAttachment2], preview: OnImageAttachment[TModelPreview, TReadsPreview], owner: OnOwner[TModelOwner, TReadsOwner]) -> ListPostsBound[ListPostsResult[TFillAttachment1 | TFillAttachment2, OnImageAttachment[TModelPreview, TReadsPreview] | TReadsPreview, OnOwner[TModelOwner, TReadsOwner] | TReadsOwner]]: ...
+    def bind(self, *, attachment: slots.GQLBindableFragment[pydantic.BaseModel, Any] | Sequence[slots.GQLBindableFragment[pydantic.BaseModel, Any]] = (), preview: slots.GQLBindableFragment[pydantic.BaseModel, Any] | Sequence[slots.GQLBindableFragment[pydantic.BaseModel, Any]] = (), owner: slots.GQLBindableFragment[pydantic.BaseModel, Any] | Sequence[slots.GQLBindableFragment[pydantic.BaseModel, Any]] = ()) -> runtime.GQLBoundOperation:
+        if _API_GQL_BIND_DISPATCH.get(slots.dispatch_key('ListPosts', {'attachment': attachment, 'preview': preview, 'owner': owner})) is None:
+            raise LookupError("unknown bind combination for ListPosts; single-fragment and empty combinations are generated from the schema, so this is a tuple combination no call site writes literally - write it, then regenerate the package. A call whose template is an expression the scan cannot follow is never read either: those are listed, with the reason, in the debug run's ignored_binds.json")
+        return ListPostsBound[ListPostsResult].bound__(
+            _API_GQL_BIND_DISPATCH[slots.dispatch_key('ListPosts', {'attachment': attachment, 'preview': preview, 'owner': owner})], {'attachment': slots.as_bindable_fragments(attachment), 'preview': slots.as_bindable_fragments(preview), 'owner': slots.as_bindable_fragments(owner)},
+        )
 
 
-_API_GQL_BIND_DISPATCH: dict[slots.BindKey, type[runtime.GQLBoundOperation]] = {
-    ('ListPosts', (('attachment', ('AlbumTitle',)), ('owner', ('OwnerIdentity',)), ('preview', ('AlbumCover',)))): ListPostsWithAttachmentAlbumTitleWithOwnerOwnerIdentityWithPreviewAlbumCover,
-    ('ListPosts', (('attachment', ('AlbumCover', 'LinkHref')), ('owner', ('OwnerIdentity',)), ('preview', ('AlbumCover',)))): ListPostsWithAttachmentAlbumCoverLinkHrefWithOwnerOwnerIdentityWithPreviewAlbumCover,
-    ('ListPosts', (('attachment', ('AlbumTitle',)), ('owner', ('OwnerIdentity',)), ('preview', ('AlbumTitle',)))): ListPostsWithAttachmentAlbumTitleWithOwnerOwnerIdentityWithPreviewAlbumTitle,
-    ('ListPosts', ()): ListPostsWithNothing,
+_API_GQL_BIND_DISPATCH: dict[slots.DispatchKey, runtime.BoundSpec] = {
+    # See: queries.py:46
+    ('ListPosts', ()): ('query ListPosts {\n  posts {\n    id\n    attachment {\n      __typename\n    }\n    preview {\n      __typename\n    }\n    owner {\n      __typename\n    }\n  }\n}', {"attachment": (), "preview": (), "owner": ()}),
+    # See: queries.py:46, queries.py:19
+    ('ListPosts', (('owner', (OwnerIdentity,)),)): ('query ListPosts {\n  posts {\n    id\n    attachment {\n      __typename\n    }\n    preview {\n      __typename\n    }\n    owner {\n      __typename\n      ...OwnerIdentity\n    }\n  }\n}\n\nfragment OwnerIdentity on Owner {\n  __typename\n  id\n  ... on UserOwner {\n    email\n  }\n  ... on TeamOwner {\n    memberCount\n  }\n}', {"attachment": (), "preview": (), "owner": ((OwnerIdentity, frozenset({'TeamOwner', 'UserOwner'})),)}),
+    # See: queries.py:46, queries.py:11
+    ('ListPosts', (('preview', (AlbumCover,)),)): ('query ListPosts {\n  posts {\n    id\n    attachment {\n      __typename\n    }\n    preview {\n      __typename\n      ...AlbumCover\n    }\n    owner {\n      __typename\n    }\n  }\n}\n\nfragment AlbumCover on ImageAttachment {\n  album {\n    cover\n  }\n}', {"attachment": (), "preview": ((AlbumCover, frozenset({'ImageAttachment'})),), "owner": ()}),
+    # See: queries.py:46, queries.py:11, queries.py:19
+    ('ListPosts', (('owner', (OwnerIdentity,)), ('preview', (AlbumCover,)))): ('query ListPosts {\n  posts {\n    id\n    attachment {\n      __typename\n    }\n    preview {\n      __typename\n      ...AlbumCover\n    }\n    owner {\n      __typename\n      ...OwnerIdentity\n    }\n  }\n}\n\nfragment AlbumCover on ImageAttachment {\n  album {\n    cover\n  }\n}\n\nfragment OwnerIdentity on Owner {\n  __typename\n  id\n  ... on UserOwner {\n    email\n  }\n  ... on TeamOwner {\n    memberCount\n  }\n}', {"attachment": (), "preview": ((AlbumCover, frozenset({'ImageAttachment'})),), "owner": ((OwnerIdentity, frozenset({'TeamOwner', 'UserOwner'})),)}),
+    # See: queries.py:46, queries.py:3
+    ('ListPosts', (('preview', (AlbumTitle,)),)): ('query ListPosts {\n  posts {\n    id\n    attachment {\n      __typename\n    }\n    preview {\n      __typename\n      ...AlbumTitle\n    }\n    owner {\n      __typename\n    }\n  }\n}\n\nfragment AlbumTitle on ImageAttachment {\n  album {\n    title\n  }\n}', {"attachment": (), "preview": ((AlbumTitle, frozenset({'ImageAttachment'})),), "owner": ()}),
+    # See: queries.py:46, queries.py:3, queries.py:19
+    ('ListPosts', (('owner', (OwnerIdentity,)), ('preview', (AlbumTitle,)))): ('query ListPosts {\n  posts {\n    id\n    attachment {\n      __typename\n    }\n    preview {\n      __typename\n      ...AlbumTitle\n    }\n    owner {\n      __typename\n      ...OwnerIdentity\n    }\n  }\n}\n\nfragment AlbumTitle on ImageAttachment {\n  album {\n    title\n  }\n}\n\nfragment OwnerIdentity on Owner {\n  __typename\n  id\n  ... on UserOwner {\n    email\n  }\n  ... on TeamOwner {\n    memberCount\n  }\n}', {"attachment": (), "preview": ((AlbumTitle, frozenset({'ImageAttachment'})),), "owner": ((OwnerIdentity, frozenset({'TeamOwner', 'UserOwner'})),)}),
+    # See: queries.py:46, queries.py:11
+    ('ListPosts', (('attachment', (AlbumCover,)),)): ('query ListPosts {\n  posts {\n    id\n    attachment {\n      __typename\n      ...AlbumCover\n    }\n    preview {\n      __typename\n    }\n    owner {\n      __typename\n    }\n  }\n}\n\nfragment AlbumCover on ImageAttachment {\n  album {\n    cover\n  }\n}', {"attachment": ((AlbumCover, frozenset({'ImageAttachment'})),), "preview": (), "owner": ()}),
+    # See: queries.py:46, queries.py:11, queries.py:19
+    ('ListPosts', (('attachment', (AlbumCover,)), ('owner', (OwnerIdentity,)))): ('query ListPosts {\n  posts {\n    id\n    attachment {\n      __typename\n      ...AlbumCover\n    }\n    preview {\n      __typename\n    }\n    owner {\n      __typename\n      ...OwnerIdentity\n    }\n  }\n}\n\nfragment AlbumCover on ImageAttachment {\n  album {\n    cover\n  }\n}\n\nfragment OwnerIdentity on Owner {\n  __typename\n  id\n  ... on UserOwner {\n    email\n  }\n  ... on TeamOwner {\n    memberCount\n  }\n}', {"attachment": ((AlbumCover, frozenset({'ImageAttachment'})),), "preview": (), "owner": ((OwnerIdentity, frozenset({'TeamOwner', 'UserOwner'})),)}),
+    # See: queries.py:46, queries.py:11
+    ('ListPosts', (('attachment', (AlbumCover,)), ('preview', (AlbumCover,)))): ('query ListPosts {\n  posts {\n    id\n    attachment {\n      __typename\n      ...AlbumCover\n    }\n    preview {\n      __typename\n      ...AlbumCover\n    }\n    owner {\n      __typename\n    }\n  }\n}\n\nfragment AlbumCover on ImageAttachment {\n  album {\n    cover\n  }\n}', {"attachment": ((AlbumCover, frozenset({'ImageAttachment'})),), "preview": ((AlbumCover, frozenset({'ImageAttachment'})),), "owner": ()}),
+    # See: queries.py:46, queries.py:11, queries.py:19
+    ('ListPosts', (('attachment', (AlbumCover,)), ('owner', (OwnerIdentity,)), ('preview', (AlbumCover,)))): ('query ListPosts {\n  posts {\n    id\n    attachment {\n      __typename\n      ...AlbumCover\n    }\n    preview {\n      __typename\n      ...AlbumCover\n    }\n    owner {\n      __typename\n      ...OwnerIdentity\n    }\n  }\n}\n\nfragment AlbumCover on ImageAttachment {\n  album {\n    cover\n  }\n}\n\nfragment OwnerIdentity on Owner {\n  __typename\n  id\n  ... on UserOwner {\n    email\n  }\n  ... on TeamOwner {\n    memberCount\n  }\n}', {"attachment": ((AlbumCover, frozenset({'ImageAttachment'})),), "preview": ((AlbumCover, frozenset({'ImageAttachment'})),), "owner": ((OwnerIdentity, frozenset({'TeamOwner', 'UserOwner'})),)}),
+    # See: queries.py:46, queries.py:11, queries.py:3
+    ('ListPosts', (('attachment', (AlbumCover,)), ('preview', (AlbumTitle,)))): ('query ListPosts {\n  posts {\n    id\n    attachment {\n      __typename\n      ...AlbumCover\n    }\n    preview {\n      __typename\n      ...AlbumTitle\n    }\n    owner {\n      __typename\n    }\n  }\n}\n\nfragment AlbumCover on ImageAttachment {\n  album {\n    cover\n  }\n}\n\nfragment AlbumTitle on ImageAttachment {\n  album {\n    title\n  }\n}', {"attachment": ((AlbumCover, frozenset({'ImageAttachment'})),), "preview": ((AlbumTitle, frozenset({'ImageAttachment'})),), "owner": ()}),
+    # See: queries.py:46, queries.py:11, queries.py:3, queries.py:19
+    ('ListPosts', (('attachment', (AlbumCover,)), ('owner', (OwnerIdentity,)), ('preview', (AlbumTitle,)))): ('query ListPosts {\n  posts {\n    id\n    attachment {\n      __typename\n      ...AlbumCover\n    }\n    preview {\n      __typename\n      ...AlbumTitle\n    }\n    owner {\n      __typename\n      ...OwnerIdentity\n    }\n  }\n}\n\nfragment AlbumCover on ImageAttachment {\n  album {\n    cover\n  }\n}\n\nfragment AlbumTitle on ImageAttachment {\n  album {\n    title\n  }\n}\n\nfragment OwnerIdentity on Owner {\n  __typename\n  id\n  ... on UserOwner {\n    email\n  }\n  ... on TeamOwner {\n    memberCount\n  }\n}', {"attachment": ((AlbumCover, frozenset({'ImageAttachment'})),), "preview": ((AlbumTitle, frozenset({'ImageAttachment'})),), "owner": ((OwnerIdentity, frozenset({'TeamOwner', 'UserOwner'})),)}),
+    # See: queries.py:46, queries.py:3
+    ('ListPosts', (('attachment', (AlbumTitle,)),)): ('query ListPosts {\n  posts {\n    id\n    attachment {\n      __typename\n      ...AlbumTitle\n    }\n    preview {\n      __typename\n    }\n    owner {\n      __typename\n    }\n  }\n}\n\nfragment AlbumTitle on ImageAttachment {\n  album {\n    title\n  }\n}', {"attachment": ((AlbumTitle, frozenset({'ImageAttachment'})),), "preview": (), "owner": ()}),
+    # See: queries.py:46, queries.py:3, queries.py:19
+    ('ListPosts', (('attachment', (AlbumTitle,)), ('owner', (OwnerIdentity,)))): ('query ListPosts {\n  posts {\n    id\n    attachment {\n      __typename\n      ...AlbumTitle\n    }\n    preview {\n      __typename\n    }\n    owner {\n      __typename\n      ...OwnerIdentity\n    }\n  }\n}\n\nfragment AlbumTitle on ImageAttachment {\n  album {\n    title\n  }\n}\n\nfragment OwnerIdentity on Owner {\n  __typename\n  id\n  ... on UserOwner {\n    email\n  }\n  ... on TeamOwner {\n    memberCount\n  }\n}', {"attachment": ((AlbumTitle, frozenset({'ImageAttachment'})),), "preview": (), "owner": ((OwnerIdentity, frozenset({'TeamOwner', 'UserOwner'})),)}),
+    # See: queries.py:46, queries.py:3, queries.py:11
+    ('ListPosts', (('attachment', (AlbumTitle,)), ('preview', (AlbumCover,)))): ('query ListPosts {\n  posts {\n    id\n    attachment {\n      __typename\n      ...AlbumTitle\n    }\n    preview {\n      __typename\n      ...AlbumCover\n    }\n    owner {\n      __typename\n    }\n  }\n}\n\nfragment AlbumCover on ImageAttachment {\n  album {\n    cover\n  }\n}\n\nfragment AlbumTitle on ImageAttachment {\n  album {\n    title\n  }\n}', {"attachment": ((AlbumTitle, frozenset({'ImageAttachment'})),), "preview": ((AlbumCover, frozenset({'ImageAttachment'})),), "owner": ()}),
+    # See: queries.py:46, queries.py:3, queries.py:11, queries.py:19
+    ('ListPosts', (('attachment', (AlbumTitle,)), ('owner', (OwnerIdentity,)), ('preview', (AlbumCover,)))): ('query ListPosts {\n  posts {\n    id\n    attachment {\n      __typename\n      ...AlbumTitle\n    }\n    preview {\n      __typename\n      ...AlbumCover\n    }\n    owner {\n      __typename\n      ...OwnerIdentity\n    }\n  }\n}\n\nfragment AlbumCover on ImageAttachment {\n  album {\n    cover\n  }\n}\n\nfragment AlbumTitle on ImageAttachment {\n  album {\n    title\n  }\n}\n\nfragment OwnerIdentity on Owner {\n  __typename\n  id\n  ... on UserOwner {\n    email\n  }\n  ... on TeamOwner {\n    memberCount\n  }\n}', {"attachment": ((AlbumTitle, frozenset({'ImageAttachment'})),), "preview": ((AlbumCover, frozenset({'ImageAttachment'})),), "owner": ((OwnerIdentity, frozenset({'TeamOwner', 'UserOwner'})),)}),
+    # See: queries.py:46, queries.py:3
+    ('ListPosts', (('attachment', (AlbumTitle,)), ('preview', (AlbumTitle,)))): ('query ListPosts {\n  posts {\n    id\n    attachment {\n      __typename\n      ...AlbumTitle\n    }\n    preview {\n      __typename\n      ...AlbumTitle\n    }\n    owner {\n      __typename\n    }\n  }\n}\n\nfragment AlbumTitle on ImageAttachment {\n  album {\n    title\n  }\n}', {"attachment": ((AlbumTitle, frozenset({'ImageAttachment'})),), "preview": ((AlbumTitle, frozenset({'ImageAttachment'})),), "owner": ()}),
+    # See: queries.py:46, queries.py:3, queries.py:19
+    ('ListPosts', (('attachment', (AlbumTitle,)), ('owner', (OwnerIdentity,)), ('preview', (AlbumTitle,)))): ('query ListPosts {\n  posts {\n    id\n    attachment {\n      __typename\n      ...AlbumTitle\n    }\n    preview {\n      __typename\n      ...AlbumTitle\n    }\n    owner {\n      __typename\n      ...OwnerIdentity\n    }\n  }\n}\n\nfragment AlbumTitle on ImageAttachment {\n  album {\n    title\n  }\n}\n\nfragment OwnerIdentity on Owner {\n  __typename\n  id\n  ... on UserOwner {\n    email\n  }\n  ... on TeamOwner {\n    memberCount\n  }\n}', {"attachment": ((AlbumTitle, frozenset({'ImageAttachment'})),), "preview": ((AlbumTitle, frozenset({'ImageAttachment'})),), "owner": ((OwnerIdentity, frozenset({'TeamOwner', 'UserOwner'})),)}),
+    # See: queries.py:46, queries.py:38
+    ('ListPosts', (('attachment', (LinkHref,)),)): ('query ListPosts {\n  posts {\n    id\n    attachment {\n      __typename\n      ...LinkHref\n    }\n    preview {\n      __typename\n    }\n    owner {\n      __typename\n    }\n  }\n}\n\nfragment LinkHref on LinkAttachment {\n  href\n}', {"attachment": ((LinkHref, frozenset({'LinkAttachment'})),), "preview": (), "owner": ()}),
+    # See: queries.py:46, queries.py:38, queries.py:19
+    ('ListPosts', (('attachment', (LinkHref,)), ('owner', (OwnerIdentity,)))): ('query ListPosts {\n  posts {\n    id\n    attachment {\n      __typename\n      ...LinkHref\n    }\n    preview {\n      __typename\n    }\n    owner {\n      __typename\n      ...OwnerIdentity\n    }\n  }\n}\n\nfragment LinkHref on LinkAttachment {\n  href\n}\n\nfragment OwnerIdentity on Owner {\n  __typename\n  id\n  ... on UserOwner {\n    email\n  }\n  ... on TeamOwner {\n    memberCount\n  }\n}', {"attachment": ((LinkHref, frozenset({'LinkAttachment'})),), "preview": (), "owner": ((OwnerIdentity, frozenset({'TeamOwner', 'UserOwner'})),)}),
+    # See: queries.py:46, queries.py:38, queries.py:11
+    ('ListPosts', (('attachment', (LinkHref,)), ('preview', (AlbumCover,)))): ('query ListPosts {\n  posts {\n    id\n    attachment {\n      __typename\n      ...LinkHref\n    }\n    preview {\n      __typename\n      ...AlbumCover\n    }\n    owner {\n      __typename\n    }\n  }\n}\n\nfragment AlbumCover on ImageAttachment {\n  album {\n    cover\n  }\n}\n\nfragment LinkHref on LinkAttachment {\n  href\n}', {"attachment": ((LinkHref, frozenset({'LinkAttachment'})),), "preview": ((AlbumCover, frozenset({'ImageAttachment'})),), "owner": ()}),
+    # See: queries.py:46, queries.py:38, queries.py:11, queries.py:19
+    ('ListPosts', (('attachment', (LinkHref,)), ('owner', (OwnerIdentity,)), ('preview', (AlbumCover,)))): ('query ListPosts {\n  posts {\n    id\n    attachment {\n      __typename\n      ...LinkHref\n    }\n    preview {\n      __typename\n      ...AlbumCover\n    }\n    owner {\n      __typename\n      ...OwnerIdentity\n    }\n  }\n}\n\nfragment AlbumCover on ImageAttachment {\n  album {\n    cover\n  }\n}\n\nfragment LinkHref on LinkAttachment {\n  href\n}\n\nfragment OwnerIdentity on Owner {\n  __typename\n  id\n  ... on UserOwner {\n    email\n  }\n  ... on TeamOwner {\n    memberCount\n  }\n}', {"attachment": ((LinkHref, frozenset({'LinkAttachment'})),), "preview": ((AlbumCover, frozenset({'ImageAttachment'})),), "owner": ((OwnerIdentity, frozenset({'TeamOwner', 'UserOwner'})),)}),
+    # See: queries.py:46, queries.py:38, queries.py:3
+    ('ListPosts', (('attachment', (LinkHref,)), ('preview', (AlbumTitle,)))): ('query ListPosts {\n  posts {\n    id\n    attachment {\n      __typename\n      ...LinkHref\n    }\n    preview {\n      __typename\n      ...AlbumTitle\n    }\n    owner {\n      __typename\n    }\n  }\n}\n\nfragment AlbumTitle on ImageAttachment {\n  album {\n    title\n  }\n}\n\nfragment LinkHref on LinkAttachment {\n  href\n}', {"attachment": ((LinkHref, frozenset({'LinkAttachment'})),), "preview": ((AlbumTitle, frozenset({'ImageAttachment'})),), "owner": ()}),
+    # See: queries.py:46, queries.py:38, queries.py:3, queries.py:19
+    ('ListPosts', (('attachment', (LinkHref,)), ('owner', (OwnerIdentity,)), ('preview', (AlbumTitle,)))): ('query ListPosts {\n  posts {\n    id\n    attachment {\n      __typename\n      ...LinkHref\n    }\n    preview {\n      __typename\n      ...AlbumTitle\n    }\n    owner {\n      __typename\n      ...OwnerIdentity\n    }\n  }\n}\n\nfragment AlbumTitle on ImageAttachment {\n  album {\n    title\n  }\n}\n\nfragment LinkHref on LinkAttachment {\n  href\n}\n\nfragment OwnerIdentity on Owner {\n  __typename\n  id\n  ... on UserOwner {\n    email\n  }\n  ... on TeamOwner {\n    memberCount\n  }\n}', {"attachment": ((LinkHref, frozenset({'LinkAttachment'})),), "preview": ((AlbumTitle, frozenset({'ImageAttachment'})),), "owner": ((OwnerIdentity, frozenset({'TeamOwner', 'UserOwner'})),)}),
+    # See: queries.py:71
+    ('ListPosts', (('attachment', (AlbumCover, LinkHref)), ('owner', (OwnerIdentity,)), ('preview', (AlbumCover,)))): ('query ListPosts {\n  posts {\n    id\n    attachment {\n      __typename\n      ...AlbumCover\n      ...LinkHref\n    }\n    preview {\n      __typename\n      ...AlbumCover\n    }\n    owner {\n      __typename\n      ...OwnerIdentity\n    }\n  }\n}\n\nfragment AlbumCover on ImageAttachment {\n  album {\n    cover\n  }\n}\n\nfragment LinkHref on LinkAttachment {\n  href\n}\n\nfragment OwnerIdentity on Owner {\n  __typename\n  id\n  ... on UserOwner {\n    email\n  }\n  ... on TeamOwner {\n    memberCount\n  }\n}', {"attachment": ((AlbumCover, frozenset({'ImageAttachment'})), (LinkHref, frozenset({'LinkAttachment'}))), "preview": ((AlbumCover, frozenset({'ImageAttachment'})),), "owner": ((OwnerIdentity, frozenset({'TeamOwner', 'UserOwner'})),)}),
 }
 
 
@@ -262,20 +390,21 @@ def api_gql(stmt: Literal['\n    fragment AlbumCover on ImageAttachment {\n     
 @overload
 def api_gql(stmt: Literal['\n    fragment OwnerIdentity on Owner {\n        __typename\n        id\n        ... on UserOwner { email }\n        ... on TeamOwner { memberCount }\n    }\n    ']) -> OwnerIdentity: ...
 @overload
+def api_gql(stmt: Literal['\n    fragment AlbumSummary on Album {\n        id\n    }\n    ']) -> AlbumSummary: ...
+@overload
 def api_gql(stmt: Literal['\n    fragment LinkHref on LinkAttachment {\n        href\n    }\n    ']) -> LinkHref: ...
 @overload
 def api_gql(stmt: Literal['\n    query ListPosts {\n        posts {\n            id\n            attachment @slot { __typename }\n            preview @slot { __typename }\n            owner @slot { __typename }\n        }\n    }\n    ']) -> ListPosts: ...
 @overload
-def api_gql(stmt: Literal['\n    fragment AlbumSummary on Album {\n        id\n    }\n    ']) -> runtime.GQLOperation: ...
-@overload
-def api_gql(stmt: str) -> runtime.GQLOperation | slots.GQLFragment[pydantic.BaseModel] | runtime.GQLTemplate: ...
+def api_gql(stmt: str) -> runtime.GQLOperation | slots.GQLFragment[pydantic.BaseModel, Any] | runtime.GQLTemplate: ...
 
 
-_API_GQL_FRAGMENTS: dict[str, slots.GQLFragment[pydantic.BaseModel]] = {
-    '\n    fragment AlbumTitle on ImageAttachment {\n        album { title }\n    }\n    ': ALBUM_TITLE,
-    '\n    fragment AlbumCover on ImageAttachment {\n        album { cover }\n    }\n    ': ALBUM_COVER,
-    '\n    fragment OwnerIdentity on Owner {\n        __typename\n        id\n        ... on UserOwner { email }\n        ... on TeamOwner { memberCount }\n    }\n    ': OWNER_IDENTITY,
-    '\n    fragment LinkHref on LinkAttachment {\n        href\n    }\n    ': LINK_HREF,
+_API_GQL_FRAGMENTS: dict[str, type[slots.GQLFragment[pydantic.BaseModel, Any]]] = {
+    '\n    fragment AlbumTitle on ImageAttachment {\n        album { title }\n    }\n    ': AlbumTitle,
+    '\n    fragment AlbumCover on ImageAttachment {\n        album { cover }\n    }\n    ': AlbumCover,
+    '\n    fragment OwnerIdentity on Owner {\n        __typename\n        id\n        ... on UserOwner { email }\n        ... on TeamOwner { memberCount }\n    }\n    ': OwnerIdentity,
+    '\n    fragment AlbumSummary on Album {\n        id\n    }\n    ': AlbumSummary,
+    '\n    fragment LinkHref on LinkAttachment {\n        href\n    }\n    ': LinkHref,
 }
 
 
@@ -284,20 +413,13 @@ _API_GQL_TEMPLATES: dict[str, type[runtime.GQLTemplate]] = {
 }
 
 
-_API_GQL_PASSTHROUGH: frozenset[str] = frozenset({
-    '\n    fragment AlbumSummary on Album {\n        id\n    }\n    ',
-})
-
-
-def api_gql(stmt: str) -> runtime.GQLOperation | slots.GQLFragment[pydantic.BaseModel] | runtime.GQLTemplate:
-    fragment = _API_GQL_FRAGMENTS.get(stmt)
-    if fragment is not None:
-        return fragment
+def api_gql(stmt: str) -> runtime.GQLOperation | slots.GQLFragment[pydantic.BaseModel, Any] | runtime.GQLTemplate:
+    fragment_cls = _API_GQL_FRAGMENTS.get(stmt)
+    if fragment_cls is not None:
+        return _API_GQL_CAST("Callable[[], slots.GQLFragment[pydantic.BaseModel, Any]]", fragment_cls)()
     template_cls = _API_GQL_TEMPLATES.get(stmt)
     if template_cls is not None:
         return template_cls()
-    if stmt in _API_GQL_PASSTHROUGH:
-        return runtime.GQLOperation()
     msg = "unknown GraphQL statement passed to api_gql; "
     msg += "the generator only discovers bare-name calls with a "
     msg += "single string literal - check the call site, then "

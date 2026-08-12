@@ -11,6 +11,25 @@ from iron_gql.testing import accept_graphql_ws
 
 POSTS = [{"id": "10", "title": "Typed clients"}]
 
+
+def _resolve_thumbnail(_info: graphql.GraphQLResolveInfo, **args: int) -> str:
+    return f"https://cdn.example/pic-{args['width']}.png"
+
+
+# Chapter 6's post. `__typename` is spelled out because the slot's payload is
+# resolved from a plain mapping: graphql-core has no other way to tell which
+# member of the `Attachment` union it is holding.
+IMAGE_POST: dict[str, object] = {
+    "id": "1",
+    "title": "Slots, explained",
+    "attachment": {
+        "__typename": "ImageAttachment",
+        "url": "https://cdn.example/pic.png",
+        "caption": "A picture",
+        "thumbnail": _resolve_thumbnail,
+    },
+}
+
 ALICE: dict[str, object] = {
     "id": "1",
     "name": "Alice",
@@ -31,9 +50,15 @@ def _resolve_user(
     return ALICE if args["id"] == ALICE["id"] else None
 
 
+def _resolve_post(
+    _info: graphql.GraphQLResolveInfo, **args: str
+) -> dict[str, object] | None:
+    return IMAGE_POST if args["id"] == IMAGE_POST["id"] else None
+
+
 # graphql-core's default resolver calls a callable it finds under the field
 # name, so the whole fake is a mapping -- no schema surgery.
-ROOT = {"user": _resolve_user}
+ROOT = {"user": _resolve_user, "post": _resolve_post}
 
 _BODY = pydantic.TypeAdapter(bytes)
 

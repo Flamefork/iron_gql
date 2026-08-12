@@ -25,7 +25,7 @@ MODULE_NAME = "gql_recorder"
 # One slot's fragments, then every slot of one call, sorted: the shape both
 # sides of the oracle are reduced to before they are compared. Sorted because
 # `bind(a=..., b=...)` and `bind(b=..., a=...)` are one call to the runtime
-# (see `slots.bind_key_shape`), and the oracle is not the place to relitigate
+# (see `slots.combination_key`), and the oracle is not the place to relitigate
 # that.
 type Slots = tuple[tuple[str, tuple[str, ...]], ...]
 
@@ -71,7 +71,7 @@ class Statement:
     def __init__(self, text: str) -> None:
         self.text = textwrap.dedent(text).strip()
 
-    def bind(self, **fragments: "Statement | list[Statement]") -> "Statement":
+    def bind(self, **fragments: "Statement | tuple[Statement, ...]") -> "Statement":
         frame = inspect.currentframe()
         # Internal invariant: CPython gives a Python frame here, and its caller
         # is the corpus line that wrote `.bind(...)`.
@@ -84,10 +84,10 @@ class Statement:
         return self
 
 
-def _slots(fragments: dict[str, "Statement | list[Statement]"]) -> Slots:
+def _slots(fragments: dict[str, "Statement | tuple[Statement, ...]"]) -> Slots:
     entries: list[tuple[str, tuple[str, ...]]] = []
     for slot, value in fragments.items():
-        passed = value if isinstance(value, list) else [value]
+        passed = value if isinstance(value, tuple) else (value,)
         entries.append((slot, tuple(stmt.text for stmt in passed)))
     return tuple(sorted(entries))
 

@@ -37,7 +37,7 @@ link_summary = api_gql("""
 """)
 
 get_post_attachment_any = get_post_attachment.bind(
-    attachment=[image_caption, link_summary]
+    attachment=(image_caption, link_summary)
 )
 
 image_thumbnail = api_gql("""
@@ -45,5 +45,3 @@ image_thumbnail = api_gql("""
         thumbnail(width: $width)
     }
 """)
-
-get_post_attachment_thumbnail = get_post_attachment.bind(attachment=image_thumbnail)

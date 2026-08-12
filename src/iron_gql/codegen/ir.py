@@ -5,6 +5,7 @@ from collections.abc import Iterator
 from dataclasses import dataclass
 
 from iron_gql.codegen.util import capitalize_first
+from iron_gql.slots import CombinationKey
 
 type StrTransform = Callable[[str], str]
 
@@ -285,21 +286,20 @@ class CollectedOperationVar:
 
 
 @dataclass(kw_only=True, frozen=True)
-class CollectedBindingArg:
-    # A binding's `with_args` parameter: the synthesized fragment variable
-    # together with the one fact that makes it differ from an operation
-    # variable. Carried on the variable itself rather than as a set of GraphQL
-    # names beside it, so no layer has to re-join the two by string -- a join
-    # that would keep type-checking and silently stop matching the day a
-    # variable is identified by anything but its raw GraphQL name.
-    var: CollectedOperationVar
-    # Whether a caller may leave this one out of `with_args`: every position
-    # it fills declares a schema default, and an absent variable is the only
-    # spelling that lets that default apply (see
-    # `bindings.SynthesizedVar.omittable`). Every other fragment variable is a
-    # required keyword whose `None` is sent as an explicit null, exactly like
-    # an operation variable of `execute`.
-    omittable: bool
+class CollectedRequiredFragmentArg:
+    gql_name: str
+    python_name: str
+    explicit_value_type: TypeRef
+
+
+@dataclass(kw_only=True, frozen=True)
+class CollectedOmittableFragmentArg:
+    gql_name: str
+    python_name: str
+    explicit_value_type: TypeRef
+
+
+type CollectedFragmentArg = CollectedRequiredFragmentArg | CollectedOmittableFragmentArg
 
 
 def slot_param_name(slot_python_name: str) -> str:
@@ -318,6 +318,24 @@ def result_model_name(class_name: str) -> str:
     # surface as a NameError in the generated module, not as a generation
     # error.
     return f"{class_name}Result"
+
+
+def on_type_base_name(graphql_type_name: str) -> str:
+    # The one statement of the rule, mirrored by `collect` (which decides
+    # which types get a base at all) and `render` (which writes the class).
+    # A second spelling of it would surface as a NameError in the generated
+    # module -- the fragment's own class references this name in its base
+    # expression -- rather than as a generation error.
+    return f"On{capitalize_first(graphql_type_name)}"
+
+
+def applied_fragment_class_name(fragment_class_name: str) -> str:
+    # Каноническое правило имени читает `collect`, а `render` только использует
+    # готовое имя. Маркер `0` не даёт имени начаться с dunder: иначе ссылка из
+    # класса factory подверглась бы Python name mangling.
+    if fragment_class_name.startswith("_"):
+        return f"_0{fragment_class_name}Applied"
+    return f"_{fragment_class_name}Applied"
 
 
 @dataclass(kw_only=True, frozen=True)
@@ -365,6 +383,13 @@ class CollectedTemplateSlot:
     # All of them carry the same spliced fragments, so every one of them is
     # readable through those fragments' own `read(node)`.
     node_types: tuple[str, ...]
+    # On-type bases, от которых может наследоваться фрагмент для этого slot:
+    # по одному на каждое совместимое с `type_name` условие типа среди
+    # фрагментов пакета, в отсортированном порядке. Это полный набор того, что
+    # `bind()` принимает для slot: base группирует все фрагменты своего типа,
+    # поэтому сигнатура короче перечисления, но принимает те же definitions и
+    # applications.
+    on_type_bases: tuple[str, ...]
 
 
 @dataclass(kw_only=True, frozen=True)
@@ -372,7 +397,13 @@ class CollectedTemplate:
     # Same contract as CollectedOperation.stmt_texts: one dispatch entry per
     # distinct literal spelling.
     stmt_texts: tuple[str, ...]
-    class_name: str  # operation name, e.g. "GetAttachment"
+    # The GraphQL operation name, which `_dedup_statements` has already made
+    # injective -- unlike `class_name`, which two operation names differing
+    # only in the first letter's case collapse onto. Carried because a
+    # combination has to name the template it belongs to, and naming it by
+    # `class_name` answered one template's slots with the other's.
+    name: str
+    class_name: str  # capitalised operation name, e.g. "GetAttachment"
     variables: tuple[CollectedOperationVar, ...]
     slots: tuple[CollectedTemplateSlot, ...]
     is_subscription: bool
@@ -393,30 +424,78 @@ class CollectedTemplate:
 
 
 @dataclass(kw_only=True, frozen=True)
-class CollectedFragment:
-    # Same contract as CollectedOperation.stmt_texts: one dispatch entry per
-    # distinct literal spelling.
+class CollectedOnTypeBase:
+    # Один плоский base на каждый фактический type condition фрагментов пакета.
+    # Совместимость конкретного slot с этими bases кодирует его bind signature.
+    name: str  # On{Type}
+    graphql_type_name: str
+
+
+@dataclass(kw_only=True, frozen=True)
+class CollectedPlainFragment:
+    # Как у `CollectedOperation.stmt_texts`: один dispatch entry на каждое
+    # уникальное literal spelling.
     stmt_texts: tuple[str, ...]
-    # Every call site that discovered this fragment, in discovery order -- the
-    # same contract as CollectedOperation.locations, for the same reason: one
-    # name may be written in several modules (dedup keeps the first and checks
-    # the rest agree), and a diagnosis that quotes one of them sends the
-    # developer to a file that may not be the one they have to edit.
+    # Все call sites в discovery order: одно имя может встречаться в нескольких
+    # модулях, поэтому диагностика должна показывать их все.
     locations: tuple[str, ...]
     class_name: str
-    singleton_name: str
     fragment_name: str
     model_name: str
+    # On-type base собственного type condition фрагмента.
+    on_type: str
+    # Readable closure фрагмента: он сам плюс каждый фрагмент, достижимый через
+    # его root-level spreads, с пересечением по всем совместимым slot types
+    # пакета. Это имена классов: сначала собственный класс фрагмента, затем
+    # остальные по алфавиту. Closure записывается в base expression класса как
+    # phantom без собственного runtime-значения; IR хранит его для renderer.
+    closure: tuple[str, ...]
 
     @property
     def location(self) -> str:
         return ", ".join(self.locations)
 
+    @property
+    def bound_closure(self) -> tuple[str, ...]:
+        return self.closure
+
+    @property
+    def dispatch_class_name(self) -> str:
+        return self.class_name
+
 
 @dataclass(kw_only=True, frozen=True)
-class CollectedSlotHandle:
+class CollectedFactoryFragment:
+    stmt_texts: tuple[str, ...]
+    locations: tuple[str, ...]
+    class_name: str
+    fragment_name: str
+    model_name: str
+    on_type: str
+    closure: tuple[str, ...]
+    applied_class_name: str
+    arg_vars: tuple[CollectedFragmentArg, ...]
+
+    @property
+    def location(self) -> str:
+        return ", ".join(self.locations)
+
+    @property
+    def bound_closure(self) -> tuple[str, ...]:
+        return self.closure
+
+    @property
+    def dispatch_class_name(self) -> str:
+        return self.applied_class_name
+
+
+type CollectedFragment = CollectedPlainFragment | CollectedFactoryFragment
+
+
+@dataclass(kw_only=True, frozen=True)
+class CollectedReadableFragment:
     fragment: CollectedFragment
-    # Sorted, so the rendered literal does not depend on set iteration order.
+    # Порядок фиксирован, чтобы rendered literal не зависел от set iteration.
     typenames: tuple[str, ...]
     # Whether the bind named this fragment for this slot; see
     # `bindings.ReadableFragment.direct`, which is where it is decided.
@@ -426,100 +505,55 @@ class CollectedSlotHandle:
 @dataclass(kw_only=True, frozen=True)
 class CollectedBindingSlot:
     slot: CollectedTemplateSlot
-    # Every fragment readable at this slot's root -- what the bind named plus
-    # whatever those fragments spread at their own root level -- sorted by
-    # fragment name, each with the typenames it is reachable at and whether
-    # the bind named it. Renders as `slot_handles__`: the whole set is offered
-    # to `validate_slot__` so each one reads independently and is
-    # boundary-validated.
-    readable_handles: tuple[CollectedSlotHandle, ...]
+    # Все fragments, читаемые в root slot: переданные в bind и достигнутые через
+    # их root-level spreads. Каждый entry хранит typenames и признак direct.
+    # Renderer переносит набор в bind dispatch table; `bound__` создаёт из spec
+    # readers и передаёт весь набор в `validate_slot__` для независимого чтения
+    # и boundary validation.
+    readable_fragments: tuple[CollectedReadableFragment, ...]
 
     @property
     def direct_fragments(self) -> tuple[CollectedFragment, ...]:
-        # Exactly the set the caller passed to `bind()` for this slot, sorted by
-        # GraphQL fragment name; () = empty slot. Drives the binding's
-        # overloads, its class name and the runtime dispatch key. Read off the
-        # readable set rather than stored beside it: a bind's own fragment is
-        # always readable at the slot it was passed to
-        # (`bindings._validate_slot_args` rejects one whose type cannot
-        # overlap), so a second tuple would only be the same fact written twice
-        # and kept in step by nothing.
+        # Точный набор fragments, переданных caller в этот slot, в порядке
+        # GraphQL fragment names; `()` означает empty slot. Набор выводится из
+        # readable set, потому что direct fragment всегда читаем в своём slot и
+        # отдельный tuple дублировал бы тот же факт.
         #
         # The order of the `bind()` call is not preserved, and could not be:
-        # `bindings._readable_fragments` reaches these through a graph walk that
+        # `bindings.readable_fragments` reaches these through a graph walk that
         # unions each fragment's typenames over every path to it and emits the
         # result by name -- a fragment reached along two paths has no single
         # call position to keep, and one reached transitively has none at all.
-        # Nor would keeping it help: a binding *is* its combination, so the two
-        # consumers that turn this into an identity (the class name, the
-        # dispatch key) sort for themselves through `slots.bind_key_shape`, and
-        # two call sites listing the same fragments in different orders must
-        # land on one class. What is left is the rendered text of `bind()`'s
-        # overloads, which only needs to be deterministic.
+        # Binding определяется combination, поэтому logical combination и
+        # runtime dispatch независимо сортируют fragments. Два call sites с
+        # разным порядком должны попадать в одну dispatch entry; overload text
+        # обязан быть только deterministic.
         return tuple(
-            handle.fragment for handle in self.readable_handles if handle.direct
+            readable.fragment for readable in self.readable_fragments if readable.direct
         )
 
 
 @dataclass(kw_only=True, frozen=True)
 class CollectedBinding:
-    # Named after the combination it is, never after the name a call site
-    # happened to assign it to: `{Template}With{Slot}{Fragments…}` per filled
-    # slot, slots and fragments in the canonical order of `slots.bind_key`
-    # (see `collect.binding_class_name`). That is what lets the same
-    # combination be written in several places, and in any scope, and still
-    # mean one class.
-    class_name: str
+    # Логическая идентичность комбинации: template и GraphQL fragment names по
+    # slots. Она нужна discovery и IR, но не runtime dispatch: там fragment
+    # идентифицируется generated definition class.
+    combination_key: CombinationKey
     template: CollectedTemplate
     exec_source: str
     slots: tuple[CollectedBindingSlot, ...]  # every template slot, template order
-    arg_vars: tuple[CollectedBindingArg, ...]  # fragment variables (for with_args)
-    # Every call site that binds this combination, in discovery order.
+    # Where this combination is written, which is one of two places since it
+    # stopped coming from a call-site scan: every `.bind(...)` that spells it,
+    # in discovery order, when any does -- and otherwise the template's own
+    # statement plus the statement of each fragment it spreads, because the
+    # schema is what produced it and those are the statements a developer
+    # edits to change it (`collect._combination_locations`). Not the same
+    # contract as `CollectedOperation.locations`, which is always call sites.
     locations: tuple[str, ...]
 
     @property
     def location(self) -> str:
         return ", ".join(self.locations)
-
-    @property
-    def required_arg_names(self) -> tuple[str, ...]:
-        return tuple(
-            sorted(arg.var.gql_name for arg in self.arg_vars if not arg.omittable)
-        )
-
-    @property
-    def offered_exprs(self) -> tuple[str, ...]:
-        # What this binding fills each slot phantom with, in template slot
-        # order: the fragment handle classes readable at that slot -- what the
-        # bind named, plus what those fragments spread at their own root level.
-        # `Never` for a slot this binding left unfilled, which is what makes
-        # such a node statically unreadable.
-        return tuple(
-            " | ".join(
-                handle.fragment.class_name for handle in binding_slot.readable_handles
-            )
-            or "Never"
-            for binding_slot in self.slots
-        )
-
-    @property
-    def result_type(self) -> str:
-        # The template's one result model, parametrised by this binding's
-        # fragments. The models are shared: which fragments are readable at a
-        # slot is the binding's own fact, and it travels as a type argument
-        # rather than as a copy of every model on the way to the node.
-        return f"{self.template.result_type}[{', '.join(self.offered_exprs)}]"
-
-
-def bindings_by_template(
-    bindings: list[CollectedBinding],
-) -> dict[str, list[CollectedBinding]]:
-    # Bindings stay in their overall (file, lineno) discovery order within each
-    # group.
-    grouped: dict[str, list[CollectedBinding]] = {}
-    for binding in bindings:
-        grouped.setdefault(binding.template.class_name, []).append(binding)
-    return grouped
 
 
 @dataclass(kw_only=True, frozen=True)
@@ -528,6 +562,10 @@ class CollectedPackageIR:
     input_artifacts: list[CollectedArtifact]
     operations: list[CollectedOperation]
     fragments: list[CollectedFragment]
+    # One entry per composite type the package needs a base for -- see
+    # `CollectedOnTypeBase`. Rendered ahead of the fragment classes that
+    # derive from them (`render.render_package`).
+    on_type_bases: list[CollectedOnTypeBase]
     templates: list[CollectedTemplate]
     bindings: list[CollectedBinding]
     enums: list[CollectedEnum]
@@ -543,11 +581,11 @@ class CollectedPackageIR:
 
     @property
     def passthrough_texts(self) -> tuple[str, ...]:
-        # Statements the scan discovered but nothing typed: fragment bundles
-        # and single fragments no bind accepts. Their fragments are spread
-        # statically by name, and the call site legitimately receives the
-        # untyped catch-all -- only a statement the generator has never seen
-        # is an error there.
+        # Discovered statements без typed artifact: каждый bundle и, только в
+        # пакете без templates, каждый single-fragment statement. При наличии
+        # template любой одиночный fragment становится typed definition
+        # независимо от совместимости со slots. Эти call sites корректно
+        # получают untyped catch-all.
         #
         # The typed side is enumerated here, where the artifact kinds that own
         # a `stmt_texts` are declared -- a hand-written list of them elsewhere

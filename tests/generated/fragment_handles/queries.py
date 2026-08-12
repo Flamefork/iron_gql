@@ -42,8 +42,8 @@ with_slot = api_gql(
     """
 )
 
-# A fragment becomes a handle only once some bind reaches it; these two
-# binds are what make `user_fields`/`node_fields` handles for the tests
-# below, not the mere existence of a slot they are spread-compatible with.
+# Both fragments are typed definitions because the package holds a template at all;
+# these two binds are here for the bound operations the tests below read
+# through, not to make the definitions exist.
 with_user_fields = with_slot.bind(node=user_fields)
 with_node_fields = with_slot.bind(node=node_fields)

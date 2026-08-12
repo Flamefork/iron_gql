@@ -45,4 +45,4 @@ get_attachment = api_gql(
     """
 )
 
-bound = get_attachment.bind(attachment=[image_parts, link_parts])
+bound = get_attachment.bind(attachment=(image_parts, link_parts))

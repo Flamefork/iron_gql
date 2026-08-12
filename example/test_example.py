@@ -1,6 +1,7 @@
 import pytest
 
 from example import ch01_queries
+from example import ch06_slots
 from example import ch07_subscriptions
 from example import ch08_sync
 from example import fake_app
@@ -34,6 +35,23 @@ async def test_watch_new_posts(capsys: pytest.CaptureFixture[str]):
         await ch07_subscriptions.watch_new_posts("1")
 
     assert "New post: Slots, explained by Alice" in capsys.readouterr().out
+
+
+async def test_show_attachment(capsys: pytest.CaptureFixture[str]):
+    # Chapter 6 ends with the shape the whole slot design exists for: a helper
+    # that takes the fragment as a parameter, binds a template it keeps
+    # private, and hands the caller back that fragment's own model. Running it
+    # is what proves the parameter path works at runtime, not only in the
+    # type checker.
+    client = AsyncGQLClient(
+        base_url="http://testserver/graphql/", target_app=fake_app.app
+    )
+    async with use_async_client(api, client):
+        await ch06_slots.show_attachment("1", 320)
+
+    out = capsys.readouterr().out
+    assert "Image: https://cdn.example/pic.png" in out
+    assert "Helper: https://cdn.example/pic.png" in out
 
 
 def test_sync_fetch_user(capsys: pytest.CaptureFixture[str]):

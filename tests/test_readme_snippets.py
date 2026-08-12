@@ -7,12 +7,13 @@ from graphql import GraphQLResolveInfo
 from pytest_httpserver import HTTPServer
 
 from tests.conftest import basedpyright_errors
+from tests.conftest import basedpyright_report
 from tests.conftest import generated_package
 from tests.conftest import generated_queries_path
 from tests.conftest import gql_server
 
 # README code blocks have failed when a reviewer actually ran them through the
-# generator -- a solo-bound fragment reused inside a list bind of the same slot
+# generator -- a solo-bound fragment reused inside a tuple bind of the same slot
 # produced an overlapping-overload basedpyright error, and a fragment used a
 # variable it never declared. Mapping README *claims* to tests missed those,
 # because no test ran the README's own code. This fixture closes that gap:
@@ -47,11 +48,13 @@ type LinkAttachment {
 """
 
 # Verbatim from README.md's "## Fragment Slots" section: the template, both
-# fragment-definitions blocks, both solo binds, the list-bind fragments and
-# bind, and the fragment-variables bind. `with_args(...)` itself is called at
-# use time (inside a test), not at module level, matching the README's own
-# split between "### Binding fragments to a template" / "### Fragment
-# variables" and "### Executing and reading".
+# fragment-definitions blocks, both solo binds, the tuple-bind fragments and
+# bind, and the fragment-variable factory. `with_args(...)` and the bind it
+# feeds are both called at use time (inside a test), not at module level,
+# matching the README's own split between "### Binding fragments to a
+# template" / "### Fragment variables" and "### Executing and reading" --
+# Discovery не зависит от single-fragment bind: ничего здесь не обязано быть
+# записано в месте, видимом scanner.
 QUERIES = '''
 from tests.generated.readme_fragment_slots.gql.api import api_gql
 
@@ -92,7 +95,7 @@ link_summary = api_gql("""
 """)
 
 get_post_attachment_any = get_post_attachment.bind(
-    attachment=[image_caption, link_summary]
+    attachment=(image_caption, link_summary)
 )
 
 image_thumbnail = api_gql("""
@@ -100,8 +103,6 @@ image_thumbnail = api_gql("""
         thumbnail(width: $width)
     }
 """)
-
-get_post_attachment_thumbnail = get_post_attachment.bind(attachment=image_thumbnail)
 '''
 
 generated_package("readme_fragment_slots", schema=SCHEMA, queries=QUERIES)
@@ -157,13 +158,13 @@ async def test_readme_solo_binds_execute_and_read(httpserver: HTTPServer):
         assert link.href == "https://example.com/post"
 
 
-async def test_readme_list_bind_reads_each_fragment_directly(
+async def test_readme_tuple_bind_reads_each_fragment_directly(
     httpserver: HTTPServer,
 ):
-    # The list bind (`get_post_attachment_any`) uses `image_caption`/
+    # The tuple bind (`get_post_attachment_any`) uses `image_caption`/
     # `link_summary`, not the already-solo-bound `image_url`/`link_url` —
     # pins that the corrected README example actually reads through each
-    # fragment's own handle, not only that it type-checks.
+    # fragment's own definition, not only that it type-checks.
     async with gql_server(httpserver, "readme_fragment_slots", _RESOLVERS):
         image_result = await readme_queries.get_post_attachment_any.execute(id="img")
         link_result = await readme_queries.get_post_attachment_any.execute(id="link")
@@ -181,22 +182,25 @@ async def test_readme_list_bind_reads_each_fragment_directly(
 
 
 async def test_readme_with_args_supplies_the_fragment_variable(httpserver: HTTPServer):
-    # Pins the corrected two-statement form: bind
-    # first (module level, in `queries.py`), then `.with_args(...)` where the
-    # value is known -- here, at call time inside the test.
+    # Pins the README's own form: `with_args` applies the value where it is
+    # known, on the fragment itself, and returns the definition `bind()` accepts
+    # -- the point of attachment the design moved off the bound operation
+    # (`image_thumbnail` -- the module-level factory -- has no `bind()` of
+    # its own; only its applied form does).
     async with gql_server(httpserver, "readme_fragment_slots", _RESOLVERS):
-        bound = readme_queries.get_post_attachment_thumbnail.with_args(width=800)
+        thumbnail_800 = readme_queries.image_thumbnail.with_args(width=800)
+        bound = readme_queries.get_post_attachment.bind(attachment=thumbnail_800)
         result = await bound.with_headers({"Authorization": "..."}).execute(id="img")
         assert result.post is not None
-        thumbnail = readme_queries.image_thumbnail.read(result.post.attachment)
+        thumbnail = thumbnail_800.read(result.post.attachment)
         assert thumbnail is not None
         assert thumbnail.thumbnail == "https://cdn.example/pic-800.png"
 
 
 def test_readme_queries_module_type_checks():
-    # The regression this whole file exists to catch: the list bind
-    # (`get_post_attachment_any`) must not overlap the solo binds'
-    # `Sequence[...]` overloads, and `with_args` chained after `bind()` in a
+    # The regression this whole file exists to catch: the tuple bind
+    # (`get_post_attachment_any`) must not overlap the solo binds' own
+    # overloads, and `with_args` chained after `bind()` in a
     # separate statement must type-check. Runs basedpyright against the
     # committed fixture, so `just lint`'s whole-project run also covers it.
     errors = basedpyright_errors(generated_queries_path("readme_fragment_slots"))
@@ -226,6 +230,8 @@ def test_readme_generic_bound_helper_type_checks(tmp_path: Path):
     check_file = tmp_path / "check_readme_generic.py"
     check_file.write_text(
         "\n".join([
+            "import pydantic",
+            "",
             "from tests.generated.readme_fragment_slots.gql.api import (",
             "    GetPostAttachmentBound,",
             ")",
@@ -247,6 +253,46 @@ def test_readme_generic_bound_helper_type_checks(tmp_path: Path):
     )
     errors = basedpyright_errors(check_file)
     assert errors == [], f"expected no type errors, got: {errors}"
+
+
+def test_readme_parameter_taking_helper_type_checks(tmp_path: Path):
+    # README's headline claim for this redesign: infrastructure takes the
+    # fragment as a parameter, binds it, and reads it back -- with the
+    # fragment's own model, not `Any`. It only type-checks if the `On{Type}`
+    # base carries the model through `bind()` into the result phantom, which
+    # is the whole point of the second parameter on `GQLFragment`. Taken from
+    # the README itself, so the prose and the pin cannot drift.
+    (block,) = [b for b in _readme_fenced_blocks() if "OnImageAttachment[" in b]
+    check_file = tmp_path / "check_readme_parameter_helper.py"
+    check_file.write_text(
+        f"""\
+import pydantic
+
+from tests.generated.readme_fragment_slots.gql.api import OnImageAttachment
+from tests.generated.readme_fragment_slots.queries import (
+    get_post_attachment,
+    image_caption,
+)
+
+
+{block}
+
+
+async def readme_usage() -> None:
+    caption = await attachment_of("p-1", image_caption)
+    reveal_type(caption)
+""",
+        encoding="utf-8",
+    )
+    report = basedpyright_report(check_file)
+    errors = [d for d in report.general_diagnostics if d.severity == "error"]
+    assert errors == [], f"expected no type errors, got: {errors}"
+    # The caller's own fragment model comes back, not the base's parameter and
+    # not `Any` -- that is the claim the prose makes right above the block.
+    infos = [
+        d.message for d in report.general_diagnostics if d.severity == "information"
+    ]
+    assert infos == ['Type of "caption" is "ImageCaptionData | None"'], infos
 
 
 def _is_gql_or_bind_call(stmt: ast.stmt) -> bool:

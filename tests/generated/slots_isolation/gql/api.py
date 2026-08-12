@@ -9,13 +9,17 @@ import datetime
 from abc import ABC
 from abc import abstractmethod
 from collections.abc import AsyncGenerator
+from collections.abc import Callable
 from collections.abc import Sequence
 from contextlib import AbstractAsyncContextManager
 from typing import Annotated
+from typing import Any
 from typing import ClassVar
 from typing import Literal
 from typing import Never
-from typing import Self
+from typing import TypeVar
+from typing import cast
+from typing import final
 from typing import overload
 from typing import override
 
@@ -34,6 +38,8 @@ from tests.generated.slots_isolation.settings import GRAPHQL_URL
 API_CLIENT = runtime.AsyncGQLClient(
     base_url=GRAPHQL_URL,
 )
+
+_API_GQL_CAST = cast
 
 
 class GQLModel(pydantic.BaseModel):
@@ -131,149 +137,154 @@ class BoardIdData(GQLOpenModel):
     id: builtins.str
 
 
-class BoardId(slots.GQLFragment[BoardIdData]):
-    pass
+TModel = TypeVar("TModel", bound=pydantic.BaseModel, covariant=True)
+TReads = TypeVar("TReads", contravariant=True)
 
 
-BOARD_ID = BoardId(
-    fragment_name='BoardId',
-    adapter=pydantic.TypeAdapter(BoardIdData),
-)
-
-
-class GetBoardBound[TResult](runtime.GQLBoundOperation, ABC):
+class OnBoard(slots.GQLBindableFragment[TModel, TReads], ABC):
     @abstractmethod
-    async def execute(self, *, id: builtins.str) -> TResult:
-        ...
-
-
-class PingBoardBound[TResult](runtime.GQLBoundOperation, ABC):
-    @abstractmethod
-    async def execute(self, *, id: builtins.str) -> TResult:
-        ...
-
-
-class PingMainBound[TResult](runtime.GQLBoundOperation, ABC):
-    @abstractmethod
-    async def execute(self, *, id: builtins.str) -> TResult:
-        ...
-
-
-class MergedBoardBound[TResult](runtime.GQLBoundOperation, ABC):
-    @abstractmethod
-    async def execute(self, *, id: builtins.str) -> TResult:
-        ...
-
-
-class PingMainWithNothing(PingMainBound[PingMainResult[Never]]):
-    # See: queries.py:53
-    exec_source__ = 'query PingMain($id: ID!) {\n  main: board(id: $id) {\n    __typename\n  }\n}'
-    slot_handles__ = {"main": ()}
-    @override
-    async def execute(self, *, id: builtins.str) -> PingMainResult[Never]:
-        return await API_CLIENT.query(
-            PingMainResult[Never],
-            self.exec_source__,
-            variables={"id": id, **self.fragment_args__()},
-            headers=self.headers,
-            slot_handles=self.slot_handles__,
+    def __init__(
+        self,
+        *,
+        fragment_name: str,
+        definition_type: type[slots.GQLFragment[
+            TModel, TReads,
+        ]],
+        adapter: pydantic.TypeAdapter[TModel],
+    ) -> None:
+        super().__init__(
+            fragment_name=fragment_name,
+            definition_type=definition_type,
+            adapter=adapter,
         )
 
 
-class PingMainWithMainBoardId(PingMainBound[PingMainResult[BoardId]]):
-    # See: queries.py:59
-    exec_source__ = 'query PingMain($id: ID!) {\n  main: board(id: $id) {\n    __typename\n    ...BoardId\n  }\n}\n\nfragment BoardId on Board {\n  id\n}'
-    slot_handles__ = {"main": (slots.SlotHandle(BOARD_ID, frozenset({'Board'})),)}
+@final
+class BoardId(OnBoard[BoardIdData, "BoardId"]):
+    adapter__: ClassVar[pydantic.TypeAdapter[BoardIdData]] = pydantic.TypeAdapter(BoardIdData)
+
     @override
-    async def execute(self, *, id: builtins.str) -> PingMainResult[BoardId]:
-        return await API_CLIENT.query(
-            PingMainResult[BoardId],
-            self.exec_source__,
-            variables={"id": id, **self.fragment_args__()},
-            headers=self.headers,
-            slot_handles=self.slot_handles__,
+    def __init__(self) -> None:
+        super().__init__(
+            fragment_name='BoardId',
+            definition_type=BoardId,
+            adapter=self.adapter__,
         )
 
 
-class MergedBoardWithNothing(MergedBoardBound[MergedBoardResult[Never]]):
-    # See: queries.py:60
-    exec_source__ = 'query MergedBoard($id: ID!) {\n  merged: board(id: $id) {\n    __typename\n  }\n  merged: board(id: $id) {\n    __typename\n  }\n}'
-    slot_handles__ = {"merged": ()}
-    @override
-    async def execute(self, *, id: builtins.str) -> MergedBoardResult[Never]:
+class GetBoardBound[TResult: pydantic.BaseModel](runtime.GQLBoundOperation):
+    async def execute(self, *, id: builtins.str) -> TResult:
         return await API_CLIENT.query(
-            MergedBoardResult[Never],
-            self.exec_source__,
-            variables={"id": id, **self.fragment_args__()},
+            _API_GQL_CAST("type[TResult]", GetBoardResult),
+            self.exec_source,
+            variables={"id": id, **self.fragment_args},
             headers=self.headers,
-            slot_handles=self.slot_handles__,
+            slot_readers=self.slot_readers,
         )
 
 
-class MergedBoardWithMergedBoardId(MergedBoardBound[MergedBoardResult[BoardId]]):
-    # See: queries.py:61
-    exec_source__ = 'query MergedBoard($id: ID!) {\n  merged: board(id: $id) {\n    __typename\n  }\n  merged: board(id: $id) {\n    __typename\n    ...BoardId\n  }\n}\n\nfragment BoardId on Board {\n  id\n}'
-    slot_handles__ = {"merged": (slots.SlotHandle(BOARD_ID, frozenset({'Board'})),)}
-    @override
-    async def execute(self, *, id: builtins.str) -> MergedBoardResult[BoardId]:
+class PingBoardBound[TResult: pydantic.BaseModel](runtime.GQLBoundOperation):
+    async def execute(self, *, id: builtins.str) -> TResult:
         return await API_CLIENT.query(
-            MergedBoardResult[BoardId],
-            self.exec_source__,
-            variables={"id": id, **self.fragment_args__()},
+            _API_GQL_CAST("type[TResult]", PingBoardResult),
+            self.exec_source,
+            variables={"id": id, **self.fragment_args},
             headers=self.headers,
-            slot_handles=self.slot_handles__,
+            slot_readers=self.slot_readers,
+        )
+
+
+class PingMainBound[TResult: pydantic.BaseModel](runtime.GQLBoundOperation):
+    async def execute(self, *, id: builtins.str) -> TResult:
+        return await API_CLIENT.query(
+            _API_GQL_CAST("type[TResult]", PingMainResult),
+            self.exec_source,
+            variables={"id": id, **self.fragment_args},
+            headers=self.headers,
+            slot_readers=self.slot_readers,
+        )
+
+
+class MergedBoardBound[TResult: pydantic.BaseModel](runtime.GQLBoundOperation):
+    async def execute(self, *, id: builtins.str) -> TResult:
+        return await API_CLIENT.query(
+            _API_GQL_CAST("type[TResult]", MergedBoardResult),
+            self.exec_source,
+            variables={"id": id, **self.fragment_args},
+            headers=self.headers,
+            slot_readers=self.slot_readers,
         )
 
 
 class GetBoard(runtime.GQLTemplate):
     @overload
-    def bind(self, *, board: Sequence[Never] = ()) -> Never: ...
+    def bind(self, *, board: Sequence[Never] = ()) -> GetBoardBound[GetBoardResult[Never]]: ...
     @overload
-    def bind(self, *, board: slots.GQLFragment[pydantic.BaseModel] | Sequence[slots.GQLFragment[pydantic.BaseModel]]) -> Never: ...
-    def bind(self, *, board: slots.GQLFragment[pydantic.BaseModel] | Sequence[slots.GQLFragment[pydantic.BaseModel]] = ()) -> runtime.GQLBoundOperation:
-        if _API_GQL_BIND_DISPATCH.get(slots.bind_key('GetBoard', {'board': board})) is None:
-            raise LookupError("unknown bind combination for GetBoard; every fragment a bind passes must be a discovered statement - check the call site, then regenerate the package")
-        return _API_GQL_BIND_DISPATCH[slots.bind_key('GetBoard', {'board': board})]()
+    def bind[TModelBoard: pydantic.BaseModel, TReadsBoard](self, *, board: OnBoard[TModelBoard, TReadsBoard]) -> GetBoardBound[GetBoardResult[OnBoard[TModelBoard, TReadsBoard] | TReadsBoard]]: ...
+    def bind(self, *, board: slots.GQLBindableFragment[pydantic.BaseModel, Any] | Sequence[slots.GQLBindableFragment[pydantic.BaseModel, Any]] = ()) -> runtime.GQLBoundOperation:
+        if _API_GQL_BIND_DISPATCH.get(slots.dispatch_key('GetBoard', {'board': board})) is None:
+            raise LookupError("unknown bind combination for GetBoard; single-fragment and empty combinations are generated from the schema, so this is a tuple combination no call site writes literally - write it, then regenerate the package. A call whose template is an expression the scan cannot follow is never read either: those are listed, with the reason, in the debug run's ignored_binds.json")
+        return GetBoardBound[GetBoardResult].bound__(
+            _API_GQL_BIND_DISPATCH[slots.dispatch_key('GetBoard', {'board': board})], {'board': slots.as_bindable_fragments(board)},
+        )
 
 
 class PingBoard(runtime.GQLTemplate):
     @overload
-    def bind(self, *, board: Sequence[Never] = ()) -> Never: ...
+    def bind(self, *, board: Sequence[Never] = ()) -> PingBoardBound[PingBoardResult[Never]]: ...
     @overload
-    def bind(self, *, board: slots.GQLFragment[pydantic.BaseModel] | Sequence[slots.GQLFragment[pydantic.BaseModel]]) -> Never: ...
-    def bind(self, *, board: slots.GQLFragment[pydantic.BaseModel] | Sequence[slots.GQLFragment[pydantic.BaseModel]] = ()) -> runtime.GQLBoundOperation:
-        if _API_GQL_BIND_DISPATCH.get(slots.bind_key('PingBoard', {'board': board})) is None:
-            raise LookupError("unknown bind combination for PingBoard; every fragment a bind passes must be a discovered statement - check the call site, then regenerate the package")
-        return _API_GQL_BIND_DISPATCH[slots.bind_key('PingBoard', {'board': board})]()
+    def bind[TModelBoard: pydantic.BaseModel, TReadsBoard](self, *, board: OnBoard[TModelBoard, TReadsBoard]) -> PingBoardBound[PingBoardResult[OnBoard[TModelBoard, TReadsBoard] | TReadsBoard]]: ...
+    def bind(self, *, board: slots.GQLBindableFragment[pydantic.BaseModel, Any] | Sequence[slots.GQLBindableFragment[pydantic.BaseModel, Any]] = ()) -> runtime.GQLBoundOperation:
+        if _API_GQL_BIND_DISPATCH.get(slots.dispatch_key('PingBoard', {'board': board})) is None:
+            raise LookupError("unknown bind combination for PingBoard; single-fragment and empty combinations are generated from the schema, so this is a tuple combination no call site writes literally - write it, then regenerate the package. A call whose template is an expression the scan cannot follow is never read either: those are listed, with the reason, in the debug run's ignored_binds.json")
+        return PingBoardBound[PingBoardResult].bound__(
+            _API_GQL_BIND_DISPATCH[slots.dispatch_key('PingBoard', {'board': board})], {'board': slots.as_bindable_fragments(board)},
+        )
 
 
 class PingMain(runtime.GQLTemplate):
     @overload
-    def bind(self, *, main: Sequence[Never] = ()) -> PingMainWithNothing: ...
+    def bind(self, *, main: Sequence[Never] = ()) -> PingMainBound[PingMainResult[Never]]: ...
     @overload
-    def bind(self, *, main: BoardId | Sequence[BoardId]) -> PingMainWithMainBoardId: ...
-    def bind(self, *, main: slots.GQLFragment[pydantic.BaseModel] | Sequence[slots.GQLFragment[pydantic.BaseModel]] = ()) -> runtime.GQLBoundOperation:
-        if _API_GQL_BIND_DISPATCH.get(slots.bind_key('PingMain', {'main': main})) is None:
-            raise LookupError("unknown bind combination for PingMain; every fragment a bind passes must be a discovered statement - check the call site, then regenerate the package")
-        return _API_GQL_BIND_DISPATCH[slots.bind_key('PingMain', {'main': main})]()
+    def bind[TModelMain: pydantic.BaseModel, TReadsMain](self, *, main: OnBoard[TModelMain, TReadsMain]) -> PingMainBound[PingMainResult[OnBoard[TModelMain, TReadsMain] | TReadsMain]]: ...
+    def bind(self, *, main: slots.GQLBindableFragment[pydantic.BaseModel, Any] | Sequence[slots.GQLBindableFragment[pydantic.BaseModel, Any]] = ()) -> runtime.GQLBoundOperation:
+        if _API_GQL_BIND_DISPATCH.get(slots.dispatch_key('PingMain', {'main': main})) is None:
+            raise LookupError("unknown bind combination for PingMain; single-fragment and empty combinations are generated from the schema, so this is a tuple combination no call site writes literally - write it, then regenerate the package. A call whose template is an expression the scan cannot follow is never read either: those are listed, with the reason, in the debug run's ignored_binds.json")
+        return PingMainBound[PingMainResult].bound__(
+            _API_GQL_BIND_DISPATCH[slots.dispatch_key('PingMain', {'main': main})], {'main': slots.as_bindable_fragments(main)},
+        )
 
 
 class MergedBoard(runtime.GQLTemplate):
     @overload
-    def bind(self, *, merged: Sequence[Never] = ()) -> MergedBoardWithNothing: ...
+    def bind(self, *, merged: Sequence[Never] = ()) -> MergedBoardBound[MergedBoardResult[Never]]: ...
     @overload
-    def bind(self, *, merged: BoardId | Sequence[BoardId]) -> MergedBoardWithMergedBoardId: ...
-    def bind(self, *, merged: slots.GQLFragment[pydantic.BaseModel] | Sequence[slots.GQLFragment[pydantic.BaseModel]] = ()) -> runtime.GQLBoundOperation:
-        if _API_GQL_BIND_DISPATCH.get(slots.bind_key('MergedBoard', {'merged': merged})) is None:
-            raise LookupError("unknown bind combination for MergedBoard; every fragment a bind passes must be a discovered statement - check the call site, then regenerate the package")
-        return _API_GQL_BIND_DISPATCH[slots.bind_key('MergedBoard', {'merged': merged})]()
+    def bind[TModelMerged: pydantic.BaseModel, TReadsMerged](self, *, merged: OnBoard[TModelMerged, TReadsMerged]) -> MergedBoardBound[MergedBoardResult[OnBoard[TModelMerged, TReadsMerged] | TReadsMerged]]: ...
+    def bind(self, *, merged: slots.GQLBindableFragment[pydantic.BaseModel, Any] | Sequence[slots.GQLBindableFragment[pydantic.BaseModel, Any]] = ()) -> runtime.GQLBoundOperation:
+        if _API_GQL_BIND_DISPATCH.get(slots.dispatch_key('MergedBoard', {'merged': merged})) is None:
+            raise LookupError("unknown bind combination for MergedBoard; single-fragment and empty combinations are generated from the schema, so this is a tuple combination no call site writes literally - write it, then regenerate the package. A call whose template is an expression the scan cannot follow is never read either: those are listed, with the reason, in the debug run's ignored_binds.json")
+        return MergedBoardBound[MergedBoardResult].bound__(
+            _API_GQL_BIND_DISPATCH[slots.dispatch_key('MergedBoard', {'merged': merged})], {'merged': slots.as_bindable_fragments(merged)},
+        )
 
 
-_API_GQL_BIND_DISPATCH: dict[slots.BindKey, type[runtime.GQLBoundOperation]] = {
-    ('PingMain', ()): PingMainWithNothing,
-    ('PingMain', (('main', ('BoardId',)),)): PingMainWithMainBoardId,
-    ('MergedBoard', ()): MergedBoardWithNothing,
-    ('MergedBoard', (('merged', ('BoardId',)),)): MergedBoardWithMergedBoardId,
+_API_GQL_BIND_DISPATCH: dict[slots.DispatchKey, runtime.BoundSpec] = {
+    # See: queries.py:3
+    ('GetBoard', ()): ('query GetBoard($id: ID!) {\n  board(id: $id) {\n    __typename\n    owner {\n      who: fullName\n    }\n    cards {\n      title\n    }\n    activity {\n      __typename\n      ... on Comment {\n        body\n        author {\n          who: fullName\n        }\n      }\n      ... on Move {\n        fromColumn\n        author {\n          id\n        }\n      }\n    }\n  }\n}', {"board": ()}),
+    # See: queries.py:3, queries.py:45
+    ('GetBoard', (('board', (BoardId,)),)): ('query GetBoard($id: ID!) {\n  board(id: $id) {\n    __typename\n    owner {\n      who: fullName\n    }\n    cards {\n      title\n    }\n    activity {\n      __typename\n      ... on Comment {\n        body\n        author {\n          who: fullName\n        }\n      }\n      ... on Move {\n        fromColumn\n        author {\n          id\n        }\n      }\n    }\n    ...BoardId\n  }\n}\n\nfragment BoardId on Board {\n  id\n}', {"board": ((BoardId, frozenset({'Board'})),)}),
+    # See: queries.py:20
+    ('PingBoard', ()): ('query PingBoard($id: ID!) {\n  board(id: $id) {\n    __typename\n  }\n}', {"board": ()}),
+    # See: queries.py:20, queries.py:45
+    ('PingBoard', (('board', (BoardId,)),)): ('query PingBoard($id: ID!) {\n  board(id: $id) {\n    __typename\n    ...BoardId\n  }\n}\n\nfragment BoardId on Board {\n  id\n}', {"board": ((BoardId, frozenset({'Board'})),)}),
+    # See: queries.py:28
+    ('PingMain', ()): ('query PingMain($id: ID!) {\n  main: board(id: $id) {\n    __typename\n  }\n}', {"main": ()}),
+    # See: queries.py:28, queries.py:45
+    ('PingMain', (('main', (BoardId,)),)): ('query PingMain($id: ID!) {\n  main: board(id: $id) {\n    __typename\n    ...BoardId\n  }\n}\n\nfragment BoardId on Board {\n  id\n}', {"main": ((BoardId, frozenset({'Board'})),)}),
+    # See: queries.py:36
+    ('MergedBoard', ()): ('query MergedBoard($id: ID!) {\n  merged: board(id: $id) {\n    __typename\n  }\n  merged: board(id: $id) {\n    __typename\n  }\n}', {"merged": ()}),
+    # See: queries.py:36, queries.py:45
+    ('MergedBoard', (('merged', (BoardId,)),)): ('query MergedBoard($id: ID!) {\n  merged: board(id: $id) {\n    __typename\n  }\n  merged: board(id: $id) {\n    __typename\n    ...BoardId\n  }\n}\n\nfragment BoardId on Board {\n  id\n}', {"merged": ((BoardId, frozenset({'Board'})),)}),
 }
 
 
@@ -288,11 +299,11 @@ def api_gql(stmt: Literal['\n    query PingMain($id: ID!) {\n        main: board
 @overload
 def api_gql(stmt: Literal['\n    query MergedBoard($id: ID!) {\n        merged: board(id: $id) { __typename }\n        merged: board(id: $id) @slot { __typename }\n    }\n    ']) -> MergedBoard: ...
 @overload
-def api_gql(stmt: str) -> runtime.GQLOperation | slots.GQLFragment[pydantic.BaseModel] | runtime.GQLTemplate: ...
+def api_gql(stmt: str) -> runtime.GQLOperation | slots.GQLFragment[pydantic.BaseModel, Any] | runtime.GQLTemplate: ...
 
 
-_API_GQL_FRAGMENTS: dict[str, slots.GQLFragment[pydantic.BaseModel]] = {
-    '\n    fragment BoardId on Board {\n        id\n    }\n    ': BOARD_ID,
+_API_GQL_FRAGMENTS: dict[str, type[slots.GQLFragment[pydantic.BaseModel, Any]]] = {
+    '\n    fragment BoardId on Board {\n        id\n    }\n    ': BoardId,
 }
 
 
@@ -304,10 +315,10 @@ _API_GQL_TEMPLATES: dict[str, type[runtime.GQLTemplate]] = {
 }
 
 
-def api_gql(stmt: str) -> runtime.GQLOperation | slots.GQLFragment[pydantic.BaseModel] | runtime.GQLTemplate:
-    fragment = _API_GQL_FRAGMENTS.get(stmt)
-    if fragment is not None:
-        return fragment
+def api_gql(stmt: str) -> runtime.GQLOperation | slots.GQLFragment[pydantic.BaseModel, Any] | runtime.GQLTemplate:
+    fragment_cls = _API_GQL_FRAGMENTS.get(stmt)
+    if fragment_cls is not None:
+        return _API_GQL_CAST("Callable[[], slots.GQLFragment[pydantic.BaseModel, Any]]", fragment_cls)()
     template_cls = _API_GQL_TEMPLATES.get(stmt)
     if template_cls is not None:
         return template_cls()

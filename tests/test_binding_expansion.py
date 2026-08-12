@@ -3,6 +3,8 @@ import pytest
 
 from iron_gql.codegen import GraphQLGenerationError
 from iron_gql.codegen.bindings import ExpandedBinding
+from iron_gql.codegen.bindings import OmittableSynthesizedVar
+from iron_gql.codegen.bindings import RequiredSynthesizedVar
 from iron_gql.codegen.bindings import SlotTarget
 from iron_gql.codegen.bindings import expand_binding
 
@@ -295,7 +297,7 @@ def test_a_slot_the_bind_leaves_empty_still_gets_a_readable_entry():
 
 def test_multiple_non_overlapping_fragments_share_one_slot():
     # Not from the brief's listed cases: the twin of the overlapping-coverage
-    # case below — pins that a list of fragments on genuinely disjoint types
+    # case below — pins that a tuple of fragments on genuinely disjoint types
     # merges fine too, instead of only ever exercising the overlapping shape.
     schema = graphql.build_schema(SCHEMA)
     template_doc = graphql.parse(TEMPLATE)
@@ -412,7 +414,10 @@ def test_variable_type_conflict_between_usages_rejected():
     # this test green, since graphql-core's error for the resulting document
     # also mentions `$x`. Pinned on text only this check's own message
     # produces.
-    with pytest.raises(GraphQLGenerationError, match="must agree on its type"):
+    with pytest.raises(
+        GraphQLGenerationError,
+        match="no GraphQL variable declaration type is allowed at every usage",
+    ):
         expand_binding(
             schema=schema,
             template_doc=template_doc,
@@ -426,6 +431,49 @@ def test_variable_type_conflict_between_usages_rejected():
             },
             location="test:1",
         )
+
+
+@pytest.mark.parametrize(
+    ("conflicting_type", "expected_type"),
+    [("String!", "'String!'"), ("[String]!", "'[String]!'")],
+)
+def test_variable_type_conflict_names_the_incompatible_usage(
+    conflicting_type: str, expected_type: str
+):
+    schema = graphql.build_schema(
+        _schema(
+            "byCount(x: [Int]!): String!",
+            "byOptional(x: [Int]): String!",
+            f"byName(x: {conflicting_type}): String!",
+        )
+    )
+    template_doc = graphql.parse(TEMPLATE)
+    parts = _fragment(
+        """
+        fragment Parts on ImageAttachment {
+            byCount(x: $x)
+            byOptional(x: $x)
+            byName(x: $x)
+        }
+        """
+    )
+
+    with pytest.raises(GraphQLGenerationError) as exc_info:
+        expand_binding(
+            schema=schema,
+            template_doc=template_doc,
+            template_operation=_operation(template_doc),
+            template_name="GetAttachment",
+            slots=SLOTS,
+            spreads={"attachment": (parts,)},
+            all_fragments={"Parts": parts},
+            location="test:1",
+        )
+
+    message = str(exc_info.value)
+    assert "'[Int]!'" in message
+    assert expected_type in message
+    assert "'[Int]' in fragment" not in message
 
 
 SCHEMA_WITH_TWO_TYPED_ARGS = _schema(
@@ -465,7 +513,10 @@ def test_every_conflicting_variable_of_one_bind_is_reported_together():
         )
 
     assert len(exc_info.value.errors) == 2
-    assert all("must agree on its type" in error for error in exc_info.value.errors)
+    assert all(
+        "no GraphQL variable declaration type is allowed at every usage" in error
+        for error in exc_info.value.errors
+    )
     assert any("$x" in error for error in exc_info.value.errors)
     assert any("$y" in error for error in exc_info.value.errors)
 
@@ -504,7 +555,10 @@ def test_readable_and_variable_diagnoses_of_one_bind_arrive_together():
 
     assert len(exc_info.value.errors) == 2
     assert any("under @skip/@include" in error for error in exc_info.value.errors)
-    assert any("must agree on its type" in error for error in exc_info.value.errors)
+    assert any(
+        "no GraphQL variable declaration type is allowed at every usage" in error
+        for error in exc_info.value.errors
+    )
 
 
 def test_variable_used_by_two_fragments_at_agreeing_type_merges_into_one_declaration():
@@ -538,6 +592,137 @@ def test_variable_used_by_two_fragments_at_agreeing_type_merges_into_one_declara
 
     assert [v.node.variable.name.value for v in expanded.fragment_vars] == ["x"]
     assert expanded.exec_source.count("$x: Int!") == 1
+
+
+def test_variable_uses_choose_one_graphql_compatible_declaration():
+    schema = graphql.build_schema(
+        _schema("byRequired(x: Int!): String!", "byOptional(x: Int): String!")
+    )
+    template_doc = graphql.parse(TEMPLATE)
+    inner_parts = _fragment(
+        "fragment InnerParts on ImageAttachment { byOptional(x: $x) }"
+    )
+    outer_parts = _fragment(
+        "fragment OuterParts on ImageAttachment { byRequired(x: $x) ...InnerParts }"
+    )
+
+    expanded = expand_binding(
+        schema=schema,
+        template_doc=template_doc,
+        template_operation=_operation(template_doc),
+        template_name="GetAttachment",
+        slots=SLOTS,
+        spreads={"attachment": (outer_parts,)},
+        all_fragments={
+            "InnerParts": inner_parts,
+            "OuterParts": outer_parts,
+        },
+        location="test:1",
+    )
+
+    assert expanded.exec_source.count("$x: Int!") == 1
+    assert graphql.validate(schema, graphql.parse(expanded.exec_source)) == []
+
+
+def test_nested_list_usages_choose_one_graphql_compatible_declaration():
+    schema = graphql.build_schema(
+        _schema(
+            "byOuterRequired(x: [Int]!): String!",
+            "byInnerRequired(x: [Int!]): String!",
+        )
+    )
+    template_doc = graphql.parse(TEMPLATE)
+    inner_parts = _fragment(
+        "fragment InnerParts on ImageAttachment { byInnerRequired(x: $x) }"
+    )
+    outer_parts = _fragment(
+        """
+        fragment OuterParts on ImageAttachment {
+            byOuterRequired(x: $x)
+            ...InnerParts
+        }
+        """
+    )
+
+    expanded = expand_binding(
+        schema=schema,
+        template_doc=template_doc,
+        template_operation=_operation(template_doc),
+        template_name="GetAttachment",
+        slots=SLOTS,
+        spreads={"attachment": (outer_parts,)},
+        all_fragments={
+            "InnerParts": inner_parts,
+            "OuterParts": outer_parts,
+        },
+        location="test:1",
+    )
+
+    assert expanded.exec_source.count("$x: [Int!]!") == 1
+    assert graphql.validate(schema, graphql.parse(expanded.exec_source)) == []
+
+
+def test_two_directly_bound_fragments_sharing_a_variable_are_rejected():
+    # Finding 2 of the parametric-bind final review, and the design's own
+    # example (§4): `ImageUrl` and `ImageAlt` are *siblings* here, each named
+    # directly at its own slot -- neither is reached through the other's
+    # spread, unlike the merge test above. Each is applied independently
+    # through its own `with_args`, so agreeing on `$width`'s type (both
+    # `Int!`) is not enough: the values are independent (`bind(left=image_url.
+    # with_args(width=100), right=image_alt.with_args(width=200))`), and
+    # `runtime.GQLBoundOperation.bound__` merges every direct fragment's
+    # `fragment_args__` flat across the binding -- one of the two silently
+    # wins.
+    schema = graphql.build_schema("""
+        type Query {
+            post(id: ID!): Post
+        }
+
+        type Post {
+            id: ID!
+            left: ImageAttachment
+            right: ImageAttachment
+        }
+
+        type ImageAttachment {
+            url(width: Int!): String!
+            alt(width: Int!): String!
+        }
+    """)
+    template_doc = graphql.parse("""
+        query GetAttachment($id: ID!) {
+            post(id: $id) {
+                id
+                left @slot { __typename }
+                right @slot { __typename }
+            }
+        }
+    """)
+    two_slots = {
+        "left": SlotTarget(type_name="ImageAttachment", response_key="left"),
+        "right": SlotTarget(type_name="ImageAttachment", response_key="right"),
+    }
+    image_url = _fragment("fragment ImageUrl on ImageAttachment { url(width: $width) }")
+    image_alt = _fragment("fragment ImageAlt on ImageAttachment { alt(width: $width) }")
+
+    with pytest.raises(GraphQLGenerationError) as exc_info:
+        expand_binding(
+            schema=schema,
+            template_doc=template_doc,
+            template_operation=_operation(template_doc),
+            template_name="GetAttachment",
+            slots=two_slots,
+            spreads={"left": (image_url,), "right": (image_alt,)},
+            all_fragments={"ImageUrl": image_url, "ImageAlt": image_alt},
+            location="test:1",
+        )
+
+    message = str(exc_info.value)
+    assert "test:1" in message
+    assert "$width" in message
+    assert "ImageUrl" in message
+    assert "ImageAlt" in message
+    assert "rename" in message
 
 
 SCHEMA_WITH_ID_ARG = _schema("byId(id: ID!): String!")
@@ -610,7 +795,8 @@ def test_fragment_variable_with_location_default_is_optional():
     assert synthesized.node.variable.name.value == "limit"
     assert isinstance(synthesized.node.type, graphql.NamedTypeNode)
     assert synthesized.node.type.name.value == "Int"
-    assert synthesized.omittable
+    assert isinstance(synthesized, OmittableSynthesizedVar)
+    assert isinstance(synthesized.explicit_value_type, graphql.GraphQLNonNull)
 
 
 def test_fragment_variable_at_a_nullable_position_with_a_default_is_optional():
@@ -641,7 +827,8 @@ def test_fragment_variable_at_a_nullable_position_with_a_default_is_optional():
     [synthesized] = expanded.fragment_vars
     assert synthesized.node.variable.name.value == "size"
     assert isinstance(synthesized.node.type, graphql.NamedTypeNode)
-    assert synthesized.omittable
+    assert isinstance(synthesized, OmittableSynthesizedVar)
+    assert not isinstance(synthesized.explicit_value_type, graphql.GraphQLNonNull)
 
 
 def test_fragment_variable_partial_location_default_stays_required():
@@ -674,7 +861,8 @@ def test_fragment_variable_partial_location_default_stays_required():
     [synthesized] = expanded.fragment_vars
     assert synthesized.node.variable.name.value == "limit"
     assert isinstance(synthesized.node.type, graphql.NonNullTypeNode)
-    assert not synthesized.omittable
+    assert isinstance(synthesized, RequiredSynthesizedVar)
+    assert isinstance(synthesized.explicit_value_type, graphql.GraphQLNonNull)
     assert "$limit: Int!" in expanded.exec_source
 
 
@@ -846,7 +1034,7 @@ def test_a_brick_spread_under_a_narrower_condition_is_readable_only_there():
 
 def test_a_fragment_spread_inside_a_field_is_not_readable_at_the_slot_root():
     # `ThumbAlt`'s fields land under `thumb`, not on the slot's root payload.
-    # Offering it as a slot handle validated it against the root, where `alt`
+    # Offering it as a readable definition validated it against the root, where `alt`
     # was never requested, so every response failed. Its definition still has
     # to reach the document, and its data still reaches the reader through
     # `ImageParts`'s own model.
@@ -914,7 +1102,7 @@ def test_a_conditional_spread_is_allowed_when_the_brick_is_also_bound_directly()
     # The rule above is about a fragment that reaches the slot root *only*
     # under a directive. Bind the same brick directly and `_SlotFiller` writes
     # its spread at the slot root unconditionally, so its fields are always
-    # requested and its handle is always safe to validate -- rejecting this
+    # requested and its definition is always safe to validate -- rejecting this
     # made a correct document ungeneratable, and both remedies the diagnosis
     # offered changed what the developer had asked for.
     schema = graphql.build_schema(READABLE_SCHEMA)
@@ -940,14 +1128,14 @@ def test_a_conditional_spread_is_allowed_when_the_brick_is_also_bound_directly()
     # `NodeId` carries the typenames it is reached at unconditionally -- the
     # direct bind, cut to the slot's own types -- which here covers every
     # typename the conditional path could deliver it at, so that path
-    # contributes nothing the handle could be wrong about.
+    # contributes nothing the definition could be wrong about.
     assert readable["NodeId"] == frozenset({"ImageAttachment", "LinkAttachment"})
 
 
 def test_a_conditional_path_to_a_typename_reached_no_other_way_is_rejected():
     # The rule is per typename, not per fragment name. `NodeId` is reached
     # unconditionally on ImageAttachment and only under a directive on
-    # LinkAttachment, so its handle covers ImageAttachment alone -- and a
+    # LinkAttachment, so its definition covers ImageAttachment alone -- and a
     # LinkAttachment payload that *did* carry the fields (the condition was
     # true) read back as None. Asking whether the fragment is reachable at all,
     # rather than at which typenames, let exactly this combination through.
@@ -986,7 +1174,7 @@ def test_a_brick_reachable_at_no_typename_of_the_slot_is_not_offered():
     # `hero` is an ImageAttachment, so a Node fragment bound there narrows to
     # {ImageAttachment}; the `... on VideoAttachment` branch inside it can never
     # match, and `VideoParts` behind it is present on no payload this slot ever
-    # returns. Registering it anyway produced a handle with an empty typename
+    # returns. Registering it anyway produced a reader with an empty typename
     # set, which type-checks and returns None for every single response.
     schema = graphql.build_schema(READABLE_SCHEMA)
     template_doc = graphql.parse("""
@@ -1021,7 +1209,7 @@ def test_a_brick_reachable_at_no_typename_of_the_slot_is_not_offered():
 
 def test_a_conditional_spread_inside_a_field_is_allowed():
     # The mirror image of the rule above: nothing offers `ThumbAlt` as a
-    # handle, and the fields it contributes to `ImageParts`'s own model are
+    # reader, and the fields it contributes to `ImageParts`'s own model are
     # collected under the condition, hence optional -- so there is nothing
     # here for the rejection to protect.
     schema = graphql.build_schema(READABLE_SCHEMA)
@@ -1059,13 +1247,10 @@ query GetAttachment($id: ID!, $size: Int!) {
 """
 
 
-def test_a_fragment_the_template_already_spreads_keeps_the_templates_variable():
-    # `ImageParts` is spread statically by the template *and* bound into the
-    # slot, so its `$size` is the template's own variable -- already declared
-    # by the operation and supplied through `execute`. Synthesizing it again
-    # reported a collision with the template that no edit could resolve:
-    # renaming the fragment's variable breaks the static spread, renaming the
-    # template's just moves the clash.
+def test_a_bound_fragment_the_template_already_spreads_has_two_owners():
+    # Static spread отдаёт $size методу execute, а binding ImageParts — методу
+    # ImageParts.with_args. В GraphQL declaration одна, поэтому ни один источник
+    # не может молча перекрыть другой.
     schema = graphql.build_schema(READABLE_SCHEMA)
     template_doc = graphql.parse(TEMPLATE_SPREADING_A_BOUND_FRAGMENT)
     image_parts = _fragment(
@@ -1075,19 +1260,22 @@ def test_a_fragment_the_template_already_spreads_keeps_the_templates_variable():
         definitions=[*template_doc.definitions, image_parts]
     )
 
-    expanded = expand_binding(
-        schema=schema,
-        template_doc=template_doc,
-        template_operation=_operation(template_doc),
-        template_name="GetAttachment",
-        slots=SLOTS,
-        spreads={"attachment": (image_parts,)},
-        all_fragments={"ImageParts": image_parts},
-        location="test:1",
-    )
+    with pytest.raises(GraphQLGenerationError) as exc_info:
+        expand_binding(
+            schema=schema,
+            template_doc=template_doc,
+            template_operation=_operation(template_doc),
+            template_name="GetAttachment",
+            slots=SLOTS,
+            spreads={"attachment": (image_parts,)},
+            all_fragments={"ImageParts": image_parts},
+            location="test:1",
+        )
 
-    assert expanded.fragment_vars == ()
-    assert expanded.exec_source.count("fragment ImageParts on ImageAttachment") == 1
+    message = str(exc_info.value)
+    assert "Fragment 'ImageParts'" in message
+    assert "$size" in message
+    assert "template 'GetAttachment'" in message
 
 
 TEMPLATE_WITH_LOCAL_IMAGE_PARTS = """
@@ -1110,7 +1298,7 @@ def test_a_local_definition_conflicting_with_a_bound_fragment_is_rejected():
     # one brick, but it assumed the name always meant the same definition. A
     # template statement may define one locally, and silently keeping that
     # copy shipped a document whose `ImageParts` selects `caption` while the
-    # handle's `ImagePartsData` requires `url` -- a correct response then
+    # definition's `ImagePartsData` requires `url` -- a correct response then
     # failed validation, with nothing at generation time to say why.
     schema = graphql.build_schema(READABLE_SCHEMA)
     template_doc = graphql.parse(TEMPLATE_WITH_LOCAL_IMAGE_PARTS)

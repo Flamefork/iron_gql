@@ -6,6 +6,7 @@ get_attachment = api_gql(
         post(id: $id) {
             id
             attachment @slot { __typename }
+            preview @slot { __typename }
         }
     }
     """
@@ -18,5 +19,3 @@ image_parts = api_gql(
     }
     """
 )
-
-bound = get_attachment.bind(attachment=image_parts)

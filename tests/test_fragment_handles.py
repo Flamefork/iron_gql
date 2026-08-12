@@ -11,6 +11,7 @@ from iron_gql.codegen import GraphQLGenerationError
 from tests.conftest import ProjectBuilder
 from tests.conftest import basedpyright_report
 from tests.conftest import generated_package
+from tests.conftest import generated_source
 
 SCHEMA = """
 type Query {
@@ -81,39 +82,162 @@ generated_package(
         """
     )
 
-    # A fragment becomes a handle only once some bind reaches it; these two
-    # binds are what make `user_fields`/`node_fields` handles for the tests
-    # below, not the mere existence of a slot they are spread-compatible with.
+    # Both fragments are typed definitions because the package holds a template at all;
+    # these two binds are here for the bound operations the tests below read
+    # through, not to make the definitions exist.
     with_user_fields = with_slot.bind(node=user_fields)
     with_node_fields = with_slot.bind(node=node_fields)
     ''',
 )
 
-from tests.generated.fragment_handles import queries as handle_queries
+from tests.generated.fragment_handles import queries as fragment_queries
 from tests.generated.fragment_handles.gql import api
 
 
-def test_fragment_statement_returns_a_handle_singleton():
-    assert isinstance(handle_queries.user_fields, api.UserFields)
-    assert handle_queries.user_fields is api.USER_FIELDS
+def test_fragment_statement_returns_a_new_definition_value():
+    first = api.api_gql(
+        """
+    fragment UserFields on User {
+        id
+        name
+    }
+    """
+    )
+    second = api.api_gql(
+        """
+    fragment UserFields on User {
+        id
+        name
+    }
+    """
+    )
+    assert isinstance(first, api.UserFields)
+    assert isinstance(second, api.UserFields)
+    assert first is not second
 
 
-def test_handle_carries_its_fragment_name():
-    # The name is the handle's whole identity: a bind dispatches on it, and it
-    # is what a diagnosis names back to the developer.
-    assert handle_queries.user_fields.fragment_name__ == "UserFields"
+def test_fragment_class_declares_its_on_type_base_and_closure():
+    # Public definition class — обычный concrete value type. `api_gql()`
+    # хранит сам class и создаёт новый instance для каждого вызова.
+    source = generated_source("fragment_handles")
+    assert "class OnUser(slots.GQLBindableFragment[TModel, TReads], ABC):" in source
+    assert '@final\nclass UserFields(OnUser[UserFieldsData, "UserFields"]):' in source
+    assert "class _UserFields(UserFields):" not in source
+    assert "USER_FIELDS" not in source
+    assert "FRAGMENTS_BY_NAME" not in source
 
 
-def test_handle_validates_its_own_selection():
-    data = api.USER_FIELDS.validate__({"id": "u-1", "name": "Alice"})
+NARROWING_SCHEMA = """
+type Query {
+    imageAttachment(id: ID!): ImageAttachment
+    linkAttachment(id: ID!): LinkAttachment
+}
+
+interface Attachment {
+    id: ID!
+}
+
+type ImageAttachment implements Attachment {
+    id: ID!
+    url: String!
+}
+
+type LinkAttachment implements Attachment {
+    id: ID!
+    href: String!
+}
+"""
+
+
+def test_closure_narrows_to_the_intersection_over_every_compatible_slot_type(
+    test_project: ProjectBuilder,
+):
+    # `NodeParts` (on the `Attachment` interface) spreads `ImageBits` inside an
+    # `... on ImageAttachment` inline fragment -- reachable at the package's
+    # only slot in `test_fragment_class_declares_its_on_type_base_and_closure`
+    # above, where the closure comes out as the full union. Here the package
+    # carries a *second* slot, of the disjoint type `LinkAttachment`: at that
+    # slot `ImageBits` is reachable on paper (`NodeParts` is still
+    # spread-compatible, through `Attachment`) but at no typename the slot can
+    # actually hold, so `readable_fragments` drops it there. The closure
+    # written into `NodeParts`'s own base is the *intersection* over both
+    # slots, not just the one it happens to be bound into, so `ImageBits` must
+    # исчезнуть из него. Это доказывает narrowing на нескольких slot types, а
+    # не no-op случай пакета с единственным slot type.
+    test_project.prepare(
+        schema=NARROWING_SCHEMA,
+        queries="""
+        from sample_app.gql.api import api_gql
+
+        image_bits = api_gql(
+            '''
+            fragment ImageBits on ImageAttachment {
+                url
+            }
+            '''
+        )
+
+        node_parts = api_gql(
+            '''
+            fragment NodeParts on Attachment {
+                __typename
+                id
+                ... on ImageAttachment {
+                    ...ImageBits
+                }
+            }
+            '''
+        )
+
+        get_image = api_gql(
+            '''
+            query GetImage($id: ID!) {
+                imageAttachment(id: $id) @slot { __typename }
+            }
+            '''
+        )
+
+        get_link = api_gql(
+            '''
+            query GetLink($id: ID!) {
+                linkAttachment(id: $id) @slot { __typename }
+            }
+            '''
+        )
+
+        bound = get_image.bind(image_attachment=node_parts)
+        """,
+    )
+    assert test_project.generate() is True
+    generated = (test_project.root / "sample_app/gql/api.py").read_text()
+    # `ImageBits` is a class of the package all the same -- the narrowing is
+    # about what `NodeParts` may promise, not about which fragments exist --
+    # so its absence from the closure below is a fact about that promise and
+    # not about a fragment the generator happened to drop.
+    assert (
+        '@final\nclass ImageBits(OnImageAttachment[ImageBitsData, "ImageBits"]):'
+        in generated
+    )
+    assert (
+        '@final\nclass NodeParts(OnAttachment[NodePartsData, "NodeParts"]):'
+        in generated
+    )
+
+
+def test_definition_carries_its_fragment_name():
+    assert fragment_queries.user_fields.fragment_name__ == "UserFields"
+
+
+def test_definition_validates_its_own_selection():
+    data = api.UserFields().validate__({"id": "u-1", "name": "Alice"})
     assert isinstance(data, api.UserFieldsData)
     assert data.name == "Alice"
 
 
-def test_handle_model_ignores_other_readers_fields():
-    # The payload a handle validates carries the other passed fragments'
+def test_definition_model_ignores_other_readers_fields():
+    # The payload a definition validates carries the other passed fragments'
     # fields next to its own; the model keeps exactly its own selection.
-    data = api.USER_FIELDS.validate__({
+    data = api.UserFields().validate__({
         "id": "u-1",
         "name": "Alice",
         "email": "alice@example.com",
@@ -124,10 +248,12 @@ def test_handle_model_ignores_other_readers_fields():
 def test_interface_fragment_covers_every_possible_type():
     # Every possible type is covered, and each variant model sees only its own
     # selection: `permissions` belongs to the Admin inline fragment and is not
-    # a field of the User variant.
-    (handle,) = api.WithSlotWithNodeNodeFields.slot_handles__["node"]
-    assert handle.typenames == frozenset({"Admin", "User"})
-    user = api.NODE_FIELDS.validate__({
+    # a field of the User variant. `slot_readers` is an instance attribute
+    # now, built at `bind()` time (`bound__`) rather than a per-combination
+    # `ClassVar`.
+    (reader,) = fragment_queries.with_node_fields.slot_readers["node"]
+    assert reader.typenames == frozenset({"Admin", "User"})
+    user = api.NodeFields().validate__({
         "__typename": "User",
         "id": "u-1",
         "permissions": ["root"],
@@ -136,7 +262,7 @@ def test_interface_fragment_covers_every_possible_type():
 
 
 def test_interface_fragment_model_is_a_discriminated_union():
-    admin = api.NODE_FIELDS.validate__({
+    admin = api.NodeFields().validate__({
         "__typename": "Admin",
         "id": "a-1",
         "permissions": ["root"],
@@ -148,7 +274,7 @@ def test_interface_fragment_model_is_a_discriminated_union():
         "permissions": ["root"],
     }
 
-    user = api.NODE_FIELDS.validate__({
+    user = api.NodeFields().validate__({
         "__typename": "User",
         "id": "u-1",
     })
@@ -156,9 +282,9 @@ def test_interface_fragment_model_is_a_discriminated_union():
     assert user.model_dump(by_alias=True) == {"__typename": "User", "id": "u-1"}
 
 
-def test_statement_with_an_operation_is_not_a_handle():
-    assert isinstance(handle_queries.combined, api.GetViewer)
-    assert not isinstance(handle_queries.combined, slots.GQLFragment)
+def test_statement_with_an_operation_is_not_a_definition():
+    assert isinstance(fragment_queries.combined, api.GetViewer)
+    assert not isinstance(fragment_queries.combined, slots.GQLFragment)
     assert not hasattr(api, "ViewerFields")
 
 
@@ -217,10 +343,9 @@ def test_duplicate_fragment_names_across_statements_are_rejected(
             '''
         )
 
-        # `first` must be bind-reachable for the name collision to surface at
-        # all: an unbound fragment keeps its pre-bind meaning and is never
-        # compiled into a handle in the first place.
-        bound = with_slot.bind(node=first)
+        # The template is what makes the two fragments typed definitions: a
+        # package with no template compiles no fragment into one, so the name
+        # collision would never surface.
         """,
     )
 
@@ -282,10 +407,10 @@ def _nested_model_name(api_module: ModuleType) -> str:
     return annotation.__name__
 
 
-def test_handle_model_names_ignore_unrelated_operations(
+def test_definition_model_names_ignore_unrelated_operations(
     test_project: ProjectBuilder,
 ):
-    # A handle's model names — the root and everything reachable from it —
+    # A definition's model names — the root and everything reachable from it —
     # are public API: callers annotate and narrow against them. Adding an
     # unrelated operation that selects the same GraphQL type differently
     # must not move any of them.
@@ -356,13 +481,14 @@ def test_local_shadowing_resolves_spreads_local_first(
     assert test_project.generate() is True
 
 
-def test_duplicate_fragment_with_different_spelling_returns_the_handle(
+def test_duplicate_fragment_with_different_spelling_returns_new_definitions(
     test_project: ProjectBuilder,
 ):
     # Deduplication compares dedented text, so the same fragment indented
-    # differently at two call sites is one handle — but the dispatch dict is
+    # differently at two call sites is one definition type — but the dispatch dict is
     # keyed by the exact literal, so every spelling must resolve to the
-    # singleton rather than fall through to a bare GQLOperation.
+    # generated definition class rather than fall through to a bare
+    # GQLOperation.
     test_project.prepare(
         schema=SCHEMA,
         queries="""
@@ -385,8 +511,9 @@ def test_duplicate_fragment_with_different_spelling_returns_the_handle(
         """,
     )
     api_module, queries_module = test_project.generate_and_import()
-    assert queries_module.first is api_module.USER_BITS  # pyright: ignore[reportAny]
-    assert queries_module.second is api_module.USER_BITS  # pyright: ignore[reportAny]
+    assert isinstance(queries_module.first, api_module.UserBits)  # pyright: ignore[reportAny]
+    assert isinstance(queries_module.second, api_module.UserBits)  # pyright: ignore[reportAny]
+    assert queries_module.first is not queries_module.second  # pyright: ignore[reportAny]
 
 
 def test_fragment_pinning_a_generated_model_name_is_rejected(
@@ -532,9 +659,9 @@ def test_type_checker_rejects_incompatible_fragment_and_infers_read_type(
     # a runtime one. This is the only test that can catch a dropped or
     # mistyped overload. `slots_multi` has everything needed: AlbumSummary is
     # a fragment on Album, a type outside every slot's possible types in that
-    # package, so it never becomes a handle at all — its statement resolves
-    # to the untyped catch-all, which no bind() overload accepts — and
-    # AlbumTitle is compatible with both `attachment` and `preview`. The
+    # package -- it is a fully typed definition like every other fragment, and
+    # what rejects it is that no slot's signature names its `OnAlbum` base --
+    # and AlbumTitle is compatible with both `attachment` and `preview`. The
     # scratch file lives under tmp_path, outside the repo tree, so `just
     # lint`'s whole-project basedpyright run never picks it up.
     check_file = tmp_path / "check_slots.py"
@@ -553,20 +680,19 @@ def test_type_checker_rejects_incompatible_fragment_and_infers_read_type(
                 post = result.posts[0]
                 title = queries.album_title.read(post.attachment)
                 reveal_type(title)
-                passthrough = queries.album_summary.with_headers({"x-trace": "1"})
-                reveal_type(passthrough)
+                reveal_type(queries.album_summary)
         """).lstrip("\n"),
         encoding="utf-8",
     )
     diagnostics = basedpyright_report(check_file).general_diagnostics
 
     # Half 1: AlbumSummary must be statically rejected as `owner`. `bad`'s
-    # call matches no bind() overload (`owner` is untyped GQLOperation), so
-    # basedpyright reports the overload-resolution failure at the call's own
-    # line plus cascading "unknown type"/"unused variable" noise on `bad` —
-    # the diagnostic that actually pins the rejection is the best-match
-    # argument-type error, at the exact kwarg's line so an unrelated type
-    # error can't satisfy it.
+    # call matches no bind() overload (no overload for `owner` names
+    # `OnAlbum`), so basedpyright reports the overload-resolution failure at
+    # the call's own line plus cascading "unknown type"/"unused variable"
+    # noise on `bad` — the diagnostic that actually pins the rejection is the
+    # best-match argument-type error, at the exact kwarg's line so an
+    # unrelated type error can't satisfy it.
     errors = [d for d in diagnostics if d.severity == "error"]
     argument_errors = [d for d in errors if d.rule == "reportArgumentType"]
     assert len(argument_errors) == 1, (
@@ -574,11 +700,11 @@ def test_type_checker_rejects_incompatible_fragment_and_infers_read_type(
     )
     rejection = argument_errors[0]
     assert rejection.range.start.line == 7, rejection
-    assert "GQLOperation" in rejection.message, rejection.message
-    assert "OwnerIdentity" in rejection.message, rejection.message
+    assert "AlbumSummary" in rejection.message, rejection.message
+    assert "OnOwner" in rejection.message, rejection.message
 
     # Half 2: read() must recover AlbumTitle's own model (AlbumTitleData),
-    # not some slot-specific union — a handle's `read` is typed by its own
+    # not some slot-specific union — a definition's `read` is typed by its own
     # model alone, independent of which slot it was ever bound into.
     infos = [d for d in diagnostics if d.severity == "information"]
     assert len(infos) == 2, (
@@ -587,11 +713,14 @@ def test_type_checker_rejects_incompatible_fragment_and_infers_read_type(
     inference = infos[0]
     assert inference.message == 'Type of "title" is "AlbumTitleData | None"', inference
 
-    # Half 3: a known-but-unbound statement (a fragment no bind ever reaches)
-    # keeps its own Literal overload returning the plain GQLOperation, so
-    # operation methods like `with_headers` stay available at this call site.
-    passthrough = infos[1]
-    assert passthrough.message == 'Type of "passthrough" is "GQLOperation"', passthrough
+    # Half 3: the rejected statement is a typed fragment definition all the same --
+    # every fragment of a package with a template is typed now, and being
+    # unbindable is a fact about the bases the slots accept, not about the
+    # statement's own type.
+    unbindable = infos[1]
+    assert unbindable.message == (
+        'Type of "queries.album_summary" is "AlbumSummary"'
+    ), unbindable
 
 
 def test_unknown_statement_is_rejected_instead_of_a_bare_operation():
@@ -607,7 +736,7 @@ def test_operation_spreading_an_ambiguous_fragment_is_rejected(
 ):
     # The operation defines no local `Common`, so it resolves through the
     # global fragment index where scan order picks the winner — same ambiguity rule as
-    # a handle's dependencies.
+    # a definition's dependencies.
     test_project.prepare(
         schema=SCHEMA,
         queries="""
@@ -643,10 +772,12 @@ def test_operation_spreading_an_ambiguous_fragment_is_rejected(
 def test_bundle_statement_returns_the_untyped_catch_all(
     test_project: ProjectBuilder,
 ):
-    # README: a statement bundling several fragments without an operation is
-    # the one case that keeps returning the untyped catch-all — its fragments
-    # are spread statically by name, and the call sits at module level, so a
-    # raise here would break the import of user code.
+    # README: a statement bundling several fragments without an operation
+    # keeps returning the untyped catch-all — its fragments are spread
+    # statically by name, and the call sits at module level, so a raise here
+    # would break the import of user code. The other case that stays untyped
+    # — a single fragment in a package with no template at all — is pinned by
+    # test_package_without_operations_passes_fragments_through above.
     test_project.prepare(
         schema=SCHEMA,
         queries="""

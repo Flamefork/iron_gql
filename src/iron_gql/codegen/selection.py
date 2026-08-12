@@ -14,7 +14,7 @@ from iron_gql.codegen.accessors import inline_fragment_type_condition
 # typenames that spread is the only way there -- where the same fragment also
 # reaches the root unconditionally, its fields are always requested at those
 # typenames and the conditional path adds nothing to be wrong about (see
-# `bindings._readable_fragments`).
+# `bindings.readable_fragments`).
 CONDITIONAL_DIRECTIVE_NAMES = frozenset({"include", "skip"})
 
 

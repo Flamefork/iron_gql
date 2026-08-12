@@ -1,0 +1,24 @@
+type Query {
+    post(id: ID!): Post
+}
+
+type Post {
+    id: ID!
+    attachment: Attachment
+}
+
+interface Node {
+    id: ID!
+}
+
+type ImageAttachment implements Node {
+    id: ID!
+    url: String!
+}
+
+type LinkAttachment implements Node {
+    id: ID!
+    href: String!
+}
+
+union Attachment = ImageAttachment | LinkAttachment

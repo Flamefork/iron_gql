@@ -34,6 +34,98 @@ FRAGMENT = 'api_gql("fragment F on T { x }")'
 # so no test pins a different half of it.
 _UNREACHABLE = "not where this call stands"
 
+_SLOT_SCHEMA = """
+type Query {
+    post(id: ID!): Post
+}
+
+type Post {
+    id: ID!
+    attachment: Attachment
+}
+
+union Attachment = ImageAttachment | LinkAttachment
+
+type ImageAttachment {
+    url: String!
+}
+
+type LinkAttachment {
+    href: String!
+}
+"""
+
+
+def test_a_bind_on_a_parameter_is_not_a_discovery_error(test_project: ProjectBuilder):
+    # The whole point of the redesign: infrastructure code binds a fragment it
+    # was handed. The scanner cannot resolve `details` -- it is a parameter --
+    # and must not try: the combination comes from the schema, not from this
+    # call site, so a bare slot argument is not discovery's
+    # concern any more, resolvable or not.
+    test_project.prepare(
+        schema=_SLOT_SCHEMA,
+        queries="""
+        from sample_app.gql.api import api_gql
+
+        _template = api_gql(
+            '''
+            query GetPost($id: ID!) {
+                post(id: $id) {
+                    attachment @slot { __typename }
+                }
+            }
+            '''
+        )
+
+        def fetch(details):
+            return _template.bind(attachment=details)
+        """,
+    )
+    assert test_project.generate() is True
+
+
+@pytest.mark.parametrize("empty", ["()", "[]"], ids=["tuple", "list"])
+def test_an_empty_sibling_does_not_turn_a_generic_bind_into_discovery(
+    test_project: ProjectBuilder, empty: str
+):
+    # Пустой slot не добавляет combination. Рядом с bare parameter он оставляет
+    # call в той же категории, что single-slot helper выше: combination выводит
+    # schema enumeration, а discovery не разрешает runtime value параметра.
+    test_project.prepare(
+        schema="""
+        type Query {
+            post: Post
+        }
+
+        type Post {
+            attachment: Attachment
+            preview: Attachment
+        }
+
+        type Attachment {
+            url: String!
+        }
+        """,
+        queries=f"""
+        from sample_app.gql.api import api_gql
+
+        _template = api_gql(
+            '''
+            query GetPost {{
+                post {{
+                    attachment @slot {{ __typename }}
+                    preview @slot {{ __typename }}
+                }}
+            }}
+            '''
+        )
+
+        def fetch(details):
+            return _template.bind(attachment=details, preview={empty})
+        """,
+    )
+    assert test_project.generate() is True
+
 
 # Nothing about a bind has to live at module level: a template, its fragments
 # and the bind itself are ordinary names in whatever scope the code that uses
@@ -47,7 +139,7 @@ def test_template_and_fragment_are_resolved_as_local_names(tmp_path: Path):
             "def go():\n"
             f"    tmpl = {TEMPLATE}\n"
             f"    frag = {FRAGMENT}\n"
-            "    return tmpl.bind(f=frag)\n"
+            "    return tmpl.bind(f=(frag,))\n"
         ),
     )
     package = _discover(tmp_path)
@@ -61,7 +153,7 @@ def test_template_and_fragment_are_resolved_as_local_names(tmp_path: Path):
 
 # The template a caller sees is the one its own scope binds. Resolving the
 # module-level name of the same spelling would generate a class for a
-# combination nobody wrote, and the runtime — which keys on the handles it is
+# combination nobody wrote, and the runtime — which keys on bindable classes it is
 # actually passed — would then fail to find it.
 def test_a_local_name_shadows_the_module_level_one(tmp_path: Path):
     _write(
@@ -72,7 +164,7 @@ def test_a_local_name_shadows_the_module_level_one(tmp_path: Path):
             f"frag = {FRAGMENT}\n"
             "def go():\n"
             f'    tmpl = api_gql("query Inner {{ f @slot {{ __typename }} }}")\n'
-            "    return tmpl.bind(f=frag)\n"
+            "    return tmpl.bind(f=(frag,))\n"
         ),
     )
     package = _discover(tmp_path)
@@ -98,7 +190,7 @@ def test_a_local_non_gql_name_hides_the_module_level_template(tmp_path: Path):
             f"frag = {FRAGMENT}\n"
             "def go():\n"
             "    tmpl = object()\n"
-            "    return tmpl.bind(f=frag)\n"
+            "    return tmpl.bind(f=(frag,))\n"
         ),
     )
     package = _discover(tmp_path)
@@ -121,7 +213,7 @@ def test_a_name_bound_by_another_runs_gql_call_stays_silent(tmp_path: Path):
             "def go():\n"
             f"    tmpl = {TEMPLATE}\n"
             f"    frag = {FRAGMENT}\n"
-            "    return tmpl.bind(f=frag)\n"
+            "    return tmpl.bind(f=(frag,))\n"
         ),
     )
     _write(
@@ -131,7 +223,7 @@ def test_a_name_bound_by_another_runs_gql_call_stays_silent(tmp_path: Path):
             "def go():\n"
             '    tmpl = api_sync_gql("query Q { f @slot { __typename } }")\n'
             '    frag = api_sync_gql("fragment F on T { x }")\n'
-            "    return tmpl.bind(f=frag)\n"
+            "    return tmpl.bind(f=(frag,))\n"
         ),
     )
     for gql_fn_name, owner, other in (
@@ -180,8 +272,8 @@ _SIGNATURE_FORMS = [
 
 # The one line each fixture below ends on, kept out of the f-strings that build
 # those fixtures so neither has to concatenate.
-_BIND_RETURN = "    return tmpl.bind(f=frag)\n"
-_BIND_ATTRIBUTE = "    bound = tmpl.bind(f=frag)\n"
+_BIND_RETURN = "    return tmpl.bind(f=(frag,))\n"
+_BIND_ATTRIBUTE = "    bound = tmpl.bind(f=(frag,))\n"
 
 
 def _module_level_is_visible(binder: str, root: Path) -> bool:
@@ -228,7 +320,7 @@ def test_binding_form_scoping_agrees_with_the_interpreter(tmp_path: Path, binder
         "app/mod.py",
         f"{_BINDER_PREAMBLE}tmpl = {TEMPLATE}\nfrag = {FRAGMENT}\ndef go():\n"
         + binder
-        + "    return tmpl.bind(f=frag)\n",
+        + "    return tmpl.bind(f=(frag,))\n",
     )
     expected_binds = 1 if _module_level_is_visible(binder, tmp_path) else 0
     package = _discover(tmp_path)
@@ -250,7 +342,7 @@ def test_an_attribute_or_subscript_target_binds_nothing(tmp_path: Path, binder: 
         "app/mod.py",
         f"tmpl = {TEMPLATE}\nfrag = {FRAGMENT}\ndef go(holder):\n"
         + binder
-        + "    return tmpl.bind(f=frag)\n",
+        + "    return tmpl.bind(f=(frag,))\n",
     )
     package = _discover(tmp_path)
     assert len(package.binds) == 1
@@ -292,9 +384,9 @@ seen = C.visible
 
 _LOCAL_FRAG_IMPORT = "    from app.frags import image_parts\n"
 _LOCAL_TMPL_IMPORT = "    from app.templates import tmpl\n"
-_BIND_LOCAL_FRAG = "    return tmpl.bind(f=image_parts)\n"
-_REBIND_AND_BIND = "tmpl = None\nbound = tmpl.bind(f=frag)\n"
-_MODULE_LEVEL_BIND = "bound = tmpl.bind(f=frag)\n"
+_BIND_LOCAL_FRAG = "    return tmpl.bind(f=(image_parts,))\n"
+_REBIND_AND_BIND = "tmpl = None\nbound = tmpl.bind(f=(frag,))\n"
+_MODULE_LEVEL_BIND = "bound = tmpl.bind(f=(frag,))\n"
 
 
 def test_a_function_local_import_resolves_as_a_slot_argument(tmp_path: Path):
@@ -378,7 +470,7 @@ def test_a_class_type_parameter_hides_the_module_level_template(tmp_path: Path):
 # the oracle above can run a `return` in, so it keeps its own direct pin.
 @pytest.mark.parametrize(
     "body",
-    ["go = lambda tmpl: tmpl.bind(f=frag)\n"],
+    ["go = lambda tmpl: tmpl.bind(f=(frag,))\n"],
 )
 def test_a_parameter_hides_the_module_level_template(tmp_path: Path, body: str):
     _write(
@@ -403,7 +495,7 @@ def test_nonlocal_declaration_resolves_in_the_enclosing_function(tmp_path: Path)
             f"    tmpl = {TEMPLATE}\n"
             "    def inner():\n"
             "        nonlocal tmpl\n"
-            "        return tmpl.bind(f=frag)\n"
+            "        return tmpl.bind(f=(frag,))\n"
             "    return inner\n"
         ),
     )
@@ -424,7 +516,7 @@ def test_nonlocal_declaration_resolves_in_the_enclosing_function(tmp_path: Path)
             f"    tmpl = {TEMPLATE}\n"
             f'    tmpl = api_gql("query Other {{ f @slot {{ __typename }} }}")\n'
             f"    frag = {FRAGMENT}\n"
-            "    return tmpl.bind(f=frag)\n"
+            "    return tmpl.bind(f=(frag,))\n"
         ),
         # ...or one of its fragments.
         (
@@ -432,7 +524,7 @@ def test_nonlocal_declaration_resolves_in_the_enclosing_function(tmp_path: Path)
             f"    tmpl = {TEMPLATE}\n"
             f"    frag = {FRAGMENT}\n"
             f'    frag = api_gql("fragment G on T {{ y }}")\n'
-            "    return tmpl.bind(f=frag)\n"
+            "    return tmpl.bind(f=(frag,))\n"
         ),
         # A conditional reassignment is the same question, which is why the
         # rule counts assignments instead of trying to follow branches.
@@ -442,7 +534,7 @@ def test_nonlocal_declaration_resolves_in_the_enclosing_function(tmp_path: Path)
             "    if flag:\n"
             f'        tmpl = api_gql("query Other {{ f @slot {{ __typename }} }}")\n'
             f"    frag = {FRAGMENT}\n"
-            "    return tmpl.bind(f=frag)\n"
+            "    return tmpl.bind(f=(frag,))\n"
         ),
     ],
 )
@@ -456,14 +548,14 @@ def test_the_same_fragment_twice_in_one_slot_is_a_hard_error(tmp_path: Path):
     # README's "what the generator rejects": a slot spreads each of its
     # fragments once, so this combination cannot exist. It used to generate a
     # real binding whose expanded operation carried the spread twice and whose
-    # overload unioned the handle class with itself.
+    # overload unioned the definition class with itself.
     _write(
         tmp_path,
         "app/mod.py",
         "".join([
             f"tmpl = {TEMPLATE}\n",
             f"frag = {FRAGMENT}\n",
-            "bound = tmpl.bind(f=[frag, frag])\n",
+            "bound = tmpl.bind(f=(frag, frag))\n",
         ]),
     )
     with pytest.raises(TypeError, match="more than once"):
@@ -471,7 +563,7 @@ def test_the_same_fragment_twice_in_one_slot_is_a_hard_error(tmp_path: Path):
 
 
 def test_two_different_fragments_in_one_slot_stay_legal(tmp_path: Path):
-    # The mirror: the rule is about repetition, not about list binds.
+    # The mirror: the rule is about repetition, not about tuple binds.
     _write(
         tmp_path,
         "app/mod.py",
@@ -479,7 +571,7 @@ def test_two_different_fragments_in_one_slot_stay_legal(tmp_path: Path):
             f"tmpl = {TEMPLATE}\n",
             f"one = {FRAGMENT}\n",
             'two = api_gql("fragment G on T { y }")\n',
-            "bound = tmpl.bind(f=[one, two])\n",
+            "bound = tmpl.bind(f=(one, two))\n",
         ]),
     )
     package = _discover(tmp_path)
@@ -488,6 +580,67 @@ def test_two_different_fragments_in_one_slot_stay_legal(tmp_path: Path):
         "fragment F on T { x }",
         "fragment G on T { y }",
     ]
+
+
+def test_a_single_value_slot_is_resolved_beside_a_tuple_slot(tmp_path: Path):
+    # The multi-slot sibling of `test_a_bind_on_a_parameter_is_not_a_discovery_error`:
+    # a call that names a literal tuple for one slot is ours (the base
+    # resolves and the call is validated), and once it is, a *different*
+    # slot's bare value is resolved too, not dropped -- the runtime computes
+    # one `DispatchKey` from every slot a `bind()` call actually passes
+    # (`slots.dispatch_key`), so discovering only the tuple slot would enumerate a
+    # combination the call never makes and miss the one it does.
+    _write(
+        tmp_path,
+        "app/mod.py",
+        "".join([
+            (
+                'tmpl = api_gql("""\n'
+                "    query Q {\n"
+                "        f @slot { __typename }\n"
+                "        g @slot { __typename }\n"
+                '    }\n""")\n'
+            ),
+            f"frag = {FRAGMENT}\n",
+            'one = api_gql("fragment G on T { y }")\n',
+            'two = api_gql("fragment H on T { z }")\n',
+            "bound = tmpl.bind(f=frag, g=(one, two))\n",
+        ]),
+    )
+    package = _discover(tmp_path)
+    assert len(package.binds) == 1
+    assert [key for key, _ in package.binds[0].slot_args] == ["f", "g"]
+
+
+def test_a_single_value_slot_beside_an_unresolvable_tuple_slot_is_a_hard_error(
+    tmp_path: Path,
+):
+    # The negative twin of the test above, and of
+    # test_a_bind_on_a_parameter_is_not_a_discovery_error: a parameter is a
+    # free pass only for a bind whose *every* slot takes a single value
+    # (README: "a call whose every slot takes a single value is left alone
+    # entirely"). `g`'s multi-fragment tuple makes this call ours to read, and once a
+    # call is read at all, README promises every one of its slots has to
+    # resolve -- so `details` stops being a free pass the moment a sibling
+    # slot is a tuple, and must raise, not be quietly left unresolved beside
+    # the tuple that did resolve.
+    _write(
+        tmp_path,
+        "app/mod.py",
+        (
+            'tmpl = api_gql("""\n'
+            "    query Q {\n"
+            "        f @slot { __typename }\n"
+            "        g @slot { __typename }\n"
+            '    }\n""")\n'
+            'one = api_gql("fragment G on T { y }")\n'
+            'two = api_gql("fragment H on T { z }")\n'
+            "def fetch(details):\n"
+            "    return tmpl.bind(f=details, g=(one, two))\n"
+        ),
+    )
+    with pytest.raises(TypeError, match="cannot resolve 'details'"):
+        _discover(tmp_path)
 
 
 def test_a_reassigned_module_level_name_is_a_hard_error(tmp_path: Path):
@@ -518,7 +671,7 @@ def test_inline_template_and_fragments_are_resolved(tmp_path: Path):
         (
             "def go():\n"
             f"    return {TEMPLATE}.bind(\n"
-            f'        f=[{FRAGMENT}, api_gql("fragment G on T {{ y }}")]\n'
+            f'        f=({FRAGMENT}, api_gql("fragment G on T {{ y }}"))\n'
             "    )\n"
         ),
     )
@@ -544,7 +697,7 @@ def test_a_bind_chained_into_another_call_is_resolved(tmp_path: Path):
         (
             f"tmpl = {TEMPLATE}\n"
             f"frag = {FRAGMENT}\n"
-            "bound = tmpl.bind(f=frag).with_args(width=1)\n"
+            "bound = tmpl.bind(f=(frag,)).with_args(width=1)\n"
         ),
     )
     package = _discover(tmp_path)
@@ -552,7 +705,7 @@ def test_a_bind_chained_into_another_call_is_resolved(tmp_path: Path):
     assert package.binds[0].template.raw_text == "query Q { f @slot { __typename } }"
 
 
-# A slot's fragments may be named and inline in the same list: both spellings
+# A slot's fragments may be named and inline in the same tuple: both spellings
 # resolve to a statement, which is all a slot argument ever needed to be.
 def test_named_and_inline_fragments_mix_in_one_slot(tmp_path: Path):
     _write(
@@ -561,7 +714,100 @@ def test_named_and_inline_fragments_mix_in_one_slot(tmp_path: Path):
         (
             f"tmpl = {TEMPLATE}\n"
             f"frag = {FRAGMENT}\n"
-            'bound = tmpl.bind(f=[frag, api_gql("fragment G on T { y }")])\n'
+            'bound = tmpl.bind(f=(frag, api_gql("fragment G on T { y }")))\n'
+        ),
+    )
+    package = _discover(tmp_path)
+    assert [
+        stmt.raw_text for _, stmts in package.binds[0].slot_args for stmt in stmts
+    ] == ["fragment F on T { x }", "fragment G on T { y }"]
+
+
+def test_a_slot_given_a_list_is_rejected(tmp_path: Path):
+    # The fragments of a multi-fragment slot are written as a tuple, and a
+    # list is refused at the call site that wrote it rather than accepted
+    # into a combination no typed call can reach: the overload a list would
+    # need fixes no length, so it accepts sub-lists too and hands them a
+    # phantom offering fragments their own binding never bound
+    # (`render._tuple_slot_form`).
+    _write(
+        tmp_path,
+        "app/mod.py",
+        (f"tmpl = {TEMPLATE}\nfrag = {FRAGMENT}\nbound = tmpl.bind(f=[frag])\n"),
+    )
+    with pytest.raises(TypeError, match=r"passes slot 'f' a list; write the fragments"):
+        _discover(tmp_path)
+
+
+def test_an_empty_list_still_spells_an_unfilled_slot(tmp_path: Path):
+    # The other half of the rule: an empty list names no fragment, so no
+    # overload is written for it and there is nothing for a sub-list to
+    # capture -- `slot=[]`, `slot=()` and leaving the slot out are the one
+    # "nothing here" the README documents.
+    _write(
+        tmp_path,
+        "app/mod.py",
+        (f"tmpl = {TEMPLATE}\nfrag = {FRAGMENT}\nbound = tmpl.bind(f=(frag,), g=[])\n"),
+    )
+    package = _discover(tmp_path)
+    assert [
+        (key, tuple(stmt.raw_text for stmt in stmts))
+        for key, stmts in package.binds[0].slot_args
+    ] == [("f", ("fragment F on T { x }",)), ("g", ())]
+
+
+# A factory applied at the bind: `with_args`'s own arguments are runtime
+# values discovery has no business reading, so the slot value resolves to the
+# fragment `with_args` was called on, exactly as the bare name would -- inside
+# the literal tuple a multi-fragment slot argument is required to be.
+def test_a_with_args_application_resolves_to_its_own_fragment(tmp_path: Path):
+    _write(
+        tmp_path,
+        "app/mod.py",
+        (
+            f"tmpl = {TEMPLATE}\n"
+            f"frag = {FRAGMENT}\n"
+            "bound = tmpl.bind(f=(frag.with_args(width=1),))\n"
+        ),
+    )
+    package = _discover(tmp_path)
+    assert [
+        stmt.raw_text for _, stmts in package.binds[0].slot_args for stmt in stmts
+    ] == ["fragment F on T { x }"]
+
+
+# `attachment=[(applied := frag.with_args(...))]`: a caller who also needs the
+# applied fragment for `read` later captures it inline rather than losing the
+# one instance `read` has to match by identity. The walrus's own target plays
+# no part in resolution, only the value it captures.
+def test_a_walrus_captured_application_resolves_to_its_own_fragment(tmp_path: Path):
+    _write(
+        tmp_path,
+        "app/mod.py",
+        (
+            f"tmpl = {TEMPLATE}\n"
+            f"frag = {FRAGMENT}\n"
+            "bound = tmpl.bind(f=((applied := frag.with_args(width=1)),))\n"
+        ),
+    )
+    package = _discover(tmp_path)
+    assert [
+        stmt.raw_text for _, stmts in package.binds[0].slot_args for stmt in stmts
+    ] == ["fragment F on T { x }"]
+
+
+# The tuple form accepts an applied fragment beside a bare one, the same mix
+# `test_named_and_inline_fragments_mix_in_one_slot` proves for a bare name and
+# an inline statement.
+def test_a_with_args_application_mixes_with_a_bare_name_in_a_tuple(tmp_path: Path):
+    _write(
+        tmp_path,
+        "app/mod.py",
+        (
+            f"tmpl = {TEMPLATE}\n"
+            f"frag = {FRAGMENT}\n"
+            'other = api_gql("fragment G on T { y }")\n'
+            "bound = tmpl.bind(f=(frag.with_args(width=1), other))\n"
         ),
     )
     package = _discover(tmp_path)
@@ -583,7 +829,7 @@ def test_the_same_combination_written_twice_is_one_bind(tmp_path: Path):
         (
             "from app.frags import frag\n"
             "from app.tmpl import tmpl\n"
-            "first = tmpl.bind(f=frag)\n"
+            "first = tmpl.bind(f=(frag,))\n"
         ),
     )
     _write(
@@ -593,9 +839,7 @@ def test_the_same_combination_written_twice_is_one_bind(tmp_path: Path):
             "from app.frags import frag\n"
             "from app.tmpl import tmpl\n"
             "def go():\n"
-            # The list spelling of a single fragment is the same combination:
-            # the key sorts and unwraps before anything compares it.
-            "    return tmpl.bind(f=[frag])\n"
+            "    return tmpl.bind(f=(frag,))\n"
         ),
     )
     package = _discover(tmp_path)
@@ -614,7 +858,7 @@ def test_global_declaration_resolves_at_module_level(tmp_path: Path):
             f"frag = {FRAGMENT}\n"
             "def go():\n"
             "    global tmpl\n"
-            "    return tmpl.bind(f=frag)\n"
+            "    return tmpl.bind(f=(frag,))\n"
         ),
     )
     package = _discover(tmp_path)
@@ -646,7 +890,7 @@ def test_a_name_a_function_rebinds_outward_is_left_alone(tmp_path: Path):
             "    global tmpl\n"
             "    tmpl = load()\n"
             "def go():\n"
-            "    return tmpl.bind(f=frag)\n"
+            "    return tmpl.bind(f=(frag,))\n"
         ),
     )
     package = _discover(tmp_path)
@@ -667,7 +911,7 @@ def test_a_method_does_not_see_the_class_body_name(tmp_path: Path):
             "class Reader:\n"
             "    tmpl = object()\n"
             "    def go(self):\n"
-            "        return tmpl.bind(f=frag)\n"
+            "        return tmpl.bind(f=(frag,))\n"
         ),
     )
     package = _discover(tmp_path)
@@ -685,7 +929,7 @@ def test_a_parameter_shadowing_a_fragment_is_a_hard_error(tmp_path: Path):
             f"tmpl = {TEMPLATE}\n"
             f"frag = {FRAGMENT}\n"
             "def go(frag):\n"
-            "    return tmpl.bind(f=frag)\n"
+            "    return tmpl.bind(f=(frag,))\n"
         ),
     )
     with pytest.raises(TypeError, match="cannot resolve 'frag'"):
@@ -705,7 +949,7 @@ def test_bind_resolved_through_import_chain(tmp_path: Path):
         (
             "from app.reexport import template\n"
             'frag = api_gql("fragment F on T { x }")\n'
-            "bound = template.bind(f=frag)\n"
+            "bound = template.bind(f=(frag,))\n"
         ),
     )
     package = _discover(tmp_path)
@@ -719,7 +963,7 @@ def test_bind_resolved_through_import_chain(tmp_path: Path):
     ]
 
 
-def test_bind_list_literal_of_names(tmp_path: Path):
+def test_bind_tuple_literal_of_names(tmp_path: Path):
     _write(
         tmp_path,
         "app/mod.py",
@@ -727,7 +971,7 @@ def test_bind_list_literal_of_names(tmp_path: Path):
             'tmpl = api_gql("query Q { f @slot { __typename } }")\n'
             'a = api_gql("fragment A on T { x }")\n'
             'b = api_gql("fragment B on T { y }")\n'
-            "bound = tmpl.bind(f=[a, b])\n"
+            "bound = tmpl.bind(f=(a, b))\n"
         ),
     )
     package = _discover(tmp_path)
@@ -740,12 +984,18 @@ def test_bind_list_literal_of_names(tmp_path: Path):
 # reading the module binding off a module-level side table left this bind
 # unrecognized and silently ignored, while the very same chain one line up was
 # diagnosed.
-_LOCAL_MODULE_IMPORT_CHAIN = (
-    "def make():\n    import app.infra as infra\n    return infra.tmpl.bind(f=frag)\n"
-)
+_LOCAL_MODULE_IMPORT_CHAIN = """\
+def make():
+    import app.infra as infra
+    return infra.tmpl.bind(f=(frag,))
+"""
 
 
-# Two kinds of raise here:
+# Two kinds of raise here, both reached only once a call already carries what
+# the gate admits -- a literal tuple for some slot, or a `**{...}` spread of a
+# literal dict (`_requires_bind_resolution`), neither of which a
+# third-party `.bind()` writes by accident. So every body below carries one,
+# beside whatever malformed thing it is actually pinning:
 #   - the base resolves to a discovered gql statement, whether through a name
 #     or written inline (this bind is confirmed ours), and something about its
 #     own shape is wrong; or
@@ -757,21 +1007,24 @@ _LOCAL_MODULE_IMPORT_CHAIN = (
 @pytest.mark.parametrize(
     ("body", "match"),
     [
-        ("bound = tmpl.bind(frag)\n", "keyword"),
-        ("bound = tmpl.bind(f=[frag][0])\n", "must be a fragment name"),
-        # `**kwargs` expansion has no keyword name to thread through the
-        # resolver, so it is rejected the same way a positional argument is.
-        ("bound = tmpl.bind(**{'f': frag})\n", "keyword"),
+        ("bound = tmpl.bind(frag, f=(frag,))\n", "keyword"),
+        ("bound = tmpl.bind(f=([frag][0],))\n", "must be a fragment name"),
+        # `**` expansion has no keyword name to thread through the resolver,
+        # so it is rejected the same way a positional argument is -- beside
+        # another slot's tuple, and (the case below) on its own, since a
+        # literal dict clears the gate by itself.
+        ("bound = tmpl.bind(f=(frag,), **{'g': frag})\n", "keyword"),
+        ("bound = tmpl.bind(**{'f': (frag,)})\n", "keyword"),
         # The base ('tmpl') resolves fine, so this bind is confirmed ours —
-        # an unresolvable *value* name is still a hard error even though an
-        # unresolvable *base* is now silently ignored (see the "ignored"
-        # test below).
-        ("bound = tmpl.bind(f=unknown_frag)\n", "resolve"),
+        # an unresolvable *value* name inside the tuple is still a hard error
+        # even though an unresolvable *base* is now silently ignored (see the
+        # "ignored" test below).
+        ("bound = tmpl.bind(f=(unknown_frag,))\n", "resolve"),
         # Base is a template written inline — unambiguously ours by shape, so
         # a value that does not resolve is a hard error here too, with no name
         # for the base to hide behind.
         (
-            "bound = api_gql('query Q { f @slot { __typename } }').bind(f=x)\n",
+            "bound = api_gql('query Q { f @slot { __typename } }').bind(f=(x,))\n",
             "resolve",
         ),
         # Base is an attribute chain whose prefix names a scanned module —
@@ -783,19 +1036,19 @@ _LOCAL_MODULE_IMPORT_CHAIN = (
         # without a word, and the generated LookupError they hit at import
         # time told them to regenerate, which never helped.
         (
-            "import app.infra\nbound = app.infra.tmpl.bind(f=frag)\n",
+            "import app.infra\nbound = app.infra.tmpl.bind(f=(frag,))\n",
             r"import the template name directly",
         ),
         (
-            "import app.infra as infra\nbound = infra.tmpl.bind(f=frag)\n",
+            "import app.infra as infra\nbound = infra.tmpl.bind(f=(frag,))\n",
             r"import the template name directly",
         ),
         (
-            "from app import infra\nbound = infra.tmpl.bind(f=frag)\n",
+            "from app import infra\nbound = infra.tmpl.bind(f=(frag,))\n",
             r"import the template name directly",
         ),
         (
-            "from . import infra\nbound = infra.tmpl.bind(f=frag)\n",
+            "from . import infra\nbound = infra.tmpl.bind(f=(frag,))\n",
             r"import the template name directly",
         ),
         (_LOCAL_MODULE_IMPORT_CHAIN, r"import the template name directly"),
@@ -825,7 +1078,7 @@ def test_repeated_slot_kwarg_is_rejected(tmp_path: Path):
             'tmpl = api_gql("query Q { f @slot { __typename } }")\n'
             'frag_a = api_gql("fragment A on T { x }")\n'
             'frag_b = api_gql("fragment B on T { y }")\n'
-            "bound = tmpl.bind(f=frag_a, f=frag_b)\n"
+            "bound = tmpl.bind(f=(frag_a,), f=(frag_b,))\n"
         ),
     )
     with pytest.raises(TypeError, match=r"repeats keyword 'f'"):
@@ -841,9 +1094,9 @@ def test_repeated_slot_kwarg_is_rejected(tmp_path: Path):
     "body",
     [
         # Base is a Name, but the module it is imported from was never scanned.
-        "from app.missing import other\nbound = other.bind(f=frag)\n",
+        "from app.missing import other\nbound = other.bind(f=(frag,))\n",
         # Base is a Name that was never imported or assigned at all.
-        "bound = nope.bind(f=frag)\n",
+        "bound = nope.bind(f=(frag,))\n",
     ],
 )
 def test_unresolvable_or_unrelated_bind_is_ignored(tmp_path: Path, body: str):
@@ -880,7 +1133,7 @@ def test_circular_import_chain_in_base_is_ignored(tmp_path: Path):
         (
             "from app.a import tmpl\n"
             'frag = api_gql("fragment F on T { x }")\n'
-            "bound = tmpl.bind(f=frag)\n"
+            "bound = tmpl.bind(f=(frag,))\n"
         ),
     )
     package = _discover(tmp_path)
@@ -907,7 +1160,7 @@ def test_circular_import_chain_in_value_raises(tmp_path: Path):
         (
             "from app.infra import tmpl\n"
             "from app.a import frag\n"
-            "bound = tmpl.bind(f=frag)\n"
+            "bound = tmpl.bind(f=(frag,))\n"
         ),
     )
     with pytest.raises(TypeError, match="circular"):
@@ -930,7 +1183,7 @@ def test_star_import_in_value_raises(tmp_path: Path):
         (
             "from app.infra import tmpl\n"
             "from app.lib import *\n"
-            "bound = tmpl.bind(f=frag)\n"
+            "bound = tmpl.bind(f=(frag,))\n"
         ),
     )
     with pytest.raises(TypeError, match="star imports"):
@@ -951,7 +1204,11 @@ def test_relative_star_import_in_value_raises(tmp_path: Path):
     _write(
         tmp_path,
         "app/mod.py",
-        ("from app.infra import tmpl\nfrom .lib import *\nbound = tmpl.bind(f=frag)\n"),
+        (
+            "from app.infra import tmpl\n"
+            "from .lib import *\n"
+            "bound = tmpl.bind(f=(frag,))\n"
+        ),
     )
     with pytest.raises(TypeError, match="star imports"):
         _discover(tmp_path)
@@ -985,7 +1242,7 @@ def test_annotated_gql_assignment_is_resolved(tmp_path: Path):
         (
             'tmpl: object = api_gql("query Q { f @slot { __typename } }")\n'
             'frag = api_gql("fragment F on T { x }")\n'
-            "bound = tmpl.bind(f=frag)\n"
+            "bound = tmpl.bind(f=(frag,))\n"
         ),
     )
     package = _discover(tmp_path)
@@ -1000,12 +1257,12 @@ def test_annotated_gql_assignment_is_resolved(tmp_path: Path):
 @pytest.mark.parametrize(
     "body",
     [
-        "bound: object = tmpl.bind(f=frag)\n",
-        "tmpl.bind(f=frag)\n",
-        "def go():\n    return tmpl.bind(f=frag)\n",
-        "def go():\n    return use(tmpl.bind(f=frag))\n",
-        "class Reader:\n    bound = tmpl.bind(f=frag)\n",
-        "class Reader:\n    def go(self):\n        return tmpl.bind(f=frag)\n",
+        "bound: object = tmpl.bind(f=(frag,))\n",
+        "tmpl.bind(f=(frag,))\n",
+        "def go():\n    return tmpl.bind(f=(frag,))\n",
+        "def go():\n    return use(tmpl.bind(f=(frag,)))\n",
+        "class Reader:\n    bound = tmpl.bind(f=(frag,))\n",
+        "class Reader:\n    def go(self):\n        return tmpl.bind(f=(frag,))\n",
     ],
 )
 def test_bind_is_resolved_wherever_it_is_written(tmp_path: Path, body: str):
@@ -1103,8 +1360,8 @@ def test_binds_are_returned_in_file_then_lineno_order(tmp_path: Path):
             "from app.z import tmpl\n"
             'frag_a = api_gql("fragment A on T { x }")\n'
             'frag_b = api_gql("fragment B on T { y }")\n'
-            "a_line_four = tmpl.bind(f=frag_a)\n"
-            "a_line_five = tmpl.bind(f=frag_b)\n"
+            "a_line_four = tmpl.bind(f=(frag_a,))\n"
+            "a_line_five = tmpl.bind(f=(frag_b,))\n"
         ),
     )
     _write(
@@ -1113,7 +1370,7 @@ def test_binds_are_returned_in_file_then_lineno_order(tmp_path: Path):
         (
             "from app.z import tmpl\n"
             'frag_c = api_gql("fragment C on T { z }")\n'
-            "b_bind = tmpl.bind(f=frag_c)\n"
+            "b_bind = tmpl.bind(f=(frag_c,))\n"
         ),
     )
     package = _discover(tmp_path)
@@ -1124,21 +1381,27 @@ def test_binds_are_returned_in_file_then_lineno_order(tmp_path: Path):
     ]
 
 
-# `.bind(...)` is an ordinary method name — sockets, tkinter widgets and LDAP
-# connections all have one — so an attribute chain is only evidence of
+# `.bind(...)` is an ordinary method name -- sockets, tkinter widgets and LDAP
+# connections all have one -- so an attribute chain is only evidence of
 # ownership when its prefix names a module of the scanned tree. Rejecting on
 # the chain's shape alone made every `self.x.bind(...)` in the scanned tree
-# stop generation with a message about GraphQL templates.
+# stop generation with a message about GraphQL templates. `registry.bind(...)`
+# stands in for that "ordinary third-party object" the way `PREAMBLE`'s
+# `ctx`/`loaders` already do elsewhere in this corpus -- a plugin/service
+# registry's `.bind()` can naturally take a keyword tuple of things to register,
+# which every body below needs to be examined by discovery at all now.
 @pytest.mark.parametrize(
     ("body", "reason"),
     [
         (
-            "class S:\n    def go(self):\n        self.sock.bind((self.host, 1))\n",
+            "class S:\n    def go(self):\n        self.registry.bind(handlers=(1,))\n",
             "names no module of the scanned tree",
         ),
         # The base is a call rather than a dotted name, so no resolution can be
         # attempted at all -- which is recorded as its own reason rather than
-        # dropped, so this call is still accounted for.
+        # dropped, so this call is still accounted for. A real stdlib call:
+        # this one needs no literal tuple to reach the diagnosis, since the base's own
+        # shape is decided during the walk, before any keyword is inspected.
         (
             "import socket\n\n\ndef go(s):\n    socket.socket().bind(('', 1))\n",
             "neither a name nor an inline",
@@ -1146,14 +1409,14 @@ def test_binds_are_returned_in_file_then_lineno_order(tmp_path: Path):
         # The chain's head *is* an imported module, but a third-party one:
         # nothing under it was ever scanned, so this cannot be our template.
         (
-            "import logging\n\n\ndef go():\n    logging.root.bind(x=1)\n",
+            "import logging\n\n\ndef go():\n    logging.root.bind(filters=(1,))\n",
             "names no module of the scanned tree",
         ),
         # The head is bound nowhere the scan can see -- a name from a star
         # import, or simply a NameError waiting to happen. Either way it names
         # no module of ours.
         (
-            "def go():\n    return unbound.tmpl.bind(x=1)\n",
+            "def go():\n    return unbound.tmpl.bind(handlers=(1,))\n",
             "names no module of the scanned tree",
         ),
     ],
@@ -1173,24 +1436,28 @@ def test_unrelated_attribute_chain_bind_is_ignored(
 # The other half of that rule, and the half a prefix check alone cannot see: a
 # module *of the scanned tree* holds ordinary objects next to its templates,
 # and every one of them may carry a `.bind`. The name behind the dot decides,
-# so it has to be resolved before anything is said about the chain — reading
-# ownership off the prefix stopped generation of the whole package over a
-# socket, and did it for a name the module does not even define.
+# so it has to be resolved before anything is said about the chain -- reading
+# ownership off the prefix stopped generation of the whole package over an
+# ordinary object, and did it for a name the module does not even define.
 @pytest.mark.parametrize(
     "chain",
     [
-        "import app.net\n\n\ndef go():\n    app.net.sock.bind(('', 1))\n",
-        "from app import net\n\n\ndef go():\n    net.sock.bind(('', 1))\n",
+        "import app.net\n\n\ndef go():\n    app.net.registry.bind(handlers=(1,))\n",
+        "from app import net\n\n\ndef go():\n    net.registry.bind(handlers=(1,))\n",
         # Not defined in `app.net` at all: an attribute error where the code
         # runs, and nothing this scan may claim is a GraphQL template.
-        "from app import net\n\n\ndef go():\n    net.absent.bind(('', 1))\n",
+        "from app import net\n\n\ndef go():\n    net.absent.bind(handlers=(1,))\n",
     ],
 )
 def test_a_non_statement_behind_a_scanned_module_chain_is_ignored(
     tmp_path: Path, chain: str
 ):
     _write(tmp_path, "app/__init__.py", "")
-    _write(tmp_path, "app/net.py", "import socket\n\nsock = socket.socket()\n")
+    _write(
+        tmp_path,
+        "app/net.py",
+        "class Registry:\n    def bind(self, **kwargs): pass\nregistry = Registry()\n",
+    )
     _write(tmp_path, "app/mod.py", 'q = api_gql("query Q { f }")\n')
     _write(tmp_path, "app/server.py", chain)
     package = _discover(tmp_path)
@@ -1201,20 +1468,20 @@ def test_a_non_statement_behind_a_scanned_module_chain_is_ignored(
 
 
 # A name spelled like an imported module, bound to something else where the
-# call site stands, is not that module — Python resolves the head of a chain
+# call site stands, is not that module -- Python resolves the head of a chain
 # by the same scope rules as any other name. Answering from a module-level
 # import table regardless made a parameter named after a module of the tree
 # stop generation.
 @pytest.mark.parametrize(
     "body",
     [
-        "import app.ui\n\n\ndef go(app):\n    app.ui.widget.bind('<Key>', print)\n",
-        "from app import ui\n\n\ndef go(ui):\n    ui.widget.bind('<Key>', print)\n",
+        "import app.ui\n\n\ndef go(app):\n    app.ui.registry.bind(handlers=(1,))\n",
+        "from app import ui\n\n\ndef go(ui):\n    ui.registry.bind(handlers=(1,))\n",
     ],
 )
 def test_a_locally_shadowed_module_name_is_not_the_module(tmp_path: Path, body: str):
     _write(tmp_path, "app/__init__.py", "")
-    _write(tmp_path, "app/ui.py", "widget = object()\n")
+    _write(tmp_path, "app/ui.py", "registry = object()\n")
     _write(tmp_path, "app/server.py", body)
     package = _discover(tmp_path)
     assert package.binds == []
@@ -1239,7 +1506,7 @@ def test_relative_import_at_the_scanned_root_resolves(tmp_path: Path):
         (
             "from .frags import frag\n"
             "from .tmpl import tmpl\n"
-            "bound = tmpl.bind(f=frag)\n"
+            "bound = tmpl.bind(f=(frag,))\n"
         ),
     )
     package = _discover(tmp_path)
@@ -1266,7 +1533,7 @@ def test_bind_resolved_through_relative_import_chain(tmp_path: Path):
         (
             "from .reexport import template\n"
             'frag = api_gql("fragment F on T { x }")\n'
-            "bound = template.bind(f=frag)\n"
+            "bound = template.bind(f=(frag,))\n"
         ),
     )
     package = _discover(tmp_path)
@@ -1284,7 +1551,7 @@ def test_bind_resolved_through_bare_dot_import(tmp_path: Path):
         (
             "from . import tmpl\n"
             'frag = api_gql("fragment F on T { x }")\n'
-            "bound = tmpl.bind(f=frag)\n"
+            "bound = tmpl.bind(f=(frag,))\n"
         ),
     )
     package = _discover(tmp_path)
@@ -1311,7 +1578,7 @@ def test_relative_import_above_root_is_outside_scanned_tree(tmp_path: Path):
         (
             "from app.infra import tmpl\n"
             "from .. import frag\n"
-            "bound = tmpl.bind(f=frag)\n"
+            "bound = tmpl.bind(f=(frag,))\n"
         ),
     )
     with pytest.raises(TypeError, match="outside the scanned tree"):
@@ -1333,7 +1600,7 @@ def test_a_module_chain_through_a_root_relative_import_is_diagnosed(tmp_path: Pa
         (
             "from . import infra\n"
             'frag = api_gql("fragment F on T { x }")\n'
-            "bound = infra.tmpl.bind(f=frag)\n"
+            "bound = infra.tmpl.bind(f=(frag,))\n"
         ),
     )
     with pytest.raises(TypeError, match=r"import the template name directly"):
@@ -1347,15 +1614,18 @@ def test_a_module_chain_through_a_root_relative_import_is_diagnosed(tmp_path: Pa
 @pytest.mark.parametrize(
     "body",
     [
-        f"def go():\n    if (tmpl := {TEMPLATE}):\n        return tmpl.bind(f=frag)\n",
+        (
+            f"def go():\n    if (tmpl := {TEMPLATE}):\n"
+            "        return tmpl.bind(f=(frag,))\n"
+        ),
         # Written through a comprehension's own scope into the function's, which
         # is the case the walrus is handled separately for at all.
         (
             "def go():\n"
             f"    _seen = [_ for _ in range(1) if (tmpl := {TEMPLATE})]\n"
-            "    return tmpl.bind(f=frag)\n"
+            "    return tmpl.bind(f=(frag,))\n"
         ),
-        f"if (tmpl := {TEMPLATE}):\n    bound = tmpl.bind(f=frag)\n",
+        f"if (tmpl := {TEMPLATE}):\n    bound = tmpl.bind(f=(frag,))\n",
     ],
 )
 def test_a_walrus_carries_its_statement_into_the_name(tmp_path: Path, body: str):
@@ -1379,7 +1649,7 @@ def test_a_walrus_carries_its_statement_into_the_name(tmp_path: Path, body: str)
             "except ImportError:\n"
             "    from app.b import tmpl\n"
             f"frag = {FRAGMENT}\n"
-            "bound = tmpl.bind(f=frag)\n"
+            "bound = tmpl.bind(f=(frag,))\n"
         ),
         # The same shape one scope in, which reaches the rule through the
         # lexical walk instead of the module graph.
@@ -1390,7 +1660,7 @@ def test_a_walrus_carries_its_statement_into_the_name(tmp_path: Path, body: str)
             "        from app.a import tmpl\n"
             "    except ImportError:\n"
             "        from app.b import tmpl\n"
-            "    return tmpl.bind(f=frag)\n"
+            "    return tmpl.bind(f=(frag,))\n"
         ),
     ],
 )
@@ -1437,7 +1707,7 @@ def test_a_template_held_in_a_class_body_is_diagnosed(tmp_path: Path):
             f"frag = {FRAGMENT}\n"
             "class Queries:\n"
             f"    tmpl = {TEMPLATE}\n"
-            "bound = Queries.tmpl.bind(f=frag)\n"
+            "bound = Queries.tmpl.bind(f=(frag,))\n"
         ),
     )
     with pytest.raises(TypeError, match=_UNREACHABLE) as exc:
@@ -1462,11 +1732,14 @@ def test_a_template_arriving_through_a_star_import_is_diagnosed(tmp_path: Path):
     assert "app/templates.py:1" in str(exc.value)
 
 
-# The threshold the diagnosis above deliberately sits at: a `.bind()` is left
-# alone when the name it hangs off is bound where it stands, or names no
-# statement of ours anywhere. Both are the everyday case -- a scan that stopped
-# over a socket, a widget or a driver connection would be unusable in any real
-# tree -- so they have to stay silent while our own binds go on generating.
+# The threshold the diagnosis above deliberately sits at: neither call below
+# writes a single literal tuple argument (a socket takes a positional string, a
+# tkinter widget an event name and a handler), so both are left alone before
+# resolution is even attempted -- the static-content gate, not
+# `_resolve_base` finding them "not ours". A scan that had to identify every
+# third-party `.bind()` as such, rather than never looking at most of them at
+# all, would be unusable over any real tree -- so they stay silent while our
+# own tuple-form bind goes on generating.
 def test_third_party_binds_stay_silent_beside_our_own(tmp_path: Path):
     _write(
         tmp_path,
@@ -1481,10 +1754,20 @@ def test_third_party_binds_stay_silent_beside_our_own(tmp_path: Path):
     _write(
         tmp_path, "app/ui.py", "def wire(widget):\n    widget.bind('<Key>', print)\n"
     )
+    # A `**opts` of a name is the shape the gate must keep out even though a
+    # spread is otherwise admitted: nothing static says what the mapping
+    # holds, so reading it as possibly-ours would put every third-party
+    # `.bind(**opts)` through base resolution.
+    _write(
+        tmp_path,
+        "app/registry.py",
+        "def register(target, opts):\n    target.bind(**opts)\n",
+    )
     package = _discover(tmp_path)
     assert len(package.binds) == 1
     assert [entry.location for entry in package.ignored] == [
         "app/net.py:3",
+        "app/registry.py:2",
         "app/ui.py:2",
     ]
 
@@ -1503,17 +1786,17 @@ def test_every_bind_call_reaches_binds_or_ignored(tmp_path: Path):
         (
             "from app.templates import tmpl\n"
             f"frag = {FRAGMENT}\n"
-            "one = tmpl.bind(f=frag)\n"
+            "one = tmpl.bind(f=(frag,))\n"
             "two = tmpl.bind()\n"
-            f"three = {TEMPLATE}.bind(f=frag)\n"
-            "four = tmpl.bind(f=frag).with_args(width=1)\n"
+            f"three = {TEMPLATE}.bind(f=(frag,))\n"
+            "four = tmpl.bind(f=(frag,)).with_args(width=1)\n"
             "holder = {'q': tmpl}\n"
-            "five = holder['q'].bind(f=frag)\n"
-            "six = nowhere.bind(f=frag)\n"
+            "five = holder['q'].bind(f=(frag,))\n"
+            "six = nowhere.bind(f=(frag,))\n"
             "def wire(widget, sock):\n"
             "    widget.bind('<Key>', print)\n"
             "    sock.bind(('', 1))\n"
-            "    return tmpl.bind(f=frag)\n"
+            "    return tmpl.bind(f=(frag,))\n"
         ),
     )
     package = _discover(tmp_path)
@@ -1538,27 +1821,29 @@ def test_every_bind_call_reaches_binds_or_ignored(tmp_path: Path):
 # a whole tree for a call the scan is looking straight at, so the promise is
 # checked against every form of rejection rather than against the handful whose
 # text a test happens to quote.
-_ATTRIBUTE_CHAIN_BIND = "import app.infra\nbound = app.infra.tmpl.bind(f=frag)\n"
-_CYCLIC_VALUE_BIND = "from app.cycle_a import loop\nbound = tmpl.bind(f=loop)\n"
+_ATTRIBUTE_CHAIN_BIND = "import app.infra\nbound = app.infra.tmpl.bind(f=(frag,))\n"
+_CYCLIC_VALUE_BIND = "from app.cycle_a import loop\nbound = tmpl.bind(f=(loop,))\n"
 
 
 @pytest.mark.parametrize(
     "body",
     [
-        # The call's own shape.
-        "bound = tmpl.bind(frag)\n",
-        "bound = tmpl.bind(**{'f': frag})\n",
-        "bound = tmpl.bind(f=frag, f=frag)\n",
-        "bound = tmpl.bind(f=[frag][0])\n",
-        "bound = tmpl.bind(f=[frag, frag])\n",
+        # The call's own shape. Each carries a literal tuple argument -- the
+        # gate every one of these now has to clear before its own diagnosis
+        # is even reached.
+        "bound = tmpl.bind(frag, f=(frag,))\n",
+        "bound = tmpl.bind(f=(frag,), **{'g': frag})\n",
+        "bound = tmpl.bind(f=(frag,), f=(frag,))\n",
+        "bound = tmpl.bind(f=([frag][0],))\n",
+        "bound = tmpl.bind(f=(frag, frag))\n",
         # What one of its names resolves to.
-        "bound = tmpl.bind(f=unknown)\n",
+        "bound = tmpl.bind(f=(unknown,))\n",
         _CYCLIC_VALUE_BIND,
         # What the base resolves to, or fails to.
         _ATTRIBUTE_CHAIN_BIND,
-        f"tmpl = {TEMPLATE}\nbound = tmpl.bind(f=frag)\n",
-        "from app.hidden import *\nbound = held.bind(f=frag)\n",
-        f"class Held:\n    inner = {TEMPLATE}\nbound = Held.inner.bind(f=frag)\n",
+        f"tmpl = {TEMPLATE}\nbound = tmpl.bind(f=(frag,))\n",
+        "from app.hidden import *\nbound = held.bind(f=(frag,))\n",
+        f"class Held:\n    inner = {TEMPLATE}\nbound = Held.inner.bind(f=(frag,))\n",
     ],
 )
 def test_every_bind_diagnosis_names_a_file_and_line(tmp_path: Path, body: str):
@@ -1600,7 +1885,7 @@ def test_a_decorator_resolves_outside_the_definition_it_decorates(
             "def use(x): return lambda obj: obj\n"
             f"tmpl = {TEMPLATE}\n"
             f"frag = {FRAGMENT}\n"
-            "@use(tmpl.bind(f=frag))\n"
+            "@use(tmpl.bind(f=(frag,)))\n"
         )
         + definition,
     )
@@ -1619,8 +1904,8 @@ def test_a_chained_assignment_carries_the_statement_into_every_name(tmp_path: Pa
         (
             f"first = second = {TEMPLATE}\n"
             f"frag = {FRAGMENT}\n"
-            "one = first.bind(f=frag)\n"
-            "two = second.bind(f=[frag])\n"
+            "one = first.bind(f=(frag,))\n"
+            "two = second.bind(f=(frag,))\n"
         ),
     )
     package = _discover(tmp_path)
@@ -1640,7 +1925,7 @@ def test_a_class_body_resolves_the_names_it_binds_itself(tmp_path: Path):
             "class Queries:\n"
             f"    tmpl = {TEMPLATE}\n"
             f"    frag = {FRAGMENT}\n"
-            "    bound = tmpl.bind(f=frag)\n"
+            "    bound = tmpl.bind(f=(frag,))\n"
         ),
     )
     package = _discover(tmp_path)
@@ -1662,7 +1947,7 @@ def test_a_two_level_relative_import_resolves(tmp_path: Path):
         (
             "from ..frags import frag\n"
             "from ..templates import tmpl\n"
-            "bound = tmpl.bind(f=frag)\n"
+            "bound = tmpl.bind(f=(frag,))\n"
         ),
     )
     package = _discover(tmp_path)
@@ -1713,7 +1998,7 @@ def test_ignored_binds_are_written_to_the_debug_directory(
         from sample_app.gql.api import api_gql
         q = api_gql("query Ping { ping }")
         def listen(sock, host):
-            sock.bind(host)
+            sock.bind(x=(host,))
         """,
     )
     debug_dir = test_project.root / "debug_out"

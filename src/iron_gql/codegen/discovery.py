@@ -9,8 +9,9 @@ from dataclasses import dataclass
 from dataclasses import field
 from dataclasses import replace
 from pathlib import Path
+from typing import Literal
 
-from iron_gql.slots import BindKey
+from iron_gql.slots import CombinationKey
 
 
 @dataclass(kw_only=True, frozen=True)
@@ -49,6 +50,16 @@ class BindDecl:
 
 
 @dataclass(kw_only=True, frozen=True)
+class BindKeywordCheck:
+    # Статически известная часть call, который не задаёт combination: empty
+    # sequences требуют проверить имена slots, но не разрешать runtime values
+    # соседних keywords.
+    template: Statement
+    keywords: tuple[str, ...]
+    location: str
+
+
+@dataclass(kw_only=True, frozen=True)
 class IgnoredBind:
     # A `.bind(...)` call the scan resolved and then left alone, with the
     # reason it did. Not a diagnosis -- a third-party `.bind()` is the common
@@ -64,6 +75,7 @@ class IgnoredBind:
 class DiscoveredPackage:
     statements: list[Statement]
     binds: list[BindDecl]
+    bind_keyword_checks: list[BindKeywordCheck]
     ignored: list[IgnoredBind]
 
 
@@ -1295,6 +1307,27 @@ def _slot_statement(
                     return resolution
                 case _NotOurs(reason=reason) | _AmbiguousName(reason=reason):
                     raise TypeError(reason)
+        case ast.Call(func=ast.Attribute(attr="with_args", value=base)):
+            # A factory applied at the bind: `with_args`'s own arguments are
+            # runtime values discovery has no business reading, so this
+            # resolves exactly like a bare name or an inline statement would
+            # -- against the object `with_args` was called on, which is the
+            # same fragment either way (applying it changes what values it
+            # carries, not which statement it is).
+            return _slot_statement(
+                base, candidate, graph, keyword=keyword, gql_fn_name=gql_fn_name
+            )
+        case ast.NamedExpr(value=inner):
+            # `attachment=(applied := frag.with_args(...))`: a caller who also
+            # needs the applied fragment for `read` (a plain assignment
+            # statement resolves no further than `with_args`'s own return
+            # value does, and the statement it names is the same either way)
+            # captures it inline rather than losing the one instance `read`
+            # has to match by identity. Resolved the same way its value would
+            # be on its own -- the walrus's own target plays no part.
+            return _slot_statement(
+                inner, candidate, graph, keyword=keyword, gql_fn_name=gql_fn_name
+            )
         case _ if (
             statement := _gql_call(
                 expr,
@@ -1307,7 +1340,8 @@ def _slot_statement(
             msg = (
                 f"the value for '{keyword}' of '.bind(...)' at "
                 f"{candidate.location} must be a fragment name, an inline "
-                f"{gql_fn_name}(...) statement, or a list of either"
+                f"{gql_fn_name}(...) statement, a `.with_args(...)` "
+                "application of either, or a tuple of those"
             )
             raise TypeError(msg)
 
@@ -1320,6 +1354,12 @@ def _slot_statements(
     keyword: str,
     gql_fn_name: str,
 ) -> tuple[Statement, ...]:
+    # Каждый названный в call slot разрешается независимо от формы его value.
+    # `_resolve_binds` уже установил, что хотя бы один argument требует static
+    # resolution. После этого все slots входят в одну runtime combination:
+    # `slots.dispatch_key` строит единый key из каждого переданного в `bind()` slot.
+    # Поэтому bare value рядом с tuple тоже разрешается, а не теряется.
+    _reject_nonempty_list(value, candidate, keyword=keyword)
     exprs = value.elts if isinstance(value, ast.List | ast.Tuple) else [value]
     return tuple(
         _slot_statement(
@@ -1327,6 +1367,31 @@ def _slot_statements(
         )
         for expr in exprs
     )
+
+
+def _reject_nonempty_list(
+    value: ast.expr, candidate: _BindCandidate, *, keyword: str
+) -> None:
+    # Multi-fragment slot записывается как tuple: `Sequence` не фиксирует длину,
+    # поэтому overload для `[image_parts, link_parts]` принял бы
+    # `[image_parts]`, но заявил бы в return type ещё и `LinkParts`, который
+    # binding не bind-ил. У tuple фиксированной длины нет такого более короткого
+    # значения (`render._tuple_slot_form`).
+    #
+    # Diagnosed here rather than at the gate that admits the call: a list is
+    # what makes a third-party `.bind(handlers=[a, b])` look like ours, and
+    # only a resolved base says it is. An empty list stays legal -- it names
+    # no fragment, so no signature is written for it, and `slot=[]` means the
+    # same "nothing here" as `slot=()` and as leaving the slot out.
+    if not isinstance(value, ast.List) or not value.elts:
+        return
+    msg = (
+        f"'.bind(...)' at {candidate.location} passes slot '{keyword}' a list; "
+        "write the fragments as a tuple -- a list has no fixed length, so the "
+        "overload written for it would accept its sub-lists too and promise "
+        "fragments the binding they reach never bound"
+    )
+    raise TypeError(msg)
 
 
 def _reject_repeated_fragment(
@@ -1351,21 +1416,12 @@ def _reject_repeated_fragment(
         seen[statement.hash_str] = statement
 
 
-# Only reached once the call's base has resolved to a discovered gql statement
-# -- so every failure from here on is a hard error about a bind we own, not a
-# guess about whether it's ours.
-def _validated_bind(
-    candidate: _BindCandidate,
-    template: Statement,
-    graph: _ModuleGraph,
-    *,
-    gql_fn_name: str,
-) -> BindDecl:
+def _bind_keyword_names(candidate: _BindCandidate) -> tuple[str, ...]:
     call = candidate.call
     if call.args:
         msg = f"'.bind(...)' at {candidate.location} accepts only keyword arguments"
         raise TypeError(msg)
-    slot_args: list[tuple[str, tuple[Statement, ...]]] = []
+    names: list[str] = []
     seen_slots: set[str] = set()
     for kw in call.keywords:
         if kw.arg is None:
@@ -1379,15 +1435,31 @@ def _validated_bind(
             msg = (
                 f"'.bind(...)' at {candidate.location} repeats keyword "
                 f"'{kw.arg}'; pass every fragment for one slot in a single "
-                "keyword (a name or a list of names)"
+                "keyword (a name or a tuple of names)"
             )
             raise TypeError(msg)
         seen_slots.add(kw.arg)
+        names.append(kw.arg)
+    return tuple(names)
+
+
+# Вызывается только после разрешения base в найденный gql statement, поэтому
+# последующие ошибки относятся к bind генератора, а не к догадке о владельце.
+def _validated_bind(
+    candidate: _BindCandidate,
+    template: Statement,
+    graph: _ModuleGraph,
+    *,
+    gql_fn_name: str,
+) -> BindDecl:
+    slot_args: list[tuple[str, tuple[Statement, ...]]] = []
+    names = _bind_keyword_names(candidate)
+    for kw, name in zip(candidate.call.keywords, names, strict=True):
         statements = _slot_statements(
-            kw.value, candidate, graph, keyword=kw.arg, gql_fn_name=gql_fn_name
+            kw.value, candidate, graph, keyword=name, gql_fn_name=gql_fn_name
         )
-        _reject_repeated_fragment(statements, candidate, keyword=kw.arg)
-        slot_args.append((kw.arg, statements))
+        _reject_repeated_fragment(statements, candidate, keyword=name)
+        slot_args.append((name, statements))
     return BindDecl(
         template=template,
         slot_args=tuple(slot_args),
@@ -1515,32 +1587,110 @@ def _resolve_base(
             return _unreachable_here(graph, candidate, base_name, not_ours)
 
 
+def _bind_resolution_mode(
+    candidate: _BindCandidate,
+) -> Literal["none", "keywords", "arguments"]:
+    # Разделяет три объёма static resolution. Contentful literal требует
+    # разрешить все arguments call. Пустая sequence не содержит fragment, но её
+    # keyword нужно сверить со slots template; соседние runtime values при этом
+    # не разрешаются. Call без literal не принадлежит discovery.
+    #
+    # Непустой list допускается только до диагностики отсутствия фиксированной
+    # длины после подтверждения, что bind принадлежит генератору. Поэтому он,
+    # как multi-fragment tuple, требует разрешить владельца call.
+    #
+    # Literal `**{...}` тоже требует resolution: `bind(**{"slot": (a, b)})`
+    # статически задаёт ту же combination, что keyword form, но resolver не
+    # получает имя keyword, поэтому `_validated_bind` обязан отклонить call.
+    # Без этого standalone-вызов молча пропал бы и позже дал бесполезный
+    # `LookupError` с советом повторить генерацию.
+    #
+    # Именованный `**opts` намеренно исключён: его содержимое статически
+    # неизвестно, а включение отправило бы каждый third-party `.bind(**opts)`
+    # на base resolution.
+    has_empty_sequence = False
+    for kw in candidate.call.keywords:
+        match kw.value:
+            case ast.Tuple(elts=elts):
+                if elts:
+                    return "arguments"
+                has_empty_sequence = True
+            case ast.List(elts=elts):
+                if elts:
+                    return "arguments"
+                has_empty_sequence = True
+            case ast.Dict() if kw.arg is None:
+                return "arguments"
+            case _:
+                pass
+    return "keywords" if has_empty_sequence else "none"
+
+
 def _resolve_binds(
     graph: _ModuleGraph, candidates: list[_BindCandidate], *, gql_fn_name: str
-) -> tuple[list[BindDecl], list[IgnoredBind]]:
+) -> tuple[list[BindDecl], list[BindKeywordCheck], list[IgnoredBind]]:
     binds: list[BindDecl] = []
+    keyword_checks: list[BindKeywordCheck] = []
     ignored: list[IgnoredBind] = []
     for candidate in candidates:
+        mode = _bind_resolution_mode(candidate)
+        if mode == "none":
+            # Discovery добавляет только multi-fragment tuple; empty и
+            # single-fragment combinations выводятся из schema в
+            # `combinations.py`. Base намеренно остаётся unresolved: иначе
+            # вернутся диагностики attribute chains и ambiguous names для
+            # third-party `.bind()` с совпавшим именем.
+            ignored.append(
+                IgnoredBind(
+                    location=candidate.location,
+                    reason=(
+                        f"'.bind(...)' at {candidate.location} passes no "
+                        "multi-fragment tuple or invalid literal form requiring "
+                        "static resolution; every supported combination it "
+                        "names is already enumerated from the schema"
+                    ),
+                )
+            )
+            continue
         match _resolve_base(graph, candidate):
             case Statement() as template:
-                binds.append(
-                    _validated_bind(candidate, template, graph, gql_fn_name=gql_fn_name)
-                )
+                match mode:
+                    case "keywords":
+                        prefix = f"'.bind(...)' at {candidate.location}"
+                        validation = "slot keywords are validated"
+                        enumeration = "combination is enumerated from the schema"
+                        keyword_checks.append(
+                            BindKeywordCheck(
+                                template=template,
+                                keywords=_bind_keyword_names(candidate),
+                                location=candidate.location,
+                            )
+                        )
+                        ignored.append(
+                            IgnoredBind(
+                                location=candidate.location,
+                                reason=f"{prefix}: {validation}; {enumeration}",
+                            )
+                        )
+                    case "arguments":
+                        binds.append(
+                            _validated_bind(
+                                candidate,
+                                template,
+                                graph,
+                                gql_fn_name=gql_fn_name,
+                            )
+                        )
             case _NotOurs(reason=reason):
                 ignored.append(IgnoredBind(location=candidate.location, reason=reason))
-    return binds, ignored
+    return binds, keyword_checks, ignored
 
 
-def _bind_combination_key(bind: BindDecl) -> BindKey:
-    # Every keyword the call actually wrote, empty ones included -- which is
-    # what makes this *not* the runtime's key. Dropping empty slots here (the
-    # normalisation `slots.bind_key_shape` does, rightly, for dispatch) merges
-    # a call that names a slot the template does not have into one that names
-    # nothing, and the misspelling then reaches no check at all: whether it was
-    # diagnosed depended on whether some other file happened to hold the empty
-    # bind it collapsed onto. Calls that mean one combination are merged after
-    # expansion instead (`collect._merge_expanded`), where the slot names have
-    # been checked against the template.
+def _bind_combination_key(bind: BindDecl) -> CombinationKey:
+    # Key включает каждый написанный keyword, в том числе empty. Удаление empty
+    # slots на этом этапе объединило бы опечатку в имени slot с вызовом без
+    # fragments. Эквивалентные combinations объединяются только после expansion
+    # в `collect._merge_expanded`, когда имена slots уже проверены по template.
     return (
         bind.template.hash_str,
         tuple(
@@ -1558,7 +1708,7 @@ def _dedupe_binds(binds: list[BindDecl]) -> list[BindDecl]:
     # the same fragments into the same template are the same binding -- which
     # is what makes a bind legal in a function body at all: shared code and its
     # caller may reach the same combination without knowing about each other.
-    merged: dict[BindKey, BindDecl] = {}
+    merged: dict[CombinationKey, BindDecl] = {}
     for bind in binds:
         key = _bind_combination_key(bind)
         seen = merged.get(key)
@@ -1658,10 +1808,13 @@ def discover_package(
         (candidate for scan in scans for candidate in scan.candidates),
         key=lambda candidate: (candidate.file, candidate.call.lineno),
     )
-    binds, ignored = _resolve_binds(graph, candidates, gql_fn_name=gql_fn_name)
+    binds, keyword_checks, ignored = _resolve_binds(
+        graph, candidates, gql_fn_name=gql_fn_name
+    )
     return DiscoveredPackage(
         statements=[statement for scan in scans for statement in scan.statements],
         binds=_dedupe_binds(binds),
+        bind_keyword_checks=keyword_checks,
         # The two groups are kept apart rather than merged into one order: a
         # base no resolution could be attempted on is recorded by the walk, the
         # rest by resolution, and each group is already deterministic. Nothing

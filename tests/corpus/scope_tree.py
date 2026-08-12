@@ -30,7 +30,8 @@ TEMPLATE = f'api_gql("{TEMPLATE_TEXT}")'
 SHADOW_TEMPLATE = f'api_gql("{SHADOW_TEMPLATE_TEXT}")'
 FRAGMENT = f'api_gql("{FRAGMENT_TEXT}")'
 
-BIND_EXPR = "tmpl.bind(f=frag)"
+# A literal tuple, not a bare fragment -- see `scoping.BIND_EXPR`.
+BIND_EXPR = "tmpl.bind(f=(frag,))"
 
 PREAMBLE: tuple[str, ...] = (
     "import contextlib",

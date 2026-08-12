@@ -36,5 +36,3 @@ size_parts = api_gql(
     }
     """
 )
-
-bound = slotted.bind(echo=size_parts)

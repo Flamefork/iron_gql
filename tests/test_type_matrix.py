@@ -121,14 +121,17 @@ async def test_a_bound_fragments_own_variables_reach_the_server(
     httpserver: HTTPServer,
 ):
     # The cell that was blank: a fragment's variable is the one position whose
-    # type reaches the module through no query variable and no input object.
-    # `frag_size` is an enum, so the generated `with_args` names a type the
-    # module has to have declared.
+    # type reaches the module through no query variable and no input object --
+    # `frag_size`'s enum type still has to be declared in the module even
+    # though nothing binds `size_parts` at module level (it is a factory: its
+    # own closure uses a variable, so only its generated `with_args` names
+    # the enum, and only once applied does it become bindable at all).
     async with gql_server(httpserver, PACKAGE, RESOLVERS):
-        bound = queries.bound.with_args(frag_size="LARGE", frag_term="t")
+        applied = queries.size_parts.with_args(frag_size="LARGE", frag_term="t")
+        bound = queries.slotted.bind(echo=applied)
         result = await bound.execute(payload=_payload())
 
-    data = queries.size_parts.read(result.echo)
+    data = applied.read(result.echo)
     assert data is not None
     assert _decoded(data.tagged) == {"size": "LARGE", "term": "t"}
 

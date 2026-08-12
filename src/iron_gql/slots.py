@@ -3,6 +3,10 @@ from collections.abc import Iterable
 from collections.abc import Mapping
 from collections.abc import Sequence
 from dataclasses import dataclass
+from enum import Enum
+from enum import auto
+from types import MappingProxyType
+from typing import Any
 from typing import ClassVar
 from typing import Generic
 from typing import Never
@@ -27,135 +31,167 @@ def _is_typename(value: object) -> TypeIs[str]:
     return isinstance(value, str)
 
 
-type SlotHandles = dict[str, tuple[SlotHandle, ...]]
+type FragmentDefinitionType = type[GQLFragment[pydantic.BaseModel, Any]]
+type BindableFragmentType = type[GQLBindableFragment[pydantic.BaseModel, Any]]
+type SlotReaders = Mapping[str, tuple[SlotReader, ...]]
+
+# A module-level singleton rather than `MappingProxyType({})` written inline
+# as the default: basedpyright's `all` mode rejects a call in a parameter
+# default outright (`reportCallInDefaultInitializer`), whatever the callee
+# returns -- naming it here is what a plain fragment's constructor call
+# resolves to instead, with the same one-empty-mapping-for-every-plain-
+# fragment behavior.
+_NO_ARGS: Mapping[str, object] = MappingProxyType({})
 
 
-class GQLFragment[TModel: pydantic.BaseModel]:
+class Omitted(Enum):
+    OMITTED = auto()
+
+
+OMITTED = Omitted.OMITTED
+
+
+TModel_co = TypeVar("TModel_co", bound=pydantic.BaseModel, covariant=True)
+# Readable closure фрагмента: он сам плюс каждый fragment из его root-level
+# spreads, с пересечением по всем совместимым slots. Параметр contravariant,
+# потому что `read` принимает node, который предлагает этот closure. PEP 695
+# не позволяет объявить variance, отсюда UP046.
+TReads_contra = TypeVar("TReads_contra", contravariant=True)
+
+
+class GQLFragment(Generic[TModel_co, TReads_contra]):  # noqa: UP046
     # Metadata lives on the instance, taken as required constructor
     # arguments: `TypeAdapter` is invariant in its parameter, so an adapter
-    # that does not match `TModel` is a static error at the generated
+    # that does not match `TModel_co` is a static error at the generated
     # `super().__init__` call, and a subclass that forgets its metadata
     # cannot even be instantiated — neither invariant needs a runtime check.
     def __init__(
         self,
         *,
         fragment_name: str,
-        adapter: pydantic.TypeAdapter[TModel],
+        definition_type: "type[GQLFragment[TModel_co, TReads_contra]]",
+        adapter: pydantic.TypeAdapter[TModel_co],
     ) -> None:
         self.fragment_name__ = fragment_name
-        # Only the bound validate function is stored: a `TypeAdapter[TModel]`
-        # attribute would put TModel in an invariant position and destroy the
-        # inferred covariance that lets shared code accept
-        # `SomeFragment[pydantic.BaseModel]`; in return position TModel keeps
-        # the class covariant and `validate__` fully typed.
-        self._validate: Callable[[object], TModel] = adapter.validate_python
+        self._definition_type = definition_type
+        # Only the bound validate function is stored: a `TypeAdapter[TModel_co]`
+        # attribute would put TModel_co in an invariant position and destroy
+        # the inferred covariance that lets shared code accept
+        # `SomeFragment[pydantic.BaseModel]`; in return position TModel_co
+        # keeps the class covariant and `validate__` fully typed.
+        self._validate: Callable[[object], TModel_co] = adapter.validate_python
 
-    def validate__(self, payload: object) -> TModel:
+    def validate__(self, payload: object) -> TModel_co:
         return self._validate(payload)
 
-    # A handle is an identity token: `read` finds its data by the reader's
-    # own reference, so copying machinery (deepcopy of a validated node,
-    # model_copy(deep=True)) must never clone a stored handle out from under
-    # the module-level singleton doing the reading.
-    def __copy__(self) -> Self:
-        return self
+    @property
+    def definition_type(
+        self,
+    ) -> "type[GQLFragment[TModel_co, TReads_contra]]":
+        return self._definition_type
 
-    def __deepcopy__(self, memo: dict[int, object] | None) -> Self:
-        return self
-
-    # `GQLSlotNode[Self]`, not a bare node: codegen stamps every node with the
-    # fragment classes readable on it, so the contravariant phantom rejects
-    # this very handle against a node that was never offered it -- the same
-    # wiring bug `slot_data__` raises ValueError for on type-erased paths.
+    # Codegen указывает на каждом node типы доступных fragment readers, поэтому
+    # contravariant-контракт отвергает reader для node, которому его не
+    # предложили. На type-erased пути тот же wiring bug поднимает `ValueError`
+    # в `slot_data__`.
     #
     # Code generic over which binding it was handed spells the phantom `Any`
     # (`{Op}Result[Any]`), which this signature accepts like any other: giving
     # up the check is a decision written at the annotation, not a second read
     # method to choose between.
-    def read(self, node: "GQLSlotNode[Self] | None") -> TModel | None:
+    def read(self, node: "GQLSlotNode[TReads_contra] | None") -> TModel_co | None:
         if node is None:
             return None
         return node.slot_data__(self)
 
 
+class GQLBindableFragment(GQLFragment[TModel_co, TReads_contra]):
+    def __init__(
+        self,
+        *,
+        fragment_name: str,
+        definition_type: type[GQLFragment[TModel_co, TReads_contra]],
+        adapter: pydantic.TypeAdapter[TModel_co],
+    ) -> None:
+        super().__init__(
+            fragment_name=fragment_name,
+            definition_type=definition_type,
+            adapter=adapter,
+        )
+        self._fragment_args = _NO_ARGS
+
+    def _set_fragment_args(self, fragment_args: Mapping[str, object]) -> None:
+        self._fragment_args = MappingProxyType(dict(fragment_args))
+
+    @property
+    def fragment_args__(self) -> Mapping[str, object]:
+        return self._fragment_args
+
+
 @dataclass(frozen=True, slots=True)
-class SlotHandle:
-    # One fragment offered to one slot of one binding, with the runtime
-    # typenames at which its fields are present on that slot's root payload.
+class SlotReader:
+    # Один fragment, доступный в одном slot одного binding, и runtime typenames,
+    # для которых его fields присутствуют в root payload этого slot.
     #
-    # Per binding and slot, not per fragment: the same fragment reaches one
-    # slot's root directly and another's only through a narrower condition --
-    # an interface brick spread inside a per-type fragment -- and validating it
-    # outside the narrowed set fails a response that is entirely correct,
-    # because the server never sent those fields for that type.
-    fragment: GQLFragment[pydantic.BaseModel]
+    # Coverage относится к конкретным binding и slot, а не только к fragment:
+    # один fragment может напрямую достигать root первого slot, а во втором
+    # идти через более узкий condition. Validation вне узкого набора тогда
+    # отвергла бы корректный response, где server не прислал эти fields.
+    definition: GQLFragment[pydantic.BaseModel, Any]
     typenames: frozenset[str]
 
 
-def _is_handles(value: object) -> TypeIs[tuple[SlotHandle, ...]]:
+def _is_readers(value: object) -> TypeIs[tuple[SlotReader, ...]]:
     if not isinstance(value, tuple):
         return False
-    handles = cast("tuple[object, ...]", value)
-    return all(isinstance(handle, SlotHandle) for handle in handles)
+    readers = cast("tuple[object, ...]", value)
+    return all(isinstance(reader, SlotReader) for reader in readers)
 
 
-# The "offered fragments" phantom: the union of the fragment handle classes
-# readable on this node. Codegen declares it as a parameter of every model on
-# the path to the node, and each binding fills it in when it names its result
-# type. Contravariant so a node offering more fragments is accepted where fewer
-# are expected (`Slot[A | B]` is assignable to `GQLSlotNode[A]`). An old-style
-# TypeVar
-# because PEP 695 cannot declare variance and infers an unused (phantom)
-# parameter as covariant — so we cannot use PEP 695 type parameters syntax
-# and must suppress UP046. `default=Never` makes a bare `GQLSlotNode`
-# annotation mean "readable by nothing" — the safe bottom for a
-# contravariant parameter.
+# Phantom «offered fragments»: union типов fragment readers, доступных на этом
+# node. Codegen передаёт его через каждую model на пути к node, а binding
+# подставляет значение в собственный result type. Contravariance разрешает
+# использовать node с большим набором fragments там, где ожидается меньший:
+# `Slot[A | B]` совместим с `GQLSlotNode[A]`. PEP 695 не позволяет явно задать
+# variance и выводит неиспользуемый phantom как covariant, поэтому здесь нужен
+# обычный TypeVar и подавление UP046. Default `Never` означает, что bare
+# `GQLSlotNode` не читается ни одним fragment.
 TOffered_contra = TypeVar("TOffered_contra", contravariant=True, default=Never)
 
 
 class GQLSlotNode(pydantic.BaseModel, Generic[TOffered_contra]):  # noqa: UP046
     slot_name__: ClassVar[str]
 
-    # Keyed by the handle's id() with the handle itself held in the value:
-    # the strong reference keeps every offered handle alive, so a recycled
-    # address can never collide with a stored key — a wiring bug must not
-    # look like a legitimate mismatch. Identity by id(), not by dict key
-    # lookup, so a subclass overriding __eq__/__hash__ cannot alias one
-    # fragment's data to another, and the entries survive a deepcopy of a
-    # validated node. (Generated results are parametrizations of a generic
-    # model and are not picklable at all; a hand-written node is, and keeps
-    # its entries through a round trip in one process.)
-    _slot_data: dict[int, tuple[GQLFragment[pydantic.BaseModel], object]] = (
-        pydantic.PrivateAttr(default_factory=dict)
+    # Projection принадлежит generated fragment definition, а не конкретному
+    # definition value или factory application из `bind()`. Поэтому runtime
+    # identity задаёт exact generated class.
+    _slot_data: dict[FragmentDefinitionType, object] = pydantic.PrivateAttr(
+        default_factory=dict
     )
 
-    def slot_data__[TData: pydantic.BaseModel](
-        self, handle: GQLFragment[TData]
+    def slot_data__[TData: pydantic.BaseModel, TReads](
+        self, definition: GQLFragment[TData, TReads]
     ) -> TData | None:
-        # Eager validation writes an entry for every handle offered to the
-        # slot — the validated model on a typename match, None otherwise — so
-        # a missing key means the handle was never offered at all, which is a
-        # wiring bug and must not be mistaken for a typename mismatch.
-        entry = self._slot_data.get(id(handle))
-        if entry is None:
+        # Membership проверяется отдельно от значения: `None` допустим для
+        # предложенного definition, typename которого не покрывает этот node.
+        definition_type = definition.definition_type
+        if definition_type not in self._slot_data:
             msg = (
-                f"fragment '{handle.fragment_name__}' is not part of the "
+                f"fragment '{definition.fragment_name__}' is not part of the "
                 f"binding that produced slot '{self.slot_name__}'"
             )
             raise ValueError(msg)
-        # The value under a handle is that handle's validated model by
-        # construction; a heterogeneous mapping keyed by GQLFragment[T] with
-        # T-valued entries is not expressible, hence the cast at this single
-        # boundary.
-        _, data = entry
-        return cast("TData | None", data)
+        # По построению значение под definition class является validated model
+        # этого definition. Heterogeneous-связь нельзя выразить типом mapping,
+        # поэтому cast остаётся на этой границе.
+        return cast("TData | None", self._slot_data[definition_type])
 
     def add_slot_data__(
-        self, handle: GQLFragment[pydantic.BaseModel], data: object
+        self, definition: GQLFragment[pydantic.BaseModel, Any], data: object
     ) -> None:
         # Written only by `validate_slot__`; the `__` suffix marks it as the
         # slot runtime's own contract, like `slot_name__`.
-        self._slot_data[id(handle)] = (handle, data)
+        self._slot_data[definition.definition_type] = data
 
     @pydantic.model_validator(mode="wrap")
     @classmethod
@@ -185,60 +221,69 @@ class GQLSlotNode(pydantic.BaseModel, Generic[TOffered_contra]):  # noqa: UP046
         if not _is_typename(typename):
             msg = f"slot {cls.slot_name__!r} payload is missing __typename"
             raise ValueError(msg)
-        for offered in _slot_handles(info, cls.slot_name__):
-            # Every offered handle gets an entry — None on a typename
-            # mismatch — so `slot_data__` can tell "never offered" apart. A
-            # typename miss can only be a mismatch, never schema drift: the
-            # slot node's Literal typename has already rejected drift by the
-            # time this check runs (see the uniform-branch comment in
-            # codegen/collect._collect_polymorphic_models and its test).
+        for reader in _slot_readers(info, cls.slot_name__):
+            # Каждый предложенный definition получает entry — `None` при
+            # typename mismatch. Отсутствие entry однозначно означает «не был
+            # предложен». Schema drift уже отвергнут Literal typename slot node.
             node.add_slot_data__(
-                offered.fragment,
-                offered.fragment.validate__(data)
-                if typename in offered.typenames
+                reader.definition,
+                reader.definition.validate__(data)
+                if typename in reader.typenames
                 else None,
             )
         return node
 
 
-def _slot_handles(
+def _slot_readers(
     info: pydantic.ValidationInfo, slot_name: str
-) -> tuple[SlotHandle, ...]:
+) -> tuple[SlotReader, ...]:
     context = info.context
-    if not isinstance(context, dict) or slot_name not in context:
+    if not isinstance(context, Mapping) or slot_name not in context:
         msg = f"slot {slot_name!r} validated without a fragments context"
         raise ValueError(msg)
-    # Only this slot's own entry is checked: the context is pydantic's
-    # general-purpose channel, and entries the caller's own validators put
-    # there are none of this slot's business. A malformed value under the
-    # slot's key is still diagnosed precisely instead of surfacing as an
-    # AttributeError from inside the handle loop.
-    entry = cast("dict[object, object]", context)[slot_name]
-    if not _is_handles(entry):
-        msg = f"slot {slot_name!r} context entry is not a tuple of slot handles"
+    # Проверяется только entry этого slot: validation context является общим
+    # каналом pydantic и может содержать данные validators caller. Некорректное
+    # значение под ключом slot диагностируется здесь, а не как `AttributeError`
+    # внутри reader loop.
+    entry = cast("Mapping[object, object]", context)[slot_name]
+    if not _is_readers(entry):
+        msg = f"slot {slot_name!r} context entry is not a tuple of slot readers"
         raise ValueError(msg)
     return entry
 
 
-def _as_handles(
-    value: GQLFragment[pydantic.BaseModel] | Sequence[GQLFragment[pydantic.BaseModel]],
-) -> tuple[GQLFragment[pydantic.BaseModel], ...]:
-    if isinstance(value, GQLFragment):
+def as_bindable_fragments(
+    value: GQLBindableFragment[pydantic.BaseModel, Any]
+    | Sequence[GQLBindableFragment[pydantic.BaseModel, Any]],
+) -> tuple[GQLBindableFragment[pydantic.BaseModel, Any], ...]:
+    # Нормализует две допустимые формы заполненного slot — один bindable
+    # fragment или их sequence — в единый tuple. Функция публична, потому что
+    # generated `bind()` передаёт эту форму в аргумент `passed` метода
+    # `bound__`; та же нормализация нужна ниже для `dispatch_key`.
+    if isinstance(value, GQLBindableFragment):
         return (value,)
     return tuple(value)
 
 
-type BindKey = tuple[str, tuple[tuple[str, tuple[str, ...]], ...]]
+type CombinationKey = tuple[str, tuple[tuple[str, tuple[str, ...]], ...]]
+type DispatchKey = tuple[
+    str,
+    tuple[
+        tuple[
+            str,
+            tuple[BindableFragmentType, ...],
+        ],
+        ...,
+    ],
+]
 
 
-def bind_key_shape(
+def combination_key(
     template: str, slots: Iterable[tuple[str, Iterable[str]]]
-) -> BindKey:
-    # The one definition of a bind key's shape, built here from runtime
-    # handles and by codegen's renderer from the IR. A slot passed nothing --
-    # omitted, or given an empty sequence -- drops out entirely, so the two
-    # spellings of "no fragments here" are one key; slots and their fragments
-    # sort, so a call's own order never reaches the key.
+) -> CombinationKey:
+    # Каноническая форма логической комбинации, которую codegen строит из IR.
+    # Пустой slot исчезает, а slots и fragment names сортируются, поэтому
+    # порядок в исходном bind-вызове не влияет на идентичность комбинации.
     #
     # What this normalisation must never be asked to do is tell a *misspelled*
     # slot from a real one, since it erases exactly the evidence: names are
@@ -249,16 +294,38 @@ def bind_key_shape(
     return (template, tuple((slot, names) for slot, names in sorted(entries) if names))
 
 
-def bind_key(
+def dispatch_key(
     template_name: str,
     fragments: Mapping[
-        str, GQLFragment[pydantic.BaseModel] | Sequence[GQLFragment[pydantic.BaseModel]]
+        str,
+        GQLBindableFragment[pydantic.BaseModel, Any]
+        | Sequence[GQLBindableFragment[pydantic.BaseModel, Any]],
     ],
-) -> BindKey:
-    return bind_key_shape(
-        template_name,
+) -> DispatchKey:
+    # Runtime dispatch идентифицирует bindable fragment по exact generated
+    # class. Для plain fragment это public definition class, для factory —
+    # private applied class. Reader identity через `definition_type` остаётся
+    # отдельным контрактом.
+    entries = [
         (
-            (slot, (handle.fragment_name__ for handle in _as_handles(raw)))
-            for slot, raw in fragments.items()
+            slot,
+            tuple(
+                sorted(
+                    (type(fragment) for fragment in as_bindable_fragments(raw)),
+                    key=lambda fragment_class: (
+                        fragment_class.__module__,
+                        fragment_class.__qualname__,
+                    ),
+                )
+            ),
+        )
+        for slot, raw in fragments.items()
+    ]
+    return (
+        template_name,
+        tuple(
+            (slot, fragment_classes)
+            for slot, fragment_classes in sorted(entries)
+            if fragment_classes
         ),
     )

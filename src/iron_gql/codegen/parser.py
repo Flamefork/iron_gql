@@ -6,12 +6,15 @@ from collections.abc import Mapping
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Literal
 
 import graphql
 import pydantic
 from graphql.utilities import value_from_ast_untyped
 
+from iron_gql.codegen.accessors import type_from_ast
 from iron_gql.codegen.discovery import BindDecl
+from iron_gql.codegen.discovery import BindKeywordCheck
 from iron_gql.codegen.discovery import IgnoredBind
 from iron_gql.codegen.discovery import Statement
 from iron_gql.codegen.ir import GraphQLGenerationError
@@ -36,9 +39,7 @@ def parse_var(
     context: str = "",
 ) -> GQLVar:
     var_name = var_def.variable.name.value
-    gql_type: graphql.GraphQLType | None = graphql.type_from_ast(  # pyright: ignore[reportUnknownMemberType]
-        schema, var_def.type
-    )
+    gql_type = type_from_ast(schema, var_def.type)
     if gql_type is None:
         msg = f"Cannot resolve type for ${var_name}"
         if context:
@@ -46,7 +47,7 @@ def parse_var(
         raise ValueError(msg)
     default_value: object = graphql.Undefined
     if var_def.default_value is not None:
-        # `value_from_ast_untyped` is typed as Any by design
+        # `value_from_ast_untyped` намеренно типизирован как Any.
         default_value = value_from_ast_untyped(var_def.default_value)  # pyright: ignore[reportAny]
     return GQLVar(name=var_name, gql_type=gql_type, default_value=default_value)
 
@@ -150,6 +151,15 @@ class FragmentStatement:
         # can be validated standalone.
         return graphql.DocumentNode(definitions=[self.definition, *self.dependencies])
 
+    @functools.cached_property
+    def kind(self) -> Literal["plain", "factory"]:
+        # Factory — это fragment, чей document closure (он сам и все
+        # transitively spread fragments на любой глубине) использует GraphQL
+        # variable. `document` уже является этим closure, поэтому для различия
+        # `plain` и `factory` достаточно синтаксически найти `$name`; schema не
+        # нужна.
+        return "factory" if _uses_a_variable(self.document) else "plain"
+
 
 @dataclass(kw_only=True, frozen=True)
 class ParseResult:
@@ -159,11 +169,14 @@ class ParseResult:
     # step that means only one of them.
     operations: list[Operation]
     templates: list[Template]
-    # The single-fragment statements some bind references, directly or
-    # through its spread closure — the ones that become fragment handles.
-    # Computed here, once: a statement no bind reaches keeps its pre-bind
-    # meaning (spread by name, untyped catch-all at the call site).
-    reachable_statements: list[FragmentStatement]
+    # Single-fragment statements становятся fragment definitions, если пакет
+    # содержит хотя бы один template. Combinations выводятся из
+    # schema, поэтому enumeration может достичь fragment без явного `.bind()`.
+    # Даже несовместимый ни с одним slot fragment получает class: `bind()`
+    # отклоняет его отсутствием overload для on-type base, а не отсутствием
+    # type. Пакет без template ничего не bind-ит, и его fragments сохраняют
+    # прежнюю семантику: spread по имени и untyped catch-all на call site.
+    bindable_statements: list[FragmentStatement]
     errors: list[str]
 
 
@@ -212,9 +225,8 @@ def collect_fragment_statements(
 ) -> list[FragmentStatement]:
     statements: list[FragmentStatement] = []
     for stmt, doc in docs:
-        # A handle is generated only for a statement that is exactly one
-        # fragment: anything else keeps its current meaning (an operation, or a
-        # bundle whose fragments are spread statically by name).
+        # Typed definition создаётся только для statement ровно с одним
+        # fragment. Operation и bundle сохраняют прежнюю семантику.
         match doc.definitions:
             case [graphql.FragmentDefinitionNode() as definition]:
                 statements.append(
@@ -511,6 +523,25 @@ class _SpreadCollector(graphql.Visitor):
         self.spreads.add(node.name.value)
 
 
+class _VariablePresenceCollector(graphql.Visitor):
+    def __init__(self) -> None:
+        super().__init__()
+        self.found = False
+
+    def enter_variable(self, _node: graphql.VariableNode, *_args: object) -> None:
+        self.found = True
+
+
+def _uses_a_variable(doc: graphql.DocumentNode) -> bool:
+    # Presence only, no schema: `bindings._fragment_variable_usages` resolves
+    # each usage's type and default-ness for `with_args`'s own signature, but
+    # classifying "plain" from "factory" needs none of that, only whether a
+    # `$name` appears anywhere in the closure at all.
+    visitor = _VariablePresenceCollector()
+    graphql.visit(doc, visitor)
+    return visitor.found
+
+
 def collect_fragment_spreads(node: graphql.Node) -> set[str]:
     spreads: set[str] = set()
     graphql.visit(node, _SpreadCollector(spreads))
@@ -574,49 +605,43 @@ def make_validation_doc(
     return graphql.DocumentNode(definitions=[*doc.definitions, *extra_definitions])
 
 
-def bind_closures(
-    binds: Sequence[BindDecl],
+def bindable_statements(
+    templates: list[Template],
     statements: list[FragmentStatement],
 ) -> tuple[list[FragmentStatement], list[str]]:
-    # The single-fragment statements that become typed handles: named directly
-    # by some bind's slot argument, or reached transitively through that
-    # fragment's own spreads. Walked over those statements alone, because that
-    # is exactly what a bind can see -- a fragment defined inside a
-    # multi-definition statement is spreadable by name anywhere else, but no
-    # handle can be made of it, so it is unresolvable *here* and diagnosed
-    # here, at the predicate, instead of being resolved against the package
-    # index and rejected two layers down. `expand_binding` then walks the same
-    # closure over the set this returns and finds nothing missing by
-    # construction.
-    by_stmt = {statement.stmt: statement for statement in statements}
-    handle_defs = {statement.name: statement.definition for statement in statements}
+    # При наличии template каждый single-fragment statement становится
+    # bindable — см. `ParseResult.bindable_statements`.
+    #
+    # Spread closure каждого definition обходится только по таким statements:
+    # именно их видит bind. Fragment внутри multi-definition statement доступен
+    # для spread по имени, но не может стать bindable definition, поэтому ошибка
+    # разрешения диагностируется здесь. `expand_binding` затем обходит тот же
+    # closure по возвращённому набору. Обход идёт по statements, а не по bind,
+    # поэтому fragment без явного `.bind()` всё равно участвует в enumeration.
+    if not templates:
+        return [], []
+    bindable_definitions = {
+        statement.name: statement.definition for statement in statements
+    }
     errors: list[str] = []
-    reachable_names: set[str] = set()
-    for bind in binds:
-        direct_names = {
-            statement.name
-            for _key, stmts in bind.slot_args
-            for stmt in stmts
-            if (statement := by_stmt.get(stmt)) is not None
-        }
-        names, missing = collect_transitive_fragment_names(direct_names, handle_defs)
-        reachable_names |= names
+    for statement in statements:
+        _names, missing = collect_transitive_fragment_names(
+            {statement.name}, bindable_definitions
+        )
         if missing:
             names = ", ".join(sorted(missing))
             msg = (
-                f"Bind at {bind.location} spreads fragment(s) {names} in its "
-                "closure, but they are not single-fragment statements a bind "
-                "can see -- split each into its own statement"
+                f"Fragment '{statement.name}' at {statement.stmt.location} "
+                f"spreads fragment(s) {names} in its closure, but they are not "
+                "single-fragment statements a bind can see -- split each into "
+                "its own statement"
             )
             errors.append(msg)
-    return (
-        [statement for statement in statements if statement.name in reachable_names],
-        errors,
-    )
+    return statements, errors
 
 
 def validate_bind_templates(
-    binds: Sequence[BindDecl],
+    binds: Sequence[BindDecl | BindKeywordCheck],
     all_queries: list[Query],
     operations: list[Operation],
     templates: list[Template],
@@ -681,6 +706,7 @@ def parse_gql_queries(
     statements: list[Statement],
     binds: Sequence[BindDecl],
     *,
+    bind_keyword_checks: Sequence[BindKeywordCheck],
     debug_path: Path | None = None,
 ) -> ParseResult:
     schema_document = graphql.parse(schema_path.read_text(encoding="utf-8"))
@@ -700,10 +726,10 @@ def parse_gql_queries(
     # rejected operation has to say is noise on top of the reason it was
     # rejected.
     operations, templates, slot_errors = classify_queries(valid_queries)
-    # A statement's bind-reachability doesn't depend on whether it validated
+    # A statement's bindability doesn't depend on whether it validated
     # cleanly, but everything downstream (`expand_binding`, the IR collector)
     # only ever sees statements that did.
-    reachable_statements, closure_errors = bind_closures(binds, valid_statements)
+    bindable, closure_errors = bindable_statements(templates, valid_statements)
 
     if debug_path:
         write_debug_artifacts(
@@ -718,14 +744,16 @@ def parse_gql_queries(
         schema=schema,
         operations=operations,
         templates=templates,
-        reachable_statements=reachable_statements,
+        bindable_statements=bindable,
         errors=[
             *query_errors,
             *fragment_errors,
             *validate_no_slots_in_fragments(docs),
             *slot_errors,
             *validate_cross_statement_fragments(docs, fragments),
-            *validate_bind_templates(binds, queries, operations, templates),
+            *validate_bind_templates(
+                [*binds, *bind_keyword_checks], queries, operations, templates
+            ),
             *validate_bind_slot_args(binds, all_fragment_statements),
             *closure_errors,
         ],

@@ -9,13 +9,17 @@ import datetime
 from abc import ABC
 from abc import abstractmethod
 from collections.abc import AsyncGenerator
+from collections.abc import Callable
 from collections.abc import Sequence
 from contextlib import AbstractAsyncContextManager
 from typing import Annotated
+from typing import Any
 from typing import ClassVar
 from typing import Literal
 from typing import Never
-from typing import Self
+from typing import TypeVar
+from typing import cast
+from typing import final
 from typing import overload
 from typing import override
 
@@ -34,6 +38,8 @@ from tests.generated.slots_lists.settings import GRAPHQL_URL
 API_CLIENT = runtime.AsyncGQLClient(
     base_url=GRAPHQL_URL,
 )
+
+_API_GQL_CAST = cast
 
 
 class GQLModel(pydantic.BaseModel):
@@ -112,93 +118,129 @@ class CardTitleData(GQLOpenModel):
     title: str
 
 
-class ActivityTexts(slots.GQLFragment[ActivityTextsData]):
-    pass
+TModel = TypeVar("TModel", bound=pydantic.BaseModel, covariant=True)
+TReads = TypeVar("TReads", contravariant=True)
 
 
-ACTIVITY_TEXTS = ActivityTexts(
-    fragment_name='ActivityTexts',
-    adapter=pydantic.TypeAdapter(ActivityTextsData),
-)
-
-
-class CardTitle(slots.GQLFragment[CardTitleData]):
-    pass
-
-
-CARD_TITLE = CardTitle(
-    fragment_name='CardTitle',
-    adapter=pydantic.TypeAdapter(CardTitleData),
-)
-
-
-class GetEventsBound[TResult](runtime.GQLBoundOperation, ABC):
+class OnBoard(slots.GQLBindableFragment[TModel, TReads], ABC):
     @abstractmethod
-    async def execute(self, *, id: builtins.str) -> TResult:
-        ...
-
-
-class GetCardsBound[TResult](runtime.GQLBoundOperation, ABC):
-    @abstractmethod
-    async def execute(self, *, id: builtins.str) -> TResult:
-        ...
-
-
-class GetEventsWithBoardActivityTexts(GetEventsBound[GetEventsResult[ActivityTexts]]):
-    # See: queries.py:44
-    exec_source__ = 'query GetEvents($id: ID!) {\n  board(id: $id) {\n    __typename\n    events {\n      __typename\n    }\n    ...ActivityTexts\n  }\n}\n\nfragment ActivityTexts on Board {\n  events {\n    __typename\n    ... on Comment {\n      body\n    }\n    ... on Move {\n      fromColumn\n    }\n  }\n}'
-    slot_handles__ = {"board": (slots.SlotHandle(ACTIVITY_TEXTS, frozenset({'Board'})),)}
-    @override
-    async def execute(self, *, id: builtins.str) -> GetEventsResult[ActivityTexts]:
-        return await API_CLIENT.query(
-            GetEventsResult[ActivityTexts],
-            self.exec_source__,
-            variables={"id": id, **self.fragment_args__()},
-            headers=self.headers,
-            slot_handles=self.slot_handles__,
+    def __init__(
+        self,
+        *,
+        fragment_name: str,
+        definition_type: type[slots.GQLFragment[
+            TModel, TReads,
+        ]],
+        adapter: pydantic.TypeAdapter[TModel],
+    ) -> None:
+        super().__init__(
+            fragment_name=fragment_name,
+            definition_type=definition_type,
+            adapter=adapter,
         )
 
 
-class GetCardsWithCardsCardTitle(GetCardsBound[GetCardsResult[CardTitle]]):
-    # See: queries.py:45
-    exec_source__ = 'query GetCards($id: ID!) {\n  board(id: $id) {\n    cards {\n      __typename\n      ...CardTitle\n    }\n  }\n}\n\nfragment CardTitle on Card {\n  title\n}'
-    slot_handles__ = {"cards": (slots.SlotHandle(CARD_TITLE, frozenset({'Card'})),)}
+class OnCard(slots.GQLBindableFragment[TModel, TReads], ABC):
+    @abstractmethod
+    def __init__(
+        self,
+        *,
+        fragment_name: str,
+        definition_type: type[slots.GQLFragment[
+            TModel, TReads,
+        ]],
+        adapter: pydantic.TypeAdapter[TModel],
+    ) -> None:
+        super().__init__(
+            fragment_name=fragment_name,
+            definition_type=definition_type,
+            adapter=adapter,
+        )
+
+
+@final
+class ActivityTexts(OnBoard[ActivityTextsData, "ActivityTexts"]):
+    adapter__: ClassVar[pydantic.TypeAdapter[ActivityTextsData]] = pydantic.TypeAdapter(ActivityTextsData)
+
     @override
-    async def execute(self, *, id: builtins.str) -> GetCardsResult[CardTitle]:
+    def __init__(self) -> None:
+        super().__init__(
+            fragment_name='ActivityTexts',
+            definition_type=ActivityTexts,
+            adapter=self.adapter__,
+        )
+
+
+@final
+class CardTitle(OnCard[CardTitleData, "CardTitle"]):
+    adapter__: ClassVar[pydantic.TypeAdapter[CardTitleData]] = pydantic.TypeAdapter(CardTitleData)
+
+    @override
+    def __init__(self) -> None:
+        super().__init__(
+            fragment_name='CardTitle',
+            definition_type=CardTitle,
+            adapter=self.adapter__,
+        )
+
+
+class GetEventsBound[TResult: pydantic.BaseModel](runtime.GQLBoundOperation):
+    async def execute(self, *, id: builtins.str) -> TResult:
         return await API_CLIENT.query(
-            GetCardsResult[CardTitle],
-            self.exec_source__,
-            variables={"id": id, **self.fragment_args__()},
+            _API_GQL_CAST("type[TResult]", GetEventsResult),
+            self.exec_source,
+            variables={"id": id, **self.fragment_args},
             headers=self.headers,
-            slot_handles=self.slot_handles__,
+            slot_readers=self.slot_readers,
+        )
+
+
+class GetCardsBound[TResult: pydantic.BaseModel](runtime.GQLBoundOperation):
+    async def execute(self, *, id: builtins.str) -> TResult:
+        return await API_CLIENT.query(
+            _API_GQL_CAST("type[TResult]", GetCardsResult),
+            self.exec_source,
+            variables={"id": id, **self.fragment_args},
+            headers=self.headers,
+            slot_readers=self.slot_readers,
         )
 
 
 class GetEvents(runtime.GQLTemplate):
     @overload
-    def bind(self, *, board: Sequence[Never] = ()) -> Never: ...
+    def bind(self, *, board: Sequence[Never] = ()) -> GetEventsBound[GetEventsResult[Never]]: ...
     @overload
-    def bind(self, *, board: ActivityTexts | Sequence[ActivityTexts]) -> GetEventsWithBoardActivityTexts: ...
-    def bind(self, *, board: slots.GQLFragment[pydantic.BaseModel] | Sequence[slots.GQLFragment[pydantic.BaseModel]] = ()) -> runtime.GQLBoundOperation:
-        if _API_GQL_BIND_DISPATCH.get(slots.bind_key('GetEvents', {'board': board})) is None:
-            raise LookupError("unknown bind combination for GetEvents; every fragment a bind passes must be a discovered statement - check the call site, then regenerate the package")
-        return _API_GQL_BIND_DISPATCH[slots.bind_key('GetEvents', {'board': board})]()
+    def bind[TModelBoard: pydantic.BaseModel, TReadsBoard](self, *, board: OnBoard[TModelBoard, TReadsBoard]) -> GetEventsBound[GetEventsResult[OnBoard[TModelBoard, TReadsBoard] | TReadsBoard]]: ...
+    def bind(self, *, board: slots.GQLBindableFragment[pydantic.BaseModel, Any] | Sequence[slots.GQLBindableFragment[pydantic.BaseModel, Any]] = ()) -> runtime.GQLBoundOperation:
+        if _API_GQL_BIND_DISPATCH.get(slots.dispatch_key('GetEvents', {'board': board})) is None:
+            raise LookupError("unknown bind combination for GetEvents; single-fragment and empty combinations are generated from the schema, so this is a tuple combination no call site writes literally - write it, then regenerate the package. A call whose template is an expression the scan cannot follow is never read either: those are listed, with the reason, in the debug run's ignored_binds.json")
+        return GetEventsBound[GetEventsResult].bound__(
+            _API_GQL_BIND_DISPATCH[slots.dispatch_key('GetEvents', {'board': board})], {'board': slots.as_bindable_fragments(board)},
+        )
 
 
 class GetCards(runtime.GQLTemplate):
     @overload
-    def bind(self, *, cards: Sequence[Never] = ()) -> Never: ...
+    def bind(self, *, cards: Sequence[Never] = ()) -> GetCardsBound[GetCardsResult[Never]]: ...
     @overload
-    def bind(self, *, cards: CardTitle | Sequence[CardTitle]) -> GetCardsWithCardsCardTitle: ...
-    def bind(self, *, cards: slots.GQLFragment[pydantic.BaseModel] | Sequence[slots.GQLFragment[pydantic.BaseModel]] = ()) -> runtime.GQLBoundOperation:
-        if _API_GQL_BIND_DISPATCH.get(slots.bind_key('GetCards', {'cards': cards})) is None:
-            raise LookupError("unknown bind combination for GetCards; every fragment a bind passes must be a discovered statement - check the call site, then regenerate the package")
-        return _API_GQL_BIND_DISPATCH[slots.bind_key('GetCards', {'cards': cards})]()
+    def bind[TModelCards: pydantic.BaseModel, TReadsCards](self, *, cards: OnCard[TModelCards, TReadsCards]) -> GetCardsBound[GetCardsResult[OnCard[TModelCards, TReadsCards] | TReadsCards]]: ...
+    def bind(self, *, cards: slots.GQLBindableFragment[pydantic.BaseModel, Any] | Sequence[slots.GQLBindableFragment[pydantic.BaseModel, Any]] = ()) -> runtime.GQLBoundOperation:
+        if _API_GQL_BIND_DISPATCH.get(slots.dispatch_key('GetCards', {'cards': cards})) is None:
+            raise LookupError("unknown bind combination for GetCards; single-fragment and empty combinations are generated from the schema, so this is a tuple combination no call site writes literally - write it, then regenerate the package. A call whose template is an expression the scan cannot follow is never read either: those are listed, with the reason, in the debug run's ignored_binds.json")
+        return GetCardsBound[GetCardsResult].bound__(
+            _API_GQL_BIND_DISPATCH[slots.dispatch_key('GetCards', {'cards': cards})], {'cards': slots.as_bindable_fragments(cards)},
+        )
 
 
-_API_GQL_BIND_DISPATCH: dict[slots.BindKey, type[runtime.GQLBoundOperation]] = {
-    ('GetEvents', (('board', ('ActivityTexts',)),)): GetEventsWithBoardActivityTexts,
-    ('GetCards', (('cards', ('CardTitle',)),)): GetCardsWithCardsCardTitle,
+_API_GQL_BIND_DISPATCH: dict[slots.DispatchKey, runtime.BoundSpec] = {
+    # See: queries.py:3
+    ('GetEvents', ()): ('query GetEvents($id: ID!) {\n  board(id: $id) {\n    __typename\n    events {\n      __typename\n    }\n  }\n}', {"board": ()}),
+    # See: queries.py:3, queries.py:24
+    ('GetEvents', (('board', (ActivityTexts,)),)): ('query GetEvents($id: ID!) {\n  board(id: $id) {\n    __typename\n    events {\n      __typename\n    }\n    ...ActivityTexts\n  }\n}\n\nfragment ActivityTexts on Board {\n  events {\n    __typename\n    ... on Comment {\n      body\n    }\n    ... on Move {\n      fromColumn\n    }\n  }\n}', {"board": ((ActivityTexts, frozenset({'Board'})),)}),
+    # See: queries.py:14
+    ('GetCards', ()): ('query GetCards($id: ID!) {\n  board(id: $id) {\n    cards {\n      __typename\n    }\n  }\n}', {"cards": ()}),
+    # See: queries.py:14, queries.py:36
+    ('GetCards', (('cards', (CardTitle,)),)): ('query GetCards($id: ID!) {\n  board(id: $id) {\n    cards {\n      __typename\n      ...CardTitle\n    }\n  }\n}\n\nfragment CardTitle on Card {\n  title\n}', {"cards": ((CardTitle, frozenset({'Card'})),)}),
 }
 
 
@@ -211,12 +253,12 @@ def api_gql(stmt: Literal['\n    query GetEvents($id: ID!) {\n        board(id: 
 @overload
 def api_gql(stmt: Literal['\n    query GetCards($id: ID!) {\n        board(id: $id) {\n            cards @slot { __typename }\n        }\n    }\n    ']) -> GetCards: ...
 @overload
-def api_gql(stmt: str) -> runtime.GQLOperation | slots.GQLFragment[pydantic.BaseModel] | runtime.GQLTemplate: ...
+def api_gql(stmt: str) -> runtime.GQLOperation | slots.GQLFragment[pydantic.BaseModel, Any] | runtime.GQLTemplate: ...
 
 
-_API_GQL_FRAGMENTS: dict[str, slots.GQLFragment[pydantic.BaseModel]] = {
-    '\n    fragment ActivityTexts on Board {\n        events {\n            __typename\n            ... on Comment { body }\n            ... on Move { fromColumn }\n        }\n    }\n    ': ACTIVITY_TEXTS,
-    '\n    fragment CardTitle on Card {\n        title\n    }\n    ': CARD_TITLE,
+_API_GQL_FRAGMENTS: dict[str, type[slots.GQLFragment[pydantic.BaseModel, Any]]] = {
+    '\n    fragment ActivityTexts on Board {\n        events {\n            __typename\n            ... on Comment { body }\n            ... on Move { fromColumn }\n        }\n    }\n    ': ActivityTexts,
+    '\n    fragment CardTitle on Card {\n        title\n    }\n    ': CardTitle,
 }
 
 
@@ -226,10 +268,10 @@ _API_GQL_TEMPLATES: dict[str, type[runtime.GQLTemplate]] = {
 }
 
 
-def api_gql(stmt: str) -> runtime.GQLOperation | slots.GQLFragment[pydantic.BaseModel] | runtime.GQLTemplate:
-    fragment = _API_GQL_FRAGMENTS.get(stmt)
-    if fragment is not None:
-        return fragment
+def api_gql(stmt: str) -> runtime.GQLOperation | slots.GQLFragment[pydantic.BaseModel, Any] | runtime.GQLTemplate:
+    fragment_cls = _API_GQL_FRAGMENTS.get(stmt)
+    if fragment_cls is not None:
+        return _API_GQL_CAST("Callable[[], slots.GQLFragment[pydantic.BaseModel, Any]]", fragment_cls)()
     template_cls = _API_GQL_TEMPLATES.get(stmt)
     if template_cls is not None:
         return template_cls()

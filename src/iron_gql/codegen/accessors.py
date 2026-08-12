@@ -103,6 +103,14 @@ def type_info_input_type(
     return type_info.get_input_type()  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
 
 
+def type_from_ast(
+    schema: graphql.GraphQLSchema, node: graphql.TypeNode
+) -> graphql.GraphQLType | None:
+    return graphql.type_from_ast(  # pyright: ignore[reportUnknownMemberType]
+        schema, node
+    )
+
+
 def visit_document(
     doc: graphql.DocumentNode, visitor: graphql.Visitor
 ) -> graphql.DocumentNode:

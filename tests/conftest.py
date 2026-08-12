@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from dataclasses import field
 from pathlib import Path
 from types import ModuleType
+from typing import Any
 
 import graphql
 import pydantic
@@ -48,18 +49,18 @@ type Resolvers = Mapping[str, Mapping[str, Resolver]]
 # `GQLSlotNode` is `GQLSlotNode[Never]` (the phantom's declared default), and
 # under contravariance every node is assignable to it -- so this signature
 # accepts any node while `slot_data__`, which carries no phantom, still
-# answers for the handle. That is exactly the shape of a type-erased path in
+# answers for the fragment. That is exactly the shape of a type-erased path in
 # a real program (a node behind a widened annotation, one that arrived as
 # `Any` from dynamic code, a generated module the caller forgot to
 # regenerate), and it is the seam every test pinning the runtime wiring guard
 # goes through -- `GQLFragment.read` itself cannot reach the guard, because
-# its phantom rejects an unoffered handle before the program runs.
+# its phantom rejects an unoffered fragment before the program runs.
 def read_type_erased[TData: pydantic.BaseModel](
-    handle: GQLFragment[TData], node: GQLSlotNode | None
+    fragment: GQLFragment[TData, Any], node: GQLSlotNode | None
 ) -> TData | None:
     if node is None:
         return None
-    return node.slot_data__(handle)
+    return node.slot_data__(fragment)
 
 
 class GraphQLRequest(pydantic.BaseModel):
@@ -158,8 +159,24 @@ def write_text(path: Path, content: str) -> None:
     path.write_text(textwrap.dedent(content).lstrip("\n"), encoding="utf-8")
 
 
+# What a fixture's schema gets unless it asks for more. A scalar mapping is
+# rendered as an unconditional import into the package that receives it, so a
+# mapping every fixture carries is a line in every committed module -- the
+# schemas that need `Upload` pass it themselves (see `WIRE_SHAPE_SCHEMA`).
+DEFAULT_SCALARS: Mapping[str, str] = {"ID": "builtins:str"}
+UPLOAD_SCALARS: Mapping[str, str] = {
+    **DEFAULT_SCALARS,
+    "Upload": "iron_gql.runtime:FileVar",
+}
+
+
 def generated_package(
-    name: str, *, schema: str, queries: str, mode: GenerationMode = "async"
+    name: str,
+    *,
+    schema: str,
+    queries: str,
+    mode: GenerationMode = "async",
+    scalars: Mapping[str, str] = DEFAULT_SCALARS,
 ) -> None:
     """Generate a committed package under tests/generated/<name>/.
 
@@ -179,7 +196,7 @@ def generated_package(
         src_path=root,
         package_full_name="gql.api",
         base_url_import=f"tests.generated.{name}.settings:GRAPHQL_URL",
-        scalars={"ID": "builtins:str"},
+        scalars=dict(scalars),
         to_camel_fn_full_name="pydantic.alias_generators:to_camel",
         to_snake_fn=alias_generators.to_snake,
     )

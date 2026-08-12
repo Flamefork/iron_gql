@@ -7,12 +7,14 @@ from collections.abc import Mapping
 from collections.abc import MutableMapping
 from contextlib import asynccontextmanager
 from contextlib import contextmanager
+from copy import replace
+from dataclasses import dataclass
+from types import MappingProxyType
 from typing import IO
 from typing import Any
-from typing import ClassVar
 from typing import Self
 from typing import TypeIs
-from typing import override
+from typing import cast
 
 import httpx2
 import pydantic
@@ -21,7 +23,12 @@ from httpx2.websockets import AsyncWebSocketClient
 from httpx2.websockets import WebSocketClient
 
 from iron_gql.errors import GraphQLResponseError
-from iron_gql.slots import SlotHandles
+from iron_gql.slots import OMITTED
+from iron_gql.slots import FragmentDefinitionType
+from iron_gql.slots import GQLBindableFragment
+from iron_gql.slots import GQLFragment
+from iron_gql.slots import SlotReader
+from iron_gql.slots import SlotReaders
 from iron_gql.websockets import async_graphql_ws_subscribe
 from iron_gql.websockets import graphql_ws_subscribe
 from iron_gql.websockets import ws_url
@@ -34,6 +41,9 @@ type ASGIScope = MutableMapping[str, object]
 type ASGIEvent = MutableMapping[str, object]
 type ASGIReceive = Callable[[], Awaitable[ASGIEvent]]
 type ASGISend = Callable[[ASGIEvent], Awaitable[None]]
+type _JSONValue = (
+    bool | int | float | str | list[_JSONValue] | dict[str, _JSONValue] | None
+)
 
 ASGIApp = Callable[[ASGIScope, ASGIReceive, ASGISend], Awaitable[None]]
 
@@ -64,24 +74,16 @@ class _ResponseBody(pydantic.BaseModel):
     errors: list[dict[str, Any]] | None = None
 
 
+@dataclass(frozen=True, slots=True, kw_only=True, repr=False, eq=False)
 class GQLOperation:
-    def __init__(self):
-        self.headers: dict[str, str] = {}
+    _headers: tuple[tuple[str, str], ...] = ()
 
-    def _copy(self) -> Self:
-        # The one statement of what "the same operation" carries. Every
-        # `with_*` copies through here and then replaces only the field it is
-        # named after, so a subclass adding state overrides this alone and
-        # every `with_*` carries it -- rather than each `with_*` re-listing
-        # the state it has to bring along and silently dropping what it forgot.
-        q = self.__class__()
-        q.headers = dict(self.headers)
-        return q
+    @property
+    def headers(self) -> dict[str, str]:
+        return dict(self._headers)
 
     def with_headers(self, headers: dict[str, str]) -> Self:
-        q = self._copy()
-        q.headers = dict(headers)
-        return q
+        return replace(self, _headers=tuple(headers.items()))
 
 
 # The base every generated template class derives from. Deliberately empty: a
@@ -94,54 +96,195 @@ class GQLTemplate:
     pass
 
 
+# Generated definition class и typenames, на которых он достижим в slot.
+# Одна entry на каждый fragment, читаемый в одном slot комбинации.
+type SlotReaderSpec = tuple[FragmentDefinitionType, frozenset[str]]
+# `exec_source` и readable-fragment spec для каждого slot. Dispatch table
+# хранит одну такую entry на discovered combination
+# (`render.render_bind_dispatch`): document text и per-slot reader table.
+type BoundSpec = tuple[str, dict[str, tuple[SlotReaderSpec, ...]]]
+
+
+def _applied_value(
+    fragment: GQLBindableFragment[pydantic.BaseModel, Any], name: str
+) -> object:
+    if name in fragment.fragment_args__:
+        return fragment.fragment_args__[name]
+    return OMITTED
+
+
+def _canonical_request_json(value: object) -> str:
+    # Сначала JSON model задаёт тот же public encoder, которым пользуется query
+    # transport. В частности, object key `1` становится `"1"` до сортировки;
+    # отдельная реализация такого преобразования дублировала бы wire contract
+    # httpx2. Request только кодируется и не отправляется.
+    encoded = httpx2.Request("POST", "http://request-shape.invalid", json=value).content
+    adapter: pydantic.TypeAdapter[_JSONValue] = pydantic.TypeAdapter(_JSONValue)
+    normalized = adapter.validate_json(encoded)
+    return json.dumps(
+        normalized,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        allow_nan=False,
+        sort_keys=True,
+    )
+
+
+def _request_shape(value: object) -> tuple[str, tuple[tuple[str, int], ...]]:
+    # One applied value as the request carries it: the JSON `execute` would
+    # send for it, plus every file riding along beside it -- which file, and
+    # where in the value it sits.
+    #
+    # Compared instead of the objects themselves because `==` and the wire
+    # disagree in both directions. It erases distinctions the request keeps --
+    # `1 == True` and `1 == 1.0` are both true in Python, while a JSON scalar
+    # receives `1`, `true` and `1.0`, three different values -- so two
+    # applications that ask for different requests looked agreed, and the
+    # second slot silently got the first one's value. And it keeps one the
+    # wire erases: a `FileVar` serializes to `null` with the bytes riding in
+    # the multipart body instead, so the JSON alone would call two different
+    # uploads the same request.
+    #
+    # The whole `files` mapping, not the identities alone: what the multipart
+    # body says about a file is a pair, and dropping the path answered "same
+    # request" for one file offered at two different places -- `[file, None]`
+    # and `[None, file]` have the same JSON (`[null, null]`) and the same
+    # identity, and the merge then sent the first application's position for
+    # both. Keeping only the paths loses the other half by the same argument.
+    #
+    # `serialize_variables` rather than a comparison of its own: it is what
+    # `execute` sends, both halves of what it returns, and a second
+    # implementation of "the same request" would be a copy to keep in step
+    # with it.
+    serialized, files = serialize_variables({"value": value})
+    placements = tuple(sorted((path, id(file)) for path, file in files.items()))
+    return _canonical_request_json(serialized), placements
+
+
+def _same_request(value: object, other: object) -> bool:
+    # `OMITTED` is no value and has no wire form: absence is what it asks
+    # for, and only another absence agrees with it.
+    if value is OMITTED or other is OMITTED:
+        return value is other
+    return _request_shape(value) == _request_shape(other)
+
+
+def _merged_fragment_args(
+    passed: Mapping[str, tuple[GQLBindableFragment[pydantic.BaseModel, Any], ...]],
+) -> dict[str, object]:
+    # Генерация доказывает, что разные direct factories владеют непересекающимися
+    # именами variables. Динамическими остаются только повторные applications
+    # одной factory: их конкретные значения появляются лишь при bind(), и до
+    # слияния каждая application должна описывать один и тот же запрос.
+    applications: dict[
+        FragmentDefinitionType,
+        list[tuple[str, GQLBindableFragment[pydantic.BaseModel, Any]]],
+    ] = {}
+    for slot, fragments in passed.items():
+        for fragment in fragments:
+            applications.setdefault(fragment.definition_type, []).append((
+                slot,
+                fragment,
+            ))
+    merged: dict[str, object] = {}
+    for group in applications.values():
+        _first_slot, first = _agreed_application(group[0][1].fragment_name__, group)
+        merged.update(first.fragment_args__)
+    return merged
+
+
+def _agreed_application(
+    fragment_name: str,
+    group: list[tuple[str, GQLBindableFragment[pydantic.BaseModel, Any]]],
+) -> tuple[str, GQLBindableFragment[pydantic.BaseModel, Any]]:
+    # The one application every other one of the same fragment agrees with,
+    # compared over the union of the names they wrote rather than over the keys
+    # they happen to share: `with_args(width=100)` and `with_args(width=100,
+    # size="LARGE")` overlap on every key the first one has, and merging by
+    # presence alone therefore sent `size` for both spreads while the slot that
+    # left it out had asked for the schema default. Whichever name they part
+    # on is the one named in the diagnostic; the rest of the merge above then
+    # reads a single agreed state per fragment.
+    #
+    # "Agree" is `_same_request`, not `==`: two applications agree exactly
+    # when the request they ask for is the same one.
+    first_entry, *rest = group
+    first_slot, first = first_entry
+    for other_slot, other in rest:
+        for name in sorted(first.fragment_args__.keys() | other.fragment_args__.keys()):
+            value = _applied_value(first, name)
+            other_value = _applied_value(other, name)
+            if _same_request(value, other_value):
+                continue
+            raise ValueError(
+                _conflicting_value_message(
+                    name=name,
+                    first_owner=f"fragment '{fragment_name}' in slot '{first_slot}'",
+                    second_owner=f"fragment '{fragment_name}' in slot '{other_slot}'",
+                )
+            )
+    return first_entry
+
+
+def _conflicting_value_message(
+    *, name: str, first_owner: str, second_owner: str
+) -> str:
+    return (
+        f"conflicting values for fragment variable ${name}: "
+        f"{first_owner} and {second_owner} assign different request values. "
+        f"The expanded document declares ${name} once, so "
+        "every application of a fragment in one bind has to agree on it"
+    )
+
+
+@dataclass(frozen=True, slots=True, kw_only=True, repr=False, eq=False)
 class GQLBoundOperation(GQLOperation):
-    # Pinned by generated binding classes.
-    exec_source__: ClassVar[str]
-    # Every fragment readable at each slot's root: what the bind named for the
-    # slot, plus whatever those fragments spread at their own root level, each
-    # with the typenames it is reachable at. Offered to pydantic's validation
-    # context so each one becomes independently readable and is
-    # boundary-validated; reading happens through each fragment's own
-    # `read(node)`.
-    slot_handles__: ClassVar[SlotHandles]
-    required_arg_names__: ClassVar[frozenset[str]] = frozenset()
+    _exec_source: str
+    _slot_readers: SlotReaders
+    _fragment_args: Mapping[str, object]
 
-    def __init__(self) -> None:
-        super().__init__()
-        self._fragment_args: dict[str, object] = {}
+    @property
+    def exec_source(self) -> str:
+        return self._exec_source
 
-    @override
-    def _copy(self) -> Self:
-        q = super()._copy()
-        q.set_fragment_args__(self._fragment_args)
-        return q
+    @property
+    def slot_readers(self) -> SlotReaders:
+        return self._slot_readers
 
-    def with_args__(self, args: dict[str, object]) -> Self:
-        # Replaces, never merges: the generated `with_args` writes every
-        # fragment variable it knows about on every call, and expresses "use
-        # the schema's default" by leaving a key out. Merging into the previous
-        # call's args would make that spelling unreachable — a value set once
-        # could never be taken back.
-        q = self._copy()
-        q.set_fragment_args__(args)
-        return q
-
-    def set_fragment_args__(self, args: dict[str, object]) -> None:
-        # Cross-instance write from `_copy`/`with_args__`, which `q.
-        # _fragment_args = ...` cannot spell -- ruff's SLF001 rejects reaching
-        # into another instance's private attribute even from inside the
-        # class. The trailing-__ (no leading _) marks it as the same
-        # generated-code-contract idiom as add_slot_data__ in slots.py, not a
-        # public setter for callers.
-        self._fragment_args = dict(args)
-
-    def fragment_args__(self) -> dict[str, object]:
-        if not self.required_arg_names__ <= self._fragment_args.keys():
-            missing = sorted(self.required_arg_names__ - self._fragment_args.keys())
-            names = ", ".join(f"${name}" for name in missing)
-            msg = f"missing fragment variable values ({names}); pass them via with_args"
-            raise ValueError(msg)
+    @property
+    def fragment_args(self) -> Mapping[str, object]:
         return self._fragment_args
+
+    @classmethod
+    def bound__(
+        cls,
+        spec: BoundSpec,
+        passed: Mapping[str, tuple[GQLBindableFragment[pydantic.BaseModel, Any], ...]],
+    ) -> Self:
+        # Здесь static slot phantom встречается с общим runtime class всех
+        # комбинаций. `render._bind_impl` вызывает метод сразу после lookup
+        # `spec` в dispatch table. Applications дают только fragment variables;
+        # readers создаются из generated definition classes внутри spec.
+        # Поэтому definition и все applications одной factory разделяют
+        # projection identity.
+        exec_source, definitions_by_slot = spec
+        return cls(
+            _exec_source=exec_source,
+            _slot_readers=MappingProxyType({
+                slot: tuple(
+                    SlotReader(
+                        cast(
+                            "Callable[[], GQLFragment[pydantic.BaseModel, Any]]",
+                            definition_type,
+                        )(),
+                        typenames,
+                    )
+                    for definition_type, typenames in entries
+                )
+                for slot, entries in definitions_by_slot.items()
+            }),
+            _fragment_args=MappingProxyType(_merged_fragment_args(passed)),
+        )
 
 
 def _build_payload(
@@ -176,7 +319,7 @@ def _multipart_body(
 def _parse_query_response[T: pydantic.BaseModel](
     response: httpx2.Response,
     result_type: type[T],
-    slot_handles: SlotHandles | None,
+    slot_readers: SlotReaders | None,
 ) -> T:
     if httpx2.codes.is_redirect(response.status_code):
         # httpx2 `Headers.get` is typed as Any
@@ -200,7 +343,7 @@ def _parse_query_response[T: pydantic.BaseModel](
     if body.data is None:
         raise GraphQLResponseError([{"message": "No data in response"}])
 
-    return result_type.model_validate(body.data, context=slot_handles)
+    return result_type.model_validate(body.data, context=slot_readers)
 
 
 class AsyncGQLClient:
@@ -228,7 +371,7 @@ class AsyncGQLClient:
         *,
         variables: dict[str, Any],
         headers: dict[str, str],
-        slot_handles: SlotHandles | None = None,
+        slot_readers: SlotReaders | None = None,
     ) -> T:
         payload, files = _build_payload(query, variables)
         if files:
@@ -240,7 +383,7 @@ class AsyncGQLClient:
             response = await self._client.post(
                 self._endpoint_url, json=payload, headers=headers
             )
-        return _parse_query_response(response, result_type, slot_handles)
+        return _parse_query_response(response, result_type, slot_readers)
 
     @asynccontextmanager
     async def subscribe[T: pydantic.BaseModel](
@@ -250,7 +393,7 @@ class AsyncGQLClient:
         *,
         variables: dict[str, Any],
         headers: dict[str, str],
-        slot_handles: SlotHandles | None = None,
+        slot_readers: SlotReaders | None = None,
     ) -> AsyncGenerator[AsyncGenerator[T]]:
         serialized_vars, files = serialize_variables(variables)
         if files:
@@ -274,7 +417,7 @@ class AsyncGQLClient:
                     url, subprotocols=["graphql-transport-ws"]
                 ) as ws,
                 async_graphql_ws_subscribe(
-                    ws, result_type, query, serialized_vars, slot_handles
+                    ws, result_type, query, serialized_vars, slot_readers
                 ) as stream,
             ):
                 yield stream
@@ -308,7 +451,7 @@ class GQLClient:
         *,
         variables: dict[str, Any],
         headers: dict[str, str],
-        slot_handles: SlotHandles | None = None,
+        slot_readers: SlotReaders | None = None,
     ) -> T:
         payload, files = _build_payload(query, variables)
         if files:
@@ -320,7 +463,7 @@ class GQLClient:
             response = self._client.post(
                 self._endpoint_url, json=payload, headers=headers
             )
-        return _parse_query_response(response, result_type, slot_handles)
+        return _parse_query_response(response, result_type, slot_readers)
 
     @contextmanager
     def subscribe[T: pydantic.BaseModel](
@@ -330,7 +473,7 @@ class GQLClient:
         *,
         variables: dict[str, Any],
         headers: dict[str, str],
-        slot_handles: SlotHandles | None = None,
+        slot_readers: SlotReaders | None = None,
     ) -> Generator[Generator[T]]:
         serialized_vars, files = serialize_variables(variables)
         if files:
@@ -345,7 +488,7 @@ class GQLClient:
                 url, subprotocols=["graphql-transport-ws"], headers=headers
             ) as ws,
             graphql_ws_subscribe(
-                ws, result_type, query, serialized_vars, slot_handles
+                ws, result_type, query, serialized_vars, slot_readers
             ) as stream,
         ):
             yield stream

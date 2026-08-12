@@ -36,10 +36,8 @@ get_attachment = api_gql(
 )
 
 bound = get_attachment.bind(attachment=image_parts)
-# A second bind of the same template, so `foreign_parts` is genuinely
-# bind-reachable (gets a real typed handle) while still being foreign to
-# `bound`'s own closure -- an orphan fragment (bound nowhere) never
-# becomes a handle at all (`parser.bind_closures` drops it), so
-# this is the only way to test "outside this binding's closure" rather
-# than "outside every binding".
-elsewhere = get_attachment.bind(attachment=foreign_parts)
+# `foreign_parts` is a typed definition like every fragment of a package
+# with a template, and its own combination is enumerated whether or not
+# anybody writes it -- so it is foreign to `bound`'s closure while still
+# being a real definition, which is what "outside this binding's closure"
+# (rather than "outside every binding") needs.

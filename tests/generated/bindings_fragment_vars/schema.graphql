@@ -2,9 +2,14 @@ type Query {
     post(id: ID!): Post
 }
 
+# Two slots of one type, so the schema's own enumeration holds the row where
+# a single factory fills both of them -- the combination nobody has to write
+# for it to exist, and the one whose two applications supply two values for
+# the one `$width` the expanded document declares.
 type Post {
     id: ID!
     attachment: Attachment
+    preview: Attachment
 }
 
 union Attachment = ImageAttachment | LinkAttachment

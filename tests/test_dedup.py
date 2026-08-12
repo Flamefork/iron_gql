@@ -37,6 +37,7 @@ def _build_ir(schema_sdl: str, query_sources: list[str]) -> CollectedPackageIR:
             templates=templates,
             fragment_statements=collect_fragment_statements(schema, docs, fragments),
             binds=[],
+            bind_keyword_checks=(),
             discovered_texts=(),
             scalars={"ID": ImportRef.parse("builtins:str")},
             to_snake_fn=alias_generators.to_snake,

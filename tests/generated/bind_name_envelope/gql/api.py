@@ -9,13 +9,17 @@ import datetime
 from abc import ABC
 from abc import abstractmethod
 from collections.abc import AsyncGenerator
+from collections.abc import Callable
 from collections.abc import Sequence
 from contextlib import AbstractAsyncContextManager
 from typing import Annotated
+from typing import Any
 from typing import ClassVar
 from typing import Literal
 from typing import Never
-from typing import Self
+from typing import TypeVar
+from typing import cast
+from typing import final
 from typing import overload
 from typing import override
 
@@ -34,6 +38,8 @@ from tests.generated.bind_name_envelope.settings import GRAPHQL_URL
 API_CLIENT = runtime.AsyncGQLClient(
     base_url=GRAPHQL_URL,
 )
+
+_API_GQL_CAST = cast
 
 
 class GQLModel(pydantic.BaseModel):
@@ -70,32 +76,6 @@ class OverloadedResultPostClsSlotLinkAttachment[TSlotCls = Never](GQLSlotModel[T
 type OverloadedResultPostClsSlot[TSlotCls] = Annotated[OverloadedResultPostClsSlotImageAttachment[TSlotCls] | OverloadedResultPostClsSlotLinkAttachment[TSlotCls], pydantic.Field(discriminator="typename__")]
 
 
-class OverloadedResultPostMsgSlotImageAttachment[TSlotMsg = Never](GQLSlotModel[TSlotMsg]):
-    slot_name__: ClassVar[str] = "msg"
-    typename__: Annotated[Literal["ImageAttachment"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
-
-
-class OverloadedResultPostMsgSlotLinkAttachment[TSlotMsg = Never](GQLSlotModel[TSlotMsg]):
-    slot_name__: ClassVar[str] = "msg"
-    typename__: Annotated[Literal["LinkAttachment"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
-
-
-type OverloadedResultPostMsgSlot[TSlotMsg] = Annotated[OverloadedResultPostMsgSlotImageAttachment[TSlotMsg] | OverloadedResultPostMsgSlotLinkAttachment[TSlotMsg], pydantic.Field(discriminator="typename__")]
-
-
-class OverloadedResultPostKeySlotImageAttachment[TSlotKey = Never](GQLSlotModel[TSlotKey]):
-    slot_name__: ClassVar[str] = "key"
-    typename__: Annotated[Literal["ImageAttachment"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
-
-
-class OverloadedResultPostKeySlotLinkAttachment[TSlotKey = Never](GQLSlotModel[TSlotKey]):
-    slot_name__: ClassVar[str] = "key"
-    typename__: Annotated[Literal["LinkAttachment"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
-
-
-type OverloadedResultPostKeySlot[TSlotKey] = Annotated[OverloadedResultPostKeySlotImageAttachment[TSlotKey] | OverloadedResultPostKeySlotLinkAttachment[TSlotKey], pydantic.Field(discriminator="typename__")]
-
-
 class OverloadedResultPostBindSlotImageAttachment[TSlotBind = Never](GQLSlotModel[TSlotBind]):
     slot_name__: ClassVar[str] = "bind"
     typename__: Annotated[Literal["ImageAttachment"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
@@ -107,32 +87,6 @@ class OverloadedResultPostBindSlotLinkAttachment[TSlotBind = Never](GQLSlotModel
 
 
 type OverloadedResultPostBindSlot[TSlotBind] = Annotated[OverloadedResultPostBindSlotImageAttachment[TSlotBind] | OverloadedResultPostBindSlotLinkAttachment[TSlotBind], pydantic.Field(discriminator="typename__")]
-
-
-class OverloadedResultPostFragmentsSlotImageAttachment[TSlotFragments = Never](GQLSlotModel[TSlotFragments]):
-    slot_name__: ClassVar[str] = "fragments"
-    typename__: Annotated[Literal["ImageAttachment"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
-
-
-class OverloadedResultPostFragmentsSlotLinkAttachment[TSlotFragments = Never](GQLSlotModel[TSlotFragments]):
-    slot_name__: ClassVar[str] = "fragments"
-    typename__: Annotated[Literal["LinkAttachment"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
-
-
-type OverloadedResultPostFragmentsSlot[TSlotFragments] = Annotated[OverloadedResultPostFragmentsSlotImageAttachment[TSlotFragments] | OverloadedResultPostFragmentsSlotLinkAttachment[TSlotFragments], pydantic.Field(discriminator="typename__")]
-
-
-class OverloadedResultPostDispatchSlotImageAttachment[TSlotDispatch = Never](GQLSlotModel[TSlotDispatch]):
-    slot_name__: ClassVar[str] = "dispatch"
-    typename__: Annotated[Literal["ImageAttachment"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
-
-
-class OverloadedResultPostDispatchSlotLinkAttachment[TSlotDispatch = Never](GQLSlotModel[TSlotDispatch]):
-    slot_name__: ClassVar[str] = "dispatch"
-    typename__: Annotated[Literal["LinkAttachment"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
-
-
-type OverloadedResultPostDispatchSlot[TSlotDispatch] = Annotated[OverloadedResultPostDispatchSlotImageAttachment[TSlotDispatch] | OverloadedResultPostDispatchSlotLinkAttachment[TSlotDispatch], pydantic.Field(discriminator="typename__")]
 
 
 class OverloadedResultPostPydanticSlotImageAttachment[TSlotPydantic = Never](GQLSlotModel[TSlotPydantic]):
@@ -148,60 +102,20 @@ class OverloadedResultPostPydanticSlotLinkAttachment[TSlotPydantic = Never](GQLS
 type OverloadedResultPostPydanticSlot[TSlotPydantic] = Annotated[OverloadedResultPostPydanticSlotImageAttachment[TSlotPydantic] | OverloadedResultPostPydanticSlotLinkAttachment[TSlotPydantic], pydantic.Field(discriminator="typename__")]
 
 
-class OverloadedResultPostRuntimeSlotImageAttachment[TSlotRuntime = Never](GQLSlotModel[TSlotRuntime]):
-    slot_name__: ClassVar[str] = "runtime"
-    typename__: Annotated[Literal["ImageAttachment"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
-
-
-class OverloadedResultPostRuntimeSlotLinkAttachment[TSlotRuntime = Never](GQLSlotModel[TSlotRuntime]):
-    slot_name__: ClassVar[str] = "runtime"
-    typename__: Annotated[Literal["LinkAttachment"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
-
-
-type OverloadedResultPostRuntimeSlot[TSlotRuntime] = Annotated[OverloadedResultPostRuntimeSlotImageAttachment[TSlotRuntime] | OverloadedResultPostRuntimeSlotLinkAttachment[TSlotRuntime], pydantic.Field(discriminator="typename__")]
-
-
-class OverloadedResultPostSequenceSlotImageAttachment[TSlotSequence = Never](GQLSlotModel[TSlotSequence]):
-    slot_name__: ClassVar[str] = "sequence"
-    typename__: Annotated[Literal["ImageAttachment"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
-
-
-class OverloadedResultPostSequenceSlotLinkAttachment[TSlotSequence = Never](GQLSlotModel[TSlotSequence]):
-    slot_name__: ClassVar[str] = "sequence"
-    typename__: Annotated[Literal["LinkAttachment"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
-
-
-type OverloadedResultPostSequenceSlot[TSlotSequence] = Annotated[OverloadedResultPostSequenceSlotImageAttachment[TSlotSequence] | OverloadedResultPostSequenceSlotLinkAttachment[TSlotSequence], pydantic.Field(discriminator="typename__")]
-
-
-class PostWithBindClsDispatchFragmentsIdKeyMsgPydanticRuntimeSequence[TSlotCls = Never, TSlotMsg = Never, TSlotKey = Never, TSlotBind = Never, TSlotFragments = Never, TSlotDispatch = Never, TSlotPydantic = Never, TSlotRuntime = Never, TSlotSequence = Never](GQLModel):
+class PostWithBindClsIdPydantic[TSlotCls = Never, TSlotBind = Never, TSlotPydantic = Never](GQLModel):
     id: builtins.str
     cls: OverloadedResultPostClsSlot[TSlotCls] | None
-    msg: OverloadedResultPostMsgSlot[TSlotMsg] | None
-    key: OverloadedResultPostKeySlot[TSlotKey] | None
     bind: OverloadedResultPostBindSlot[TSlotBind] | None
-    fragments: OverloadedResultPostFragmentsSlot[TSlotFragments] | None
-    dispatch: OverloadedResultPostDispatchSlot[TSlotDispatch] | None
     pydantic: OverloadedResultPostPydanticSlot[TSlotPydantic] | None
-    runtime: OverloadedResultPostRuntimeSlot[TSlotRuntime] | None
-    sequence: OverloadedResultPostSequenceSlot[TSlotSequence] | None
 
 
-class OverloadedResult[TSlotCls = Never, TSlotMsg = Never, TSlotKey = Never, TSlotBind = Never, TSlotFragments = Never, TSlotDispatch = Never, TSlotPydantic = Never, TSlotRuntime = Never, TSlotSequence = Never](GQLModel):
-    post: PostWithBindClsDispatchFragmentsIdKeyMsgPydanticRuntimeSequence[TSlotCls, TSlotMsg, TSlotKey, TSlotBind, TSlotFragments, TSlotDispatch, TSlotPydantic, TSlotRuntime, TSlotSequence] | None
+class OverloadedResult[TSlotCls = Never, TSlotBind = Never, TSlotPydantic = Never](GQLModel):
+    post: PostWithBindClsIdPydantic[TSlotCls, TSlotBind, TSlotPydantic] | None
 
 
-class InlineResultPostClsSlotImageAttachment[TSlotCls = Never](GQLSlotModel[TSlotCls]):
+class InlineResultPostClsSlot[TSlotCls = Never](GQLSlotModel[TSlotCls]):
     slot_name__: ClassVar[str] = "cls"
-    typename__: Annotated[Literal["ImageAttachment"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
-
-
-class InlineResultPostClsSlotLinkAttachment[TSlotCls = Never](GQLSlotModel[TSlotCls]):
-    slot_name__: ClassVar[str] = "cls"
-    typename__: Annotated[Literal["LinkAttachment"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
-
-
-type InlineResultPostClsSlot[TSlotCls] = Annotated[InlineResultPostClsSlotImageAttachment[TSlotCls] | InlineResultPostClsSlotLinkAttachment[TSlotCls], pydantic.Field(discriminator="typename__")]
+    typename__: Annotated[Literal["Author"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
 
 
 class PostWithClsId[TSlotCls = Never](GQLModel):
@@ -221,111 +135,223 @@ class LinkPartsData(GQLOpenModel):
     href: str
 
 
-class ImageParts(slots.GQLFragment[ImagePartsData]):
-    pass
+TModel = TypeVar("TModel", bound=pydantic.BaseModel, covariant=True)
+TReads = TypeVar("TReads", contravariant=True)
 
 
-IMAGE_PARTS = ImageParts(
-    fragment_name='ImageParts',
-    adapter=pydantic.TypeAdapter(ImagePartsData),
-)
-
-
-class LinkParts(slots.GQLFragment[LinkPartsData]):
-    pass
-
-
-LINK_PARTS = LinkParts(
-    fragment_name='LinkParts',
-    adapter=pydantic.TypeAdapter(LinkPartsData),
-)
-
-
-class OverloadedBound[TResult](runtime.GQLBoundOperation, ABC):
+class OnImageAttachment(slots.GQLBindableFragment[TModel, TReads], ABC):
     @abstractmethod
-    async def execute(self, *, id: builtins.str) -> TResult:
-        ...
-
-
-class InlineBound[TResult](runtime.GQLBoundOperation, ABC):
-    @abstractmethod
-    async def execute(self, *, id: builtins.str) -> TResult:
-        ...
-
-
-class OverloadedWithClsImageParts(OverloadedBound[OverloadedResult[ImageParts, Never, Never, Never, Never, Never, Never, Never, Never]]):
-    # See: queries.py:52
-    exec_source__ = 'query Overloaded($id: ID!) {\n  post(id: $id) {\n    id\n    cls: attachment {\n      __typename\n      ...ImageParts\n    }\n    msg: attachment {\n      __typename\n    }\n    key: attachment {\n      __typename\n    }\n    bind: attachment {\n      __typename\n    }\n    fragments: attachment {\n      __typename\n    }\n    dispatch: attachment {\n      __typename\n    }\n    pydantic: attachment {\n      __typename\n    }\n    runtime: attachment {\n      __typename\n    }\n    sequence: attachment {\n      __typename\n    }\n  }\n}\n\nfragment ImageParts on ImageAttachment {\n  url\n}'
-    slot_handles__ = {"cls": (slots.SlotHandle(IMAGE_PARTS, frozenset({'ImageAttachment'})),), "msg": (), "key": (), "bind": (), "fragments": (), "dispatch": (), "pydantic": (), "runtime": (), "sequence": ()}
-    @override
-    async def execute(self, *, id: builtins.str) -> OverloadedResult[ImageParts, Never, Never, Never, Never, Never, Never, Never, Never]:
-        return await API_CLIENT.query(
-            OverloadedResult[ImageParts, Never, Never, Never, Never, Never, Never, Never, Never],
-            self.exec_source__,
-            variables={"id": id, **self.fragment_args__()},
-            headers=self.headers,
-            slot_handles=self.slot_handles__,
+    def __init__(
+        self,
+        *,
+        fragment_name: str,
+        definition_type: type[slots.GQLFragment[
+            TModel, TReads,
+        ]],
+        adapter: pydantic.TypeAdapter[TModel],
+    ) -> None:
+        super().__init__(
+            fragment_name=fragment_name,
+            definition_type=definition_type,
+            adapter=adapter,
         )
 
 
-class OverloadedWithPydanticLinkPartsWithRuntimeImageParts(OverloadedBound[OverloadedResult[Never, Never, Never, Never, Never, Never, LinkParts, ImageParts, Never]]):
-    # See: queries.py:53
-    exec_source__ = 'query Overloaded($id: ID!) {\n  post(id: $id) {\n    id\n    cls: attachment {\n      __typename\n    }\n    msg: attachment {\n      __typename\n    }\n    key: attachment {\n      __typename\n    }\n    bind: attachment {\n      __typename\n    }\n    fragments: attachment {\n      __typename\n    }\n    dispatch: attachment {\n      __typename\n    }\n    pydantic: attachment {\n      __typename\n      ...LinkParts\n    }\n    runtime: attachment {\n      __typename\n      ...ImageParts\n    }\n    sequence: attachment {\n      __typename\n    }\n  }\n}\n\nfragment ImageParts on ImageAttachment {\n  url\n}\n\nfragment LinkParts on LinkAttachment {\n  href\n}'
-    slot_handles__ = {"cls": (), "msg": (), "key": (), "bind": (), "fragments": (), "dispatch": (), "pydantic": (slots.SlotHandle(LINK_PARTS, frozenset({'LinkAttachment'})),), "runtime": (slots.SlotHandle(IMAGE_PARTS, frozenset({'ImageAttachment'})),), "sequence": ()}
-    @override
-    async def execute(self, *, id: builtins.str) -> OverloadedResult[Never, Never, Never, Never, Never, Never, LinkParts, ImageParts, Never]:
-        return await API_CLIENT.query(
-            OverloadedResult[Never, Never, Never, Never, Never, Never, LinkParts, ImageParts, Never],
-            self.exec_source__,
-            variables={"id": id, **self.fragment_args__()},
-            headers=self.headers,
-            slot_handles=self.slot_handles__,
+class OnLinkAttachment(slots.GQLBindableFragment[TModel, TReads], ABC):
+    @abstractmethod
+    def __init__(
+        self,
+        *,
+        fragment_name: str,
+        definition_type: type[slots.GQLFragment[
+            TModel, TReads,
+        ]],
+        adapter: pydantic.TypeAdapter[TModel],
+    ) -> None:
+        super().__init__(
+            fragment_name=fragment_name,
+            definition_type=definition_type,
+            adapter=adapter,
         )
 
 
-class InlineWithClsImageParts(InlineBound[InlineResult[ImageParts]]):
-    # See: queries.py:54
-    exec_source__ = 'query Inline($id: ID!) {\n  post(id: $id) {\n    id\n    cls: attachment {\n      __typename\n      ...ImageParts\n    }\n  }\n}\n\nfragment ImageParts on ImageAttachment {\n  url\n}'
-    slot_handles__ = {"cls": (slots.SlotHandle(IMAGE_PARTS, frozenset({'ImageAttachment'})),)}
+@final
+class ImageParts(OnImageAttachment[ImagePartsData, "ImageParts"]):
+    adapter__: ClassVar[pydantic.TypeAdapter[ImagePartsData]] = pydantic.TypeAdapter(ImagePartsData)
+
     @override
-    async def execute(self, *, id: builtins.str) -> InlineResult[ImageParts]:
+    def __init__(self) -> None:
+        super().__init__(
+            fragment_name='ImageParts',
+            definition_type=ImageParts,
+            adapter=self.adapter__,
+        )
+
+
+@final
+class LinkParts(OnLinkAttachment[LinkPartsData, "LinkParts"]):
+    adapter__: ClassVar[pydantic.TypeAdapter[LinkPartsData]] = pydantic.TypeAdapter(LinkPartsData)
+
+    @override
+    def __init__(self) -> None:
+        super().__init__(
+            fragment_name='LinkParts',
+            definition_type=LinkParts,
+            adapter=self.adapter__,
+        )
+
+
+class OverloadedBound[TResult: pydantic.BaseModel](runtime.GQLBoundOperation):
+    async def execute(self, *, cast: builtins.str) -> TResult:
         return await API_CLIENT.query(
-            InlineResult[ImageParts],
-            self.exec_source__,
-            variables={"id": id, **self.fragment_args__()},
+            _API_GQL_CAST("type[TResult]", OverloadedResult),
+            self.exec_source,
+            variables={"cast": cast, **self.fragment_args},
             headers=self.headers,
-            slot_handles=self.slot_handles__,
+            slot_readers=self.slot_readers,
+        )
+
+
+class InlineBound[TResult: pydantic.BaseModel](runtime.GQLBoundOperation):
+    async def execute(self, *, id: builtins.str) -> TResult:
+        return await API_CLIENT.query(
+            _API_GQL_CAST("type[TResult]", InlineResult),
+            self.exec_source,
+            variables={"id": id, **self.fragment_args},
+            headers=self.headers,
+            slot_readers=self.slot_readers,
         )
 
 
 class Overloaded(runtime.GQLTemplate):
     @overload
-    def bind(self, *, cls: Sequence[Never] = (), msg: Sequence[Never] = (), key: Sequence[Never] = (), bind: Sequence[Never] = (), fragments: Sequence[Never] = (), dispatch: Sequence[Never] = (), pydantic: Sequence[Never] = (), runtime: Sequence[Never] = (), sequence: Sequence[Never] = ()) -> Never: ...
+    def bind(self, *, cls: Sequence[Never] = (), bind: Sequence[Never] = (), pydantic: Sequence[Never] = ()) -> OverloadedBound[OverloadedResult[Never, Never, Never]]: ...
     @overload
-    def bind(self, *, cls: ImageParts | Sequence[ImageParts], msg: Sequence[Never] = (), key: Sequence[Never] = (), bind: Sequence[Never] = (), fragments: Sequence[Never] = (), dispatch: Sequence[Never] = (), pydantic: Sequence[Never] = (), runtime: Sequence[Never] = (), sequence: Sequence[Never] = ()) -> OverloadedWithClsImageParts: ...
+    def bind[TModelPydantic: pydantic.BaseModel, TReadsPydantic](self, *, cls: Sequence[Never] = (), bind: Sequence[Never] = (), pydantic: OnImageAttachment[TModelPydantic, TReadsPydantic]) -> OverloadedBound[OverloadedResult[Never, Never, OnImageAttachment[TModelPydantic, TReadsPydantic] | TReadsPydantic]]: ...
     @overload
-    def bind(self, *, cls: Sequence[Never] = (), msg: Sequence[Never] = (), key: Sequence[Never] = (), bind: Sequence[Never] = (), fragments: Sequence[Never] = (), dispatch: Sequence[Never] = (), pydantic: LinkParts | Sequence[LinkParts], runtime: ImageParts | Sequence[ImageParts], sequence: Sequence[Never] = ()) -> OverloadedWithPydanticLinkPartsWithRuntimeImageParts: ...
-    def bind(self, *, cls: slots.GQLFragment[pydantic.BaseModel] | Sequence[slots.GQLFragment[pydantic.BaseModel]] = (), msg: slots.GQLFragment[pydantic.BaseModel] | Sequence[slots.GQLFragment[pydantic.BaseModel]] = (), key: slots.GQLFragment[pydantic.BaseModel] | Sequence[slots.GQLFragment[pydantic.BaseModel]] = (), bind: slots.GQLFragment[pydantic.BaseModel] | Sequence[slots.GQLFragment[pydantic.BaseModel]] = (), fragments: slots.GQLFragment[pydantic.BaseModel] | Sequence[slots.GQLFragment[pydantic.BaseModel]] = (), dispatch: slots.GQLFragment[pydantic.BaseModel] | Sequence[slots.GQLFragment[pydantic.BaseModel]] = (), pydantic: slots.GQLFragment[pydantic.BaseModel] | Sequence[slots.GQLFragment[pydantic.BaseModel]] = (), runtime: slots.GQLFragment[pydantic.BaseModel] | Sequence[slots.GQLFragment[pydantic.BaseModel]] = (), sequence: slots.GQLFragment[pydantic.BaseModel] | Sequence[slots.GQLFragment[pydantic.BaseModel]] = ()) -> runtime.GQLBoundOperation:
-        if _API_GQL_BIND_DISPATCH.get(slots.bind_key('Overloaded', {'cls': cls, 'msg': msg, 'key': key, 'bind': bind, 'fragments': fragments, 'dispatch': dispatch, 'pydantic': pydantic, 'runtime': runtime, 'sequence': sequence})) is None:
-            raise LookupError("unknown bind combination for Overloaded; every fragment a bind passes must be a discovered statement - check the call site, then regenerate the package")
-        return _API_GQL_BIND_DISPATCH[slots.bind_key('Overloaded', {'cls': cls, 'msg': msg, 'key': key, 'bind': bind, 'fragments': fragments, 'dispatch': dispatch, 'pydantic': pydantic, 'runtime': runtime, 'sequence': sequence})]()
+    def bind[TModelPydantic: pydantic.BaseModel, TReadsPydantic](self, *, cls: Sequence[Never] = (), bind: Sequence[Never] = (), pydantic: OnLinkAttachment[TModelPydantic, TReadsPydantic]) -> OverloadedBound[OverloadedResult[Never, Never, OnLinkAttachment[TModelPydantic, TReadsPydantic] | TReadsPydantic]]: ...
+    @overload
+    def bind[TModelBind: pydantic.BaseModel, TReadsBind](self, *, cls: Sequence[Never] = (), bind: OnImageAttachment[TModelBind, TReadsBind], pydantic: Sequence[Never] = ()) -> OverloadedBound[OverloadedResult[Never, OnImageAttachment[TModelBind, TReadsBind] | TReadsBind, Never]]: ...
+    @overload
+    def bind[TModelBind: pydantic.BaseModel, TReadsBind](self, *, cls: Sequence[Never] = (), bind: OnLinkAttachment[TModelBind, TReadsBind], pydantic: Sequence[Never] = ()) -> OverloadedBound[OverloadedResult[Never, OnLinkAttachment[TModelBind, TReadsBind] | TReadsBind, Never]]: ...
+    @overload
+    def bind[TModelCls: pydantic.BaseModel, TReadsCls](self, *, cls: OnImageAttachment[TModelCls, TReadsCls], bind: Sequence[Never] = (), pydantic: Sequence[Never] = ()) -> OverloadedBound[OverloadedResult[OnImageAttachment[TModelCls, TReadsCls] | TReadsCls, Never, Never]]: ...
+    @overload
+    def bind[TModelCls: pydantic.BaseModel, TReadsCls](self, *, cls: OnLinkAttachment[TModelCls, TReadsCls], bind: Sequence[Never] = (), pydantic: Sequence[Never] = ()) -> OverloadedBound[OverloadedResult[OnLinkAttachment[TModelCls, TReadsCls] | TReadsCls, Never, Never]]: ...
+    @overload
+    def bind[TModelBind: pydantic.BaseModel, TReadsBind, TModelPydantic: pydantic.BaseModel, TReadsPydantic](self, *, cls: Sequence[Never] = (), bind: OnImageAttachment[TModelBind, TReadsBind], pydantic: OnImageAttachment[TModelPydantic, TReadsPydantic]) -> OverloadedBound[OverloadedResult[Never, OnImageAttachment[TModelBind, TReadsBind] | TReadsBind, OnImageAttachment[TModelPydantic, TReadsPydantic] | TReadsPydantic]]: ...
+    @overload
+    def bind[TModelBind: pydantic.BaseModel, TReadsBind, TModelPydantic: pydantic.BaseModel, TReadsPydantic](self, *, cls: Sequence[Never] = (), bind: OnImageAttachment[TModelBind, TReadsBind], pydantic: OnLinkAttachment[TModelPydantic, TReadsPydantic]) -> OverloadedBound[OverloadedResult[Never, OnImageAttachment[TModelBind, TReadsBind] | TReadsBind, OnLinkAttachment[TModelPydantic, TReadsPydantic] | TReadsPydantic]]: ...
+    @overload
+    def bind[TModelBind: pydantic.BaseModel, TReadsBind, TModelPydantic: pydantic.BaseModel, TReadsPydantic](self, *, cls: Sequence[Never] = (), bind: OnLinkAttachment[TModelBind, TReadsBind], pydantic: OnImageAttachment[TModelPydantic, TReadsPydantic]) -> OverloadedBound[OverloadedResult[Never, OnLinkAttachment[TModelBind, TReadsBind] | TReadsBind, OnImageAttachment[TModelPydantic, TReadsPydantic] | TReadsPydantic]]: ...
+    @overload
+    def bind[TModelBind: pydantic.BaseModel, TReadsBind, TModelPydantic: pydantic.BaseModel, TReadsPydantic](self, *, cls: Sequence[Never] = (), bind: OnLinkAttachment[TModelBind, TReadsBind], pydantic: OnLinkAttachment[TModelPydantic, TReadsPydantic]) -> OverloadedBound[OverloadedResult[Never, OnLinkAttachment[TModelBind, TReadsBind] | TReadsBind, OnLinkAttachment[TModelPydantic, TReadsPydantic] | TReadsPydantic]]: ...
+    @overload
+    def bind[TModelCls: pydantic.BaseModel, TReadsCls, TModelPydantic: pydantic.BaseModel, TReadsPydantic](self, *, cls: OnImageAttachment[TModelCls, TReadsCls], bind: Sequence[Never] = (), pydantic: OnImageAttachment[TModelPydantic, TReadsPydantic]) -> OverloadedBound[OverloadedResult[OnImageAttachment[TModelCls, TReadsCls] | TReadsCls, Never, OnImageAttachment[TModelPydantic, TReadsPydantic] | TReadsPydantic]]: ...
+    @overload
+    def bind[TModelCls: pydantic.BaseModel, TReadsCls, TModelPydantic: pydantic.BaseModel, TReadsPydantic](self, *, cls: OnImageAttachment[TModelCls, TReadsCls], bind: Sequence[Never] = (), pydantic: OnLinkAttachment[TModelPydantic, TReadsPydantic]) -> OverloadedBound[OverloadedResult[OnImageAttachment[TModelCls, TReadsCls] | TReadsCls, Never, OnLinkAttachment[TModelPydantic, TReadsPydantic] | TReadsPydantic]]: ...
+    @overload
+    def bind[TModelCls: pydantic.BaseModel, TReadsCls, TModelBind: pydantic.BaseModel, TReadsBind](self, *, cls: OnImageAttachment[TModelCls, TReadsCls], bind: OnImageAttachment[TModelBind, TReadsBind], pydantic: Sequence[Never] = ()) -> OverloadedBound[OverloadedResult[OnImageAttachment[TModelCls, TReadsCls] | TReadsCls, OnImageAttachment[TModelBind, TReadsBind] | TReadsBind, Never]]: ...
+    @overload
+    def bind[TModelCls: pydantic.BaseModel, TReadsCls, TModelBind: pydantic.BaseModel, TReadsBind](self, *, cls: OnImageAttachment[TModelCls, TReadsCls], bind: OnLinkAttachment[TModelBind, TReadsBind], pydantic: Sequence[Never] = ()) -> OverloadedBound[OverloadedResult[OnImageAttachment[TModelCls, TReadsCls] | TReadsCls, OnLinkAttachment[TModelBind, TReadsBind] | TReadsBind, Never]]: ...
+    @overload
+    def bind[TModelCls: pydantic.BaseModel, TReadsCls, TModelPydantic: pydantic.BaseModel, TReadsPydantic](self, *, cls: OnLinkAttachment[TModelCls, TReadsCls], bind: Sequence[Never] = (), pydantic: OnImageAttachment[TModelPydantic, TReadsPydantic]) -> OverloadedBound[OverloadedResult[OnLinkAttachment[TModelCls, TReadsCls] | TReadsCls, Never, OnImageAttachment[TModelPydantic, TReadsPydantic] | TReadsPydantic]]: ...
+    @overload
+    def bind[TModelCls: pydantic.BaseModel, TReadsCls, TModelPydantic: pydantic.BaseModel, TReadsPydantic](self, *, cls: OnLinkAttachment[TModelCls, TReadsCls], bind: Sequence[Never] = (), pydantic: OnLinkAttachment[TModelPydantic, TReadsPydantic]) -> OverloadedBound[OverloadedResult[OnLinkAttachment[TModelCls, TReadsCls] | TReadsCls, Never, OnLinkAttachment[TModelPydantic, TReadsPydantic] | TReadsPydantic]]: ...
+    @overload
+    def bind[TModelCls: pydantic.BaseModel, TReadsCls, TModelBind: pydantic.BaseModel, TReadsBind](self, *, cls: OnLinkAttachment[TModelCls, TReadsCls], bind: OnImageAttachment[TModelBind, TReadsBind], pydantic: Sequence[Never] = ()) -> OverloadedBound[OverloadedResult[OnLinkAttachment[TModelCls, TReadsCls] | TReadsCls, OnImageAttachment[TModelBind, TReadsBind] | TReadsBind, Never]]: ...
+    @overload
+    def bind[TModelCls: pydantic.BaseModel, TReadsCls, TModelBind: pydantic.BaseModel, TReadsBind](self, *, cls: OnLinkAttachment[TModelCls, TReadsCls], bind: OnLinkAttachment[TModelBind, TReadsBind], pydantic: Sequence[Never] = ()) -> OverloadedBound[OverloadedResult[OnLinkAttachment[TModelCls, TReadsCls] | TReadsCls, OnLinkAttachment[TModelBind, TReadsBind] | TReadsBind, Never]]: ...
+    @overload
+    def bind[TModelCls: pydantic.BaseModel, TReadsCls, TModelBind: pydantic.BaseModel, TReadsBind, TModelPydantic: pydantic.BaseModel, TReadsPydantic](self, *, cls: OnImageAttachment[TModelCls, TReadsCls], bind: OnImageAttachment[TModelBind, TReadsBind], pydantic: OnImageAttachment[TModelPydantic, TReadsPydantic]) -> OverloadedBound[OverloadedResult[OnImageAttachment[TModelCls, TReadsCls] | TReadsCls, OnImageAttachment[TModelBind, TReadsBind] | TReadsBind, OnImageAttachment[TModelPydantic, TReadsPydantic] | TReadsPydantic]]: ...
+    @overload
+    def bind[TModelCls: pydantic.BaseModel, TReadsCls, TModelBind: pydantic.BaseModel, TReadsBind, TModelPydantic: pydantic.BaseModel, TReadsPydantic](self, *, cls: OnImageAttachment[TModelCls, TReadsCls], bind: OnImageAttachment[TModelBind, TReadsBind], pydantic: OnLinkAttachment[TModelPydantic, TReadsPydantic]) -> OverloadedBound[OverloadedResult[OnImageAttachment[TModelCls, TReadsCls] | TReadsCls, OnImageAttachment[TModelBind, TReadsBind] | TReadsBind, OnLinkAttachment[TModelPydantic, TReadsPydantic] | TReadsPydantic]]: ...
+    @overload
+    def bind[TModelCls: pydantic.BaseModel, TReadsCls, TModelBind: pydantic.BaseModel, TReadsBind, TModelPydantic: pydantic.BaseModel, TReadsPydantic](self, *, cls: OnImageAttachment[TModelCls, TReadsCls], bind: OnLinkAttachment[TModelBind, TReadsBind], pydantic: OnImageAttachment[TModelPydantic, TReadsPydantic]) -> OverloadedBound[OverloadedResult[OnImageAttachment[TModelCls, TReadsCls] | TReadsCls, OnLinkAttachment[TModelBind, TReadsBind] | TReadsBind, OnImageAttachment[TModelPydantic, TReadsPydantic] | TReadsPydantic]]: ...
+    @overload
+    def bind[TModelCls: pydantic.BaseModel, TReadsCls, TModelBind: pydantic.BaseModel, TReadsBind, TModelPydantic: pydantic.BaseModel, TReadsPydantic](self, *, cls: OnImageAttachment[TModelCls, TReadsCls], bind: OnLinkAttachment[TModelBind, TReadsBind], pydantic: OnLinkAttachment[TModelPydantic, TReadsPydantic]) -> OverloadedBound[OverloadedResult[OnImageAttachment[TModelCls, TReadsCls] | TReadsCls, OnLinkAttachment[TModelBind, TReadsBind] | TReadsBind, OnLinkAttachment[TModelPydantic, TReadsPydantic] | TReadsPydantic]]: ...
+    @overload
+    def bind[TModelCls: pydantic.BaseModel, TReadsCls, TModelBind: pydantic.BaseModel, TReadsBind, TModelPydantic: pydantic.BaseModel, TReadsPydantic](self, *, cls: OnLinkAttachment[TModelCls, TReadsCls], bind: OnImageAttachment[TModelBind, TReadsBind], pydantic: OnImageAttachment[TModelPydantic, TReadsPydantic]) -> OverloadedBound[OverloadedResult[OnLinkAttachment[TModelCls, TReadsCls] | TReadsCls, OnImageAttachment[TModelBind, TReadsBind] | TReadsBind, OnImageAttachment[TModelPydantic, TReadsPydantic] | TReadsPydantic]]: ...
+    @overload
+    def bind[TModelCls: pydantic.BaseModel, TReadsCls, TModelBind: pydantic.BaseModel, TReadsBind, TModelPydantic: pydantic.BaseModel, TReadsPydantic](self, *, cls: OnLinkAttachment[TModelCls, TReadsCls], bind: OnImageAttachment[TModelBind, TReadsBind], pydantic: OnLinkAttachment[TModelPydantic, TReadsPydantic]) -> OverloadedBound[OverloadedResult[OnLinkAttachment[TModelCls, TReadsCls] | TReadsCls, OnImageAttachment[TModelBind, TReadsBind] | TReadsBind, OnLinkAttachment[TModelPydantic, TReadsPydantic] | TReadsPydantic]]: ...
+    @overload
+    def bind[TModelCls: pydantic.BaseModel, TReadsCls, TModelBind: pydantic.BaseModel, TReadsBind, TModelPydantic: pydantic.BaseModel, TReadsPydantic](self, *, cls: OnLinkAttachment[TModelCls, TReadsCls], bind: OnLinkAttachment[TModelBind, TReadsBind], pydantic: OnImageAttachment[TModelPydantic, TReadsPydantic]) -> OverloadedBound[OverloadedResult[OnLinkAttachment[TModelCls, TReadsCls] | TReadsCls, OnLinkAttachment[TModelBind, TReadsBind] | TReadsBind, OnImageAttachment[TModelPydantic, TReadsPydantic] | TReadsPydantic]]: ...
+    @overload
+    def bind[TModelCls: pydantic.BaseModel, TReadsCls, TModelBind: pydantic.BaseModel, TReadsBind, TModelPydantic: pydantic.BaseModel, TReadsPydantic](self, *, cls: OnLinkAttachment[TModelCls, TReadsCls], bind: OnLinkAttachment[TModelBind, TReadsBind], pydantic: OnLinkAttachment[TModelPydantic, TReadsPydantic]) -> OverloadedBound[OverloadedResult[OnLinkAttachment[TModelCls, TReadsCls] | TReadsCls, OnLinkAttachment[TModelBind, TReadsBind] | TReadsBind, OnLinkAttachment[TModelPydantic, TReadsPydantic] | TReadsPydantic]]: ...
+    def bind(self, *, cls: slots.GQLBindableFragment[pydantic.BaseModel, Any] | Sequence[slots.GQLBindableFragment[pydantic.BaseModel, Any]] = (), bind: slots.GQLBindableFragment[pydantic.BaseModel, Any] | Sequence[slots.GQLBindableFragment[pydantic.BaseModel, Any]] = (), pydantic: slots.GQLBindableFragment[pydantic.BaseModel, Any] | Sequence[slots.GQLBindableFragment[pydantic.BaseModel, Any]] = ()) -> runtime.GQLBoundOperation:
+        if _API_GQL_BIND_DISPATCH.get(slots.dispatch_key('Overloaded', {'cls': cls, 'bind': bind, 'pydantic': pydantic})) is None:
+            raise LookupError("unknown bind combination for Overloaded; single-fragment and empty combinations are generated from the schema, so this is a tuple combination no call site writes literally - write it, then regenerate the package. A call whose template is an expression the scan cannot follow is never read either: those are listed, with the reason, in the debug run's ignored_binds.json")
+        return OverloadedBound[OverloadedResult].bound__(
+            _API_GQL_BIND_DISPATCH[slots.dispatch_key('Overloaded', {'cls': cls, 'bind': bind, 'pydantic': pydantic})], {'cls': slots.as_bindable_fragments(cls), 'bind': slots.as_bindable_fragments(bind), 'pydantic': slots.as_bindable_fragments(pydantic)},
+        )
 
 
 class Inline(runtime.GQLTemplate):
-    @overload
-    def bind(self, *, cls: Sequence[Never] = ()) -> Never: ...
-    @overload
-    def bind(self, *, cls: ImageParts | Sequence[ImageParts]) -> InlineWithClsImageParts: ...
-    def bind(self, *, cls: slots.GQLFragment[pydantic.BaseModel] | Sequence[slots.GQLFragment[pydantic.BaseModel]] = ()) -> runtime.GQLBoundOperation:
-        if _API_GQL_BIND_DISPATCH.get(slots.bind_key('Inline', {'cls': cls})) is None:
-            raise LookupError("unknown bind combination for Inline; every fragment a bind passes must be a discovered statement - check the call site, then regenerate the package")
-        return _API_GQL_BIND_DISPATCH[slots.bind_key('Inline', {'cls': cls})]()
+    def bind(self, *, cls: Sequence[Never] = ()) -> InlineBound[InlineResult[Never]]:
+        if _API_GQL_BIND_DISPATCH.get(slots.dispatch_key('Inline', {'cls': cls})) is None:
+            raise LookupError("unknown bind combination for Inline; single-fragment and empty combinations are generated from the schema, so this is a tuple combination no call site writes literally - write it, then regenerate the package. A call whose template is an expression the scan cannot follow is never read either: those are listed, with the reason, in the debug run's ignored_binds.json")
+        return InlineBound[InlineResult].bound__(
+            _API_GQL_BIND_DISPATCH[slots.dispatch_key('Inline', {'cls': cls})], {'cls': slots.as_bindable_fragments(cls)},
+        )
 
 
-_API_GQL_BIND_DISPATCH: dict[slots.BindKey, type[runtime.GQLBoundOperation]] = {
-    ('Overloaded', (('cls', ('ImageParts',)),)): OverloadedWithClsImageParts,
-    ('Overloaded', (('pydantic', ('LinkParts',)), ('runtime', ('ImageParts',)))): OverloadedWithPydanticLinkPartsWithRuntimeImageParts,
-    ('Inline', (('cls', ('ImageParts',)),)): InlineWithClsImageParts,
+_API_GQL_BIND_DISPATCH: dict[slots.DispatchKey, runtime.BoundSpec] = {
+    # See: queries.py:26
+    ('Overloaded', ()): ('query Overloaded($cast: ID!) {\n  post(id: $cast) {\n    id\n    cls: attachment {\n      __typename\n    }\n    bind: attachment {\n      __typename\n    }\n    pydantic: attachment {\n      __typename\n    }\n  }\n}', {"cls": (), "bind": (), "pydantic": ()}),
+    # See: queries.py:26, queries.py:3
+    ('Overloaded', (('pydantic', (ImageParts,)),)): ('query Overloaded($cast: ID!) {\n  post(id: $cast) {\n    id\n    cls: attachment {\n      __typename\n    }\n    bind: attachment {\n      __typename\n    }\n    pydantic: attachment {\n      __typename\n      ...ImageParts\n    }\n  }\n}\n\nfragment ImageParts on ImageAttachment {\n  url\n}', {"cls": (), "bind": (), "pydantic": ((ImageParts, frozenset({'ImageAttachment'})),)}),
+    # See: queries.py:26, queries.py:11
+    ('Overloaded', (('pydantic', (LinkParts,)),)): ('query Overloaded($cast: ID!) {\n  post(id: $cast) {\n    id\n    cls: attachment {\n      __typename\n    }\n    bind: attachment {\n      __typename\n    }\n    pydantic: attachment {\n      __typename\n      ...LinkParts\n    }\n  }\n}\n\nfragment LinkParts on LinkAttachment {\n  href\n}', {"cls": (), "bind": (), "pydantic": ((LinkParts, frozenset({'LinkAttachment'})),)}),
+    # See: queries.py:26, queries.py:3
+    ('Overloaded', (('bind', (ImageParts,)),)): ('query Overloaded($cast: ID!) {\n  post(id: $cast) {\n    id\n    cls: attachment {\n      __typename\n    }\n    bind: attachment {\n      __typename\n      ...ImageParts\n    }\n    pydantic: attachment {\n      __typename\n    }\n  }\n}\n\nfragment ImageParts on ImageAttachment {\n  url\n}', {"cls": (), "bind": ((ImageParts, frozenset({'ImageAttachment'})),), "pydantic": ()}),
+    # See: queries.py:26, queries.py:3
+    ('Overloaded', (('bind', (ImageParts,)), ('pydantic', (ImageParts,)))): ('query Overloaded($cast: ID!) {\n  post(id: $cast) {\n    id\n    cls: attachment {\n      __typename\n    }\n    bind: attachment {\n      __typename\n      ...ImageParts\n    }\n    pydantic: attachment {\n      __typename\n      ...ImageParts\n    }\n  }\n}\n\nfragment ImageParts on ImageAttachment {\n  url\n}', {"cls": (), "bind": ((ImageParts, frozenset({'ImageAttachment'})),), "pydantic": ((ImageParts, frozenset({'ImageAttachment'})),)}),
+    # See: queries.py:26, queries.py:3, queries.py:11
+    ('Overloaded', (('bind', (ImageParts,)), ('pydantic', (LinkParts,)))): ('query Overloaded($cast: ID!) {\n  post(id: $cast) {\n    id\n    cls: attachment {\n      __typename\n    }\n    bind: attachment {\n      __typename\n      ...ImageParts\n    }\n    pydantic: attachment {\n      __typename\n      ...LinkParts\n    }\n  }\n}\n\nfragment ImageParts on ImageAttachment {\n  url\n}\n\nfragment LinkParts on LinkAttachment {\n  href\n}', {"cls": (), "bind": ((ImageParts, frozenset({'ImageAttachment'})),), "pydantic": ((LinkParts, frozenset({'LinkAttachment'})),)}),
+    # See: queries.py:26, queries.py:11
+    ('Overloaded', (('bind', (LinkParts,)),)): ('query Overloaded($cast: ID!) {\n  post(id: $cast) {\n    id\n    cls: attachment {\n      __typename\n    }\n    bind: attachment {\n      __typename\n      ...LinkParts\n    }\n    pydantic: attachment {\n      __typename\n    }\n  }\n}\n\nfragment LinkParts on LinkAttachment {\n  href\n}', {"cls": (), "bind": ((LinkParts, frozenset({'LinkAttachment'})),), "pydantic": ()}),
+    # See: queries.py:26, queries.py:11, queries.py:3
+    ('Overloaded', (('bind', (LinkParts,)), ('pydantic', (ImageParts,)))): ('query Overloaded($cast: ID!) {\n  post(id: $cast) {\n    id\n    cls: attachment {\n      __typename\n    }\n    bind: attachment {\n      __typename\n      ...LinkParts\n    }\n    pydantic: attachment {\n      __typename\n      ...ImageParts\n    }\n  }\n}\n\nfragment ImageParts on ImageAttachment {\n  url\n}\n\nfragment LinkParts on LinkAttachment {\n  href\n}', {"cls": (), "bind": ((LinkParts, frozenset({'LinkAttachment'})),), "pydantic": ((ImageParts, frozenset({'ImageAttachment'})),)}),
+    # See: queries.py:26, queries.py:11
+    ('Overloaded', (('bind', (LinkParts,)), ('pydantic', (LinkParts,)))): ('query Overloaded($cast: ID!) {\n  post(id: $cast) {\n    id\n    cls: attachment {\n      __typename\n    }\n    bind: attachment {\n      __typename\n      ...LinkParts\n    }\n    pydantic: attachment {\n      __typename\n      ...LinkParts\n    }\n  }\n}\n\nfragment LinkParts on LinkAttachment {\n  href\n}', {"cls": (), "bind": ((LinkParts, frozenset({'LinkAttachment'})),), "pydantic": ((LinkParts, frozenset({'LinkAttachment'})),)}),
+    # See: queries.py:26, queries.py:3
+    ('Overloaded', (('cls', (ImageParts,)),)): ('query Overloaded($cast: ID!) {\n  post(id: $cast) {\n    id\n    cls: attachment {\n      __typename\n      ...ImageParts\n    }\n    bind: attachment {\n      __typename\n    }\n    pydantic: attachment {\n      __typename\n    }\n  }\n}\n\nfragment ImageParts on ImageAttachment {\n  url\n}', {"cls": ((ImageParts, frozenset({'ImageAttachment'})),), "bind": (), "pydantic": ()}),
+    # See: queries.py:26, queries.py:3
+    ('Overloaded', (('cls', (ImageParts,)), ('pydantic', (ImageParts,)))): ('query Overloaded($cast: ID!) {\n  post(id: $cast) {\n    id\n    cls: attachment {\n      __typename\n      ...ImageParts\n    }\n    bind: attachment {\n      __typename\n    }\n    pydantic: attachment {\n      __typename\n      ...ImageParts\n    }\n  }\n}\n\nfragment ImageParts on ImageAttachment {\n  url\n}', {"cls": ((ImageParts, frozenset({'ImageAttachment'})),), "bind": (), "pydantic": ((ImageParts, frozenset({'ImageAttachment'})),)}),
+    # See: queries.py:26, queries.py:3, queries.py:11
+    ('Overloaded', (('cls', (ImageParts,)), ('pydantic', (LinkParts,)))): ('query Overloaded($cast: ID!) {\n  post(id: $cast) {\n    id\n    cls: attachment {\n      __typename\n      ...ImageParts\n    }\n    bind: attachment {\n      __typename\n    }\n    pydantic: attachment {\n      __typename\n      ...LinkParts\n    }\n  }\n}\n\nfragment ImageParts on ImageAttachment {\n  url\n}\n\nfragment LinkParts on LinkAttachment {\n  href\n}', {"cls": ((ImageParts, frozenset({'ImageAttachment'})),), "bind": (), "pydantic": ((LinkParts, frozenset({'LinkAttachment'})),)}),
+    # See: queries.py:26, queries.py:3
+    ('Overloaded', (('bind', (ImageParts,)), ('cls', (ImageParts,)))): ('query Overloaded($cast: ID!) {\n  post(id: $cast) {\n    id\n    cls: attachment {\n      __typename\n      ...ImageParts\n    }\n    bind: attachment {\n      __typename\n      ...ImageParts\n    }\n    pydantic: attachment {\n      __typename\n    }\n  }\n}\n\nfragment ImageParts on ImageAttachment {\n  url\n}', {"cls": ((ImageParts, frozenset({'ImageAttachment'})),), "bind": ((ImageParts, frozenset({'ImageAttachment'})),), "pydantic": ()}),
+    # See: queries.py:26, queries.py:3
+    ('Overloaded', (('bind', (ImageParts,)), ('cls', (ImageParts,)), ('pydantic', (ImageParts,)))): ('query Overloaded($cast: ID!) {\n  post(id: $cast) {\n    id\n    cls: attachment {\n      __typename\n      ...ImageParts\n    }\n    bind: attachment {\n      __typename\n      ...ImageParts\n    }\n    pydantic: attachment {\n      __typename\n      ...ImageParts\n    }\n  }\n}\n\nfragment ImageParts on ImageAttachment {\n  url\n}', {"cls": ((ImageParts, frozenset({'ImageAttachment'})),), "bind": ((ImageParts, frozenset({'ImageAttachment'})),), "pydantic": ((ImageParts, frozenset({'ImageAttachment'})),)}),
+    # See: queries.py:26, queries.py:3, queries.py:11
+    ('Overloaded', (('bind', (ImageParts,)), ('cls', (ImageParts,)), ('pydantic', (LinkParts,)))): ('query Overloaded($cast: ID!) {\n  post(id: $cast) {\n    id\n    cls: attachment {\n      __typename\n      ...ImageParts\n    }\n    bind: attachment {\n      __typename\n      ...ImageParts\n    }\n    pydantic: attachment {\n      __typename\n      ...LinkParts\n    }\n  }\n}\n\nfragment ImageParts on ImageAttachment {\n  url\n}\n\nfragment LinkParts on LinkAttachment {\n  href\n}', {"cls": ((ImageParts, frozenset({'ImageAttachment'})),), "bind": ((ImageParts, frozenset({'ImageAttachment'})),), "pydantic": ((LinkParts, frozenset({'LinkAttachment'})),)}),
+    # See: queries.py:26, queries.py:3, queries.py:11
+    ('Overloaded', (('bind', (LinkParts,)), ('cls', (ImageParts,)))): ('query Overloaded($cast: ID!) {\n  post(id: $cast) {\n    id\n    cls: attachment {\n      __typename\n      ...ImageParts\n    }\n    bind: attachment {\n      __typename\n      ...LinkParts\n    }\n    pydantic: attachment {\n      __typename\n    }\n  }\n}\n\nfragment ImageParts on ImageAttachment {\n  url\n}\n\nfragment LinkParts on LinkAttachment {\n  href\n}', {"cls": ((ImageParts, frozenset({'ImageAttachment'})),), "bind": ((LinkParts, frozenset({'LinkAttachment'})),), "pydantic": ()}),
+    # See: queries.py:26, queries.py:3, queries.py:11
+    ('Overloaded', (('bind', (LinkParts,)), ('cls', (ImageParts,)), ('pydantic', (ImageParts,)))): ('query Overloaded($cast: ID!) {\n  post(id: $cast) {\n    id\n    cls: attachment {\n      __typename\n      ...ImageParts\n    }\n    bind: attachment {\n      __typename\n      ...LinkParts\n    }\n    pydantic: attachment {\n      __typename\n      ...ImageParts\n    }\n  }\n}\n\nfragment ImageParts on ImageAttachment {\n  url\n}\n\nfragment LinkParts on LinkAttachment {\n  href\n}', {"cls": ((ImageParts, frozenset({'ImageAttachment'})),), "bind": ((LinkParts, frozenset({'LinkAttachment'})),), "pydantic": ((ImageParts, frozenset({'ImageAttachment'})),)}),
+    # See: queries.py:26, queries.py:3, queries.py:11
+    ('Overloaded', (('bind', (LinkParts,)), ('cls', (ImageParts,)), ('pydantic', (LinkParts,)))): ('query Overloaded($cast: ID!) {\n  post(id: $cast) {\n    id\n    cls: attachment {\n      __typename\n      ...ImageParts\n    }\n    bind: attachment {\n      __typename\n      ...LinkParts\n    }\n    pydantic: attachment {\n      __typename\n      ...LinkParts\n    }\n  }\n}\n\nfragment ImageParts on ImageAttachment {\n  url\n}\n\nfragment LinkParts on LinkAttachment {\n  href\n}', {"cls": ((ImageParts, frozenset({'ImageAttachment'})),), "bind": ((LinkParts, frozenset({'LinkAttachment'})),), "pydantic": ((LinkParts, frozenset({'LinkAttachment'})),)}),
+    # See: queries.py:26, queries.py:11
+    ('Overloaded', (('cls', (LinkParts,)),)): ('query Overloaded($cast: ID!) {\n  post(id: $cast) {\n    id\n    cls: attachment {\n      __typename\n      ...LinkParts\n    }\n    bind: attachment {\n      __typename\n    }\n    pydantic: attachment {\n      __typename\n    }\n  }\n}\n\nfragment LinkParts on LinkAttachment {\n  href\n}', {"cls": ((LinkParts, frozenset({'LinkAttachment'})),), "bind": (), "pydantic": ()}),
+    # See: queries.py:26, queries.py:11, queries.py:3
+    ('Overloaded', (('cls', (LinkParts,)), ('pydantic', (ImageParts,)))): ('query Overloaded($cast: ID!) {\n  post(id: $cast) {\n    id\n    cls: attachment {\n      __typename\n      ...LinkParts\n    }\n    bind: attachment {\n      __typename\n    }\n    pydantic: attachment {\n      __typename\n      ...ImageParts\n    }\n  }\n}\n\nfragment ImageParts on ImageAttachment {\n  url\n}\n\nfragment LinkParts on LinkAttachment {\n  href\n}', {"cls": ((LinkParts, frozenset({'LinkAttachment'})),), "bind": (), "pydantic": ((ImageParts, frozenset({'ImageAttachment'})),)}),
+    # See: queries.py:26, queries.py:11
+    ('Overloaded', (('cls', (LinkParts,)), ('pydantic', (LinkParts,)))): ('query Overloaded($cast: ID!) {\n  post(id: $cast) {\n    id\n    cls: attachment {\n      __typename\n      ...LinkParts\n    }\n    bind: attachment {\n      __typename\n    }\n    pydantic: attachment {\n      __typename\n      ...LinkParts\n    }\n  }\n}\n\nfragment LinkParts on LinkAttachment {\n  href\n}', {"cls": ((LinkParts, frozenset({'LinkAttachment'})),), "bind": (), "pydantic": ((LinkParts, frozenset({'LinkAttachment'})),)}),
+    # See: queries.py:26, queries.py:11, queries.py:3
+    ('Overloaded', (('bind', (ImageParts,)), ('cls', (LinkParts,)))): ('query Overloaded($cast: ID!) {\n  post(id: $cast) {\n    id\n    cls: attachment {\n      __typename\n      ...LinkParts\n    }\n    bind: attachment {\n      __typename\n      ...ImageParts\n    }\n    pydantic: attachment {\n      __typename\n    }\n  }\n}\n\nfragment ImageParts on ImageAttachment {\n  url\n}\n\nfragment LinkParts on LinkAttachment {\n  href\n}', {"cls": ((LinkParts, frozenset({'LinkAttachment'})),), "bind": ((ImageParts, frozenset({'ImageAttachment'})),), "pydantic": ()}),
+    # See: queries.py:26, queries.py:11, queries.py:3
+    ('Overloaded', (('bind', (ImageParts,)), ('cls', (LinkParts,)), ('pydantic', (ImageParts,)))): ('query Overloaded($cast: ID!) {\n  post(id: $cast) {\n    id\n    cls: attachment {\n      __typename\n      ...LinkParts\n    }\n    bind: attachment {\n      __typename\n      ...ImageParts\n    }\n    pydantic: attachment {\n      __typename\n      ...ImageParts\n    }\n  }\n}\n\nfragment ImageParts on ImageAttachment {\n  url\n}\n\nfragment LinkParts on LinkAttachment {\n  href\n}', {"cls": ((LinkParts, frozenset({'LinkAttachment'})),), "bind": ((ImageParts, frozenset({'ImageAttachment'})),), "pydantic": ((ImageParts, frozenset({'ImageAttachment'})),)}),
+    # See: queries.py:26, queries.py:11, queries.py:3
+    ('Overloaded', (('bind', (ImageParts,)), ('cls', (LinkParts,)), ('pydantic', (LinkParts,)))): ('query Overloaded($cast: ID!) {\n  post(id: $cast) {\n    id\n    cls: attachment {\n      __typename\n      ...LinkParts\n    }\n    bind: attachment {\n      __typename\n      ...ImageParts\n    }\n    pydantic: attachment {\n      __typename\n      ...LinkParts\n    }\n  }\n}\n\nfragment ImageParts on ImageAttachment {\n  url\n}\n\nfragment LinkParts on LinkAttachment {\n  href\n}', {"cls": ((LinkParts, frozenset({'LinkAttachment'})),), "bind": ((ImageParts, frozenset({'ImageAttachment'})),), "pydantic": ((LinkParts, frozenset({'LinkAttachment'})),)}),
+    # See: queries.py:26, queries.py:11
+    ('Overloaded', (('bind', (LinkParts,)), ('cls', (LinkParts,)))): ('query Overloaded($cast: ID!) {\n  post(id: $cast) {\n    id\n    cls: attachment {\n      __typename\n      ...LinkParts\n    }\n    bind: attachment {\n      __typename\n      ...LinkParts\n    }\n    pydantic: attachment {\n      __typename\n    }\n  }\n}\n\nfragment LinkParts on LinkAttachment {\n  href\n}', {"cls": ((LinkParts, frozenset({'LinkAttachment'})),), "bind": ((LinkParts, frozenset({'LinkAttachment'})),), "pydantic": ()}),
+    # See: queries.py:26, queries.py:11, queries.py:3
+    ('Overloaded', (('bind', (LinkParts,)), ('cls', (LinkParts,)), ('pydantic', (ImageParts,)))): ('query Overloaded($cast: ID!) {\n  post(id: $cast) {\n    id\n    cls: attachment {\n      __typename\n      ...LinkParts\n    }\n    bind: attachment {\n      __typename\n      ...LinkParts\n    }\n    pydantic: attachment {\n      __typename\n      ...ImageParts\n    }\n  }\n}\n\nfragment ImageParts on ImageAttachment {\n  url\n}\n\nfragment LinkParts on LinkAttachment {\n  href\n}', {"cls": ((LinkParts, frozenset({'LinkAttachment'})),), "bind": ((LinkParts, frozenset({'LinkAttachment'})),), "pydantic": ((ImageParts, frozenset({'ImageAttachment'})),)}),
+    # See: queries.py:26, queries.py:11
+    ('Overloaded', (('bind', (LinkParts,)), ('cls', (LinkParts,)), ('pydantic', (LinkParts,)))): ('query Overloaded($cast: ID!) {\n  post(id: $cast) {\n    id\n    cls: attachment {\n      __typename\n      ...LinkParts\n    }\n    bind: attachment {\n      __typename\n      ...LinkParts\n    }\n    pydantic: attachment {\n      __typename\n      ...LinkParts\n    }\n  }\n}\n\nfragment LinkParts on LinkAttachment {\n  href\n}', {"cls": ((LinkParts, frozenset({'LinkAttachment'})),), "bind": ((LinkParts, frozenset({'LinkAttachment'})),), "pydantic": ((LinkParts, frozenset({'LinkAttachment'})),)}),
+    # See: queries.py:42
+    ('Inline', ()): ('query Inline($id: ID!) {\n  post(id: $id) {\n    id\n    cls: author {\n      __typename\n    }\n  }\n}', {"cls": ()}),
 }
 
 
@@ -334,29 +360,29 @@ def api_gql(stmt: Literal['\n    fragment ImageParts on ImageAttachment {\n     
 @overload
 def api_gql(stmt: Literal['\n    fragment LinkParts on LinkAttachment {\n        href\n    }\n    ']) -> LinkParts: ...
 @overload
-def api_gql(stmt: Literal['\n    query Overloaded($id: ID!) {\n        post(id: $id) {\n            id\n            cls: attachment @slot { __typename }\n            msg: attachment @slot { __typename }\n            key: attachment @slot { __typename }\n            bind: attachment @slot { __typename }\n            fragments: attachment @slot { __typename }\n            dispatch: attachment @slot { __typename }\n            pydantic: attachment @slot { __typename }\n            runtime: attachment @slot { __typename }\n            sequence: attachment @slot { __typename }\n        }\n    }\n    ']) -> Overloaded: ...
+def api_gql(stmt: Literal['\n    query Overloaded($cast: ID!) {\n        post(id: $cast) {\n            id\n            cls: attachment @slot { __typename }\n            bind: attachment @slot { __typename }\n            pydantic: attachment @slot { __typename }\n        }\n    }\n    ']) -> Overloaded: ...
 @overload
-def api_gql(stmt: Literal['\n    query Inline($id: ID!) {\n        post(id: $id) {\n            id\n            cls: attachment @slot { __typename }\n        }\n    }\n    ']) -> Inline: ...
+def api_gql(stmt: Literal['\n    query Inline($id: ID!) {\n        post(id: $id) {\n            id\n            cls: author @slot { __typename }\n        }\n    }\n    ']) -> Inline: ...
 @overload
-def api_gql(stmt: str) -> runtime.GQLOperation | slots.GQLFragment[pydantic.BaseModel] | runtime.GQLTemplate: ...
+def api_gql(stmt: str) -> runtime.GQLOperation | slots.GQLFragment[pydantic.BaseModel, Any] | runtime.GQLTemplate: ...
 
 
-_API_GQL_FRAGMENTS: dict[str, slots.GQLFragment[pydantic.BaseModel]] = {
-    '\n    fragment ImageParts on ImageAttachment {\n        url\n    }\n    ': IMAGE_PARTS,
-    '\n    fragment LinkParts on LinkAttachment {\n        href\n    }\n    ': LINK_PARTS,
+_API_GQL_FRAGMENTS: dict[str, type[slots.GQLFragment[pydantic.BaseModel, Any]]] = {
+    '\n    fragment ImageParts on ImageAttachment {\n        url\n    }\n    ': ImageParts,
+    '\n    fragment LinkParts on LinkAttachment {\n        href\n    }\n    ': LinkParts,
 }
 
 
 _API_GQL_TEMPLATES: dict[str, type[runtime.GQLTemplate]] = {
-    '\n    query Overloaded($id: ID!) {\n        post(id: $id) {\n            id\n            cls: attachment @slot { __typename }\n            msg: attachment @slot { __typename }\n            key: attachment @slot { __typename }\n            bind: attachment @slot { __typename }\n            fragments: attachment @slot { __typename }\n            dispatch: attachment @slot { __typename }\n            pydantic: attachment @slot { __typename }\n            runtime: attachment @slot { __typename }\n            sequence: attachment @slot { __typename }\n        }\n    }\n    ': Overloaded,
-    '\n    query Inline($id: ID!) {\n        post(id: $id) {\n            id\n            cls: attachment @slot { __typename }\n        }\n    }\n    ': Inline,
+    '\n    query Overloaded($cast: ID!) {\n        post(id: $cast) {\n            id\n            cls: attachment @slot { __typename }\n            bind: attachment @slot { __typename }\n            pydantic: attachment @slot { __typename }\n        }\n    }\n    ': Overloaded,
+    '\n    query Inline($id: ID!) {\n        post(id: $id) {\n            id\n            cls: author @slot { __typename }\n        }\n    }\n    ': Inline,
 }
 
 
-def api_gql(stmt: str) -> runtime.GQLOperation | slots.GQLFragment[pydantic.BaseModel] | runtime.GQLTemplate:
-    fragment = _API_GQL_FRAGMENTS.get(stmt)
-    if fragment is not None:
-        return fragment
+def api_gql(stmt: str) -> runtime.GQLOperation | slots.GQLFragment[pydantic.BaseModel, Any] | runtime.GQLTemplate:
+    fragment_cls = _API_GQL_FRAGMENTS.get(stmt)
+    if fragment_cls is not None:
+        return _API_GQL_CAST("Callable[[], slots.GQLFragment[pydantic.BaseModel, Any]]", fragment_cls)()
     template_cls = _API_GQL_TEMPLATES.get(stmt)
     if template_cls is not None:
         return template_cls()

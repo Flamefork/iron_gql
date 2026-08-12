@@ -29,4 +29,4 @@ get_attachment = api_gql(
 
 # Two fragments covering the SAME runtime type in one slot: each reads its
 # own slice independently, so overlap is legal (see the slot-read spec).
-both = get_attachment.bind(attachment=[image_caption, image_size])
+both = get_attachment.bind(attachment=(image_caption, image_size))

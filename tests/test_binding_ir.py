@@ -6,9 +6,12 @@ from pydantic import alias_generators
 from iron_gql.codegen.collect import collect_package_ir
 from iron_gql.codegen.discovery import BindDecl
 from iron_gql.codegen.discovery import Statement
+from iron_gql.codegen.ir import CollectedBinding
 from iron_gql.codegen.ir import CollectedBindingSlot
+from iron_gql.codegen.ir import CollectedFactoryFragment
 from iron_gql.codegen.ir import CollectedModel
 from iron_gql.codegen.ir import CollectedPackageIR
+from iron_gql.codegen.ir import CollectedRequiredFragmentArg
 from iron_gql.codegen.ir import GraphQLGenerationError
 from iron_gql.codegen.ir import ImportRef
 from iron_gql.codegen.ir import NamedRef
@@ -16,10 +19,20 @@ from iron_gql.codegen.ir import ScalarRef
 from iron_gql.codegen.parser import ParseResult
 from iron_gql.codegen.parser import parse_gql_queries
 from iron_gql.codegen.slots import validate_no_nested_slots
+from iron_gql.slots import CombinationKey
 
 
-def _singletons(binding_slot: CollectedBindingSlot) -> tuple[str, ...]:
-    return tuple(f.singleton_name for f in binding_slot.direct_fragments)
+def _binding(ir: CollectedPackageIR, key: CombinationKey) -> CollectedBinding:
+    # One combination out of the package's enumeration. Every template is
+    # enumerated in full now (the empty combination, then one per compatible
+    # fragment per slot), so a test after a particular pair has to name its
+    # key rather than unpack the only binding there is.
+    [binding] = [binding for binding in ir.bindings if binding.combination_key == key]
+    return binding
+
+
+def _definition_classes(binding_slot: CollectedBindingSlot) -> tuple[str, ...]:
+    return tuple(f.class_name for f in binding_slot.direct_fragments)
 
 
 def _model_names(binding_slot: CollectedBindingSlot) -> tuple[str, ...]:
@@ -110,6 +123,46 @@ fragment ImageParts on ImageAttachment {
 }
 """
 
+# `Comment` не является `Attachment`, не spread-compatible с type slot
+# `attachment` и вообще недостижим ни из одного slot пакета. Фрагмент на нём —
+# factory, которую не bind-ит ни один combination: это случай «не совместим ни
+# с одним slot» из контракта `bindings.fragment_closure`.
+ORPHAN_INPUT_TYPE_SCHEMA = """
+type Query {
+    post(id: ID!): Post
+}
+
+type Post {
+    id: ID!
+    attachment: Attachment
+}
+
+union Attachment = ImageAttachment | LinkAttachment
+
+type ImageAttachment {
+    url: String!
+}
+
+type LinkAttachment {
+    href: String!
+}
+
+type Comment {
+    id: ID!
+    body(filter: CommentFilter): String!
+}
+
+input CommentFilter {
+    tone: String
+}
+"""
+
+ORPHAN_FRAGMENT_TEXT = """
+fragment OrphanBits on Comment {
+    body(filter: $filter)
+}
+"""
+
 # A template with two independent slots, for the "one bind, one slot left
 # unfilled" scenario -- `FRAGMENT_TEXT`'s own `ImageAttachment` shape
 # (`photos(limit: ...)`) isn't needed here, so this uses a plain `url` field.
@@ -167,8 +220,9 @@ def _collect(parse_res: ParseResult, binds: list[BindDecl]) -> CollectedPackageI
         schema=parse_res.schema,
         operations=parse_res.operations,
         templates=parse_res.templates,
-        fragment_statements=parse_res.reachable_statements,
+        fragment_statements=parse_res.bindable_statements,
         binds=binds,
+        bind_keyword_checks=(),
         discovered_texts=(),
         scalars=SCALARS,
         to_snake_fn=alias_generators.to_snake,
@@ -185,7 +239,12 @@ def test_template_is_classified_not_an_operation(tmp_path: Path):
         locations=("<test:bind>:1",),
     )
 
-    parse_res = parse_gql_queries(schema_path, [template_stmt, fragment_stmt], [bind])
+    parse_res = parse_gql_queries(
+        schema_path,
+        [template_stmt, fragment_stmt],
+        [bind],
+        bind_keyword_checks=(),
+    )
     assert parse_res.errors == []
 
     ir = _collect(parse_res, [bind])
@@ -220,37 +279,58 @@ def test_binding_collected_with_spread_model_names_and_arg_vars(tmp_path: Path):
         locations=("<test:bind>:1",),
     )
 
-    parse_res = parse_gql_queries(schema_path, [template_stmt, fragment_stmt], [bind])
+    parse_res = parse_gql_queries(
+        schema_path,
+        [template_stmt, fragment_stmt],
+        [bind],
+        bind_keyword_checks=(),
+    )
     assert parse_res.errors == []
 
     ir = _collect(parse_res, [bind])
 
-    [binding] = ir.bindings
-    # The combination names the class: the template, then the slot and the
-    # fragments filling it. No call site had to supply a name for it.
-    assert binding.class_name == "GetAttachmentWithAttachmentImageParts"
+    # The combination's identity is its key: the template, then the slot and
+    # the fragments filling it. No call site had to supply a name for it --
+    # and no call site is needed to produce it either, which is why the whole
+    # enumeration is pinned here beside the one pair this test is about.
+    assert [binding.combination_key for binding in ir.bindings] == [
+        ("GetAttachment", ()),
+        ("GetAttachment", (("attachment", ("ImageParts",)),)),
+    ]
+    binding = _binding(ir, ("GetAttachment", (("attachment", ("ImageParts",)),)))
     assert binding.template.class_name == "GetAttachment"
+    # A combination somebody wrote answers with the line they wrote -- that is
+    # the edit that removes it.
     assert binding.location == "<test:bind>:1"
+    # One nobody wrote answers with the statements it is made of instead: the
+    # schema produced it, so the template and its fragments are what a
+    # developer edits to change it.
+    empty = _binding(ir, ("GetAttachment", ()))
+    assert empty.location == "<test:template>:1"
     assert "@slot" not in binding.exec_source
     assert "...ImageParts" in binding.exec_source
     assert "fragment ImageParts on ImageAttachment" in binding.exec_source
 
     [binding_slot] = binding.slots
     assert binding_slot.slot.name == "attachment"
-    assert _singletons(binding_slot) == ("IMAGE_PARTS",)
+    assert _definition_classes(binding_slot) == ("ImageParts",)
     assert _model_names(binding_slot) == ("ImagePartsData",)
 
-    [arg] = binding.arg_vars
-    assert arg.var.gql_name == "limit"
-    assert arg.var.python_name == "limit"
-    assert arg.var.type_info == ScalarRef(expr="int", name_hint="Int")
-    assert arg.var.default_expr is None
-    assert not arg.omittable
-
-    # The fragment itself becomes a typed handle purely through
-    # bind-reachability -- nothing else in the package makes it one.
+    # The fragment itself becomes a typed definition because the package holds a
+    # template at all -- no `.bind()` naming it is required.
     [fragment] = ir.fragments
     assert fragment.fragment_name == "ImageParts"
+    # У `$limit` нет schema default, поэтому `ImageParts` — factory: её
+    # параметр `with_args` хранится на фрагменте, а не на binding.
+    assert isinstance(fragment, CollectedFactoryFragment)
+    assert fragment.applied_class_name == "_ImagePartsApplied"
+    assert fragment.dispatch_class_name == "_ImagePartsApplied"
+    assert fragment.bound_closure[0] == "_ImagePartsApplied"
+    [arg] = fragment.arg_vars
+    assert isinstance(arg, CollectedRequiredFragmentArg)
+    assert arg.gql_name == "limit"
+    assert arg.python_name == "limit"
+    assert arg.explicit_value_type == ScalarRef(expr="int", name_hint="Int")
 
 
 # `ImageParts` spreads `BaseParts` -- only `ImageParts` is named in the bind.
@@ -267,12 +347,12 @@ fragment ImageParts on ImageAttachment {
 """
 
 
-def test_readable_handles_widen_but_direct_fields_stay_scoped(
+def test_readable_fragments_widen_but_direct_fields_stay_scoped(
     tmp_path: Path,
 ):
-    # `slot_handles__` (rendered from `readable_handles`) must offer every
-    # fragment readable at the slot's root so it reads independently, but
-    # `direct_fragments` -- what drives `bind()`'s overload
+    # The bind dispatch table (rendered from `readable_fragments`) must offer
+    # every fragment readable at the slot's root so it reads independently,
+    # but `direct_fragments` -- what drives `bind()`'s overload
     # shapes and the runtime dispatch key -- must stay scoped to exactly what
     # the caller passed to `bind()`, unaffected by that widening.
     schema_path = _write_schema(tmp_path)
@@ -286,22 +366,25 @@ def test_readable_handles_widen_but_direct_fields_stay_scoped(
     )
 
     parse_res = parse_gql_queries(
-        schema_path, [template_stmt, base_stmt, fragment_stmt], [bind]
+        schema_path,
+        [template_stmt, base_stmt, fragment_stmt],
+        [bind],
+        bind_keyword_checks=(),
     )
     assert parse_res.errors == []
 
     ir = _collect(parse_res, [bind])
 
-    [binding] = ir.bindings
+    binding = _binding(ir, ("GetAttachment", (("attachment", ("ImageParts",)),)))
     [binding_slot] = binding.slots
-    assert _singletons(binding_slot) == ("IMAGE_PARTS",)
+    assert _definition_classes(binding_slot) == ("ImageParts",)
     assert _model_names(binding_slot) == ("ImagePartsData",)
     assert [
-        (handle.fragment.singleton_name, handle.typenames)
-        for handle in binding_slot.readable_handles
+        (readable.fragment.class_name, readable.typenames)
+        for readable in binding_slot.readable_fragments
     ] == [
-        ("BASE_PARTS", ("ImageAttachment",)),
-        ("IMAGE_PARTS", ("ImageAttachment",)),
+        ("BaseParts", ("ImageAttachment",)),
+        ("ImageParts", ("ImageAttachment",)),
     ]
 
 
@@ -334,13 +417,18 @@ def test_direct_fragments_are_ordered_by_fragment_name_not_by_call_order(
     )
 
     parse_res = parse_gql_queries(
-        schema_path, [template_stmt, image_stmt, link_stmt], [bind]
+        schema_path,
+        [template_stmt, image_stmt, link_stmt],
+        [bind],
+        bind_keyword_checks=(),
     )
     assert parse_res.errors == []
 
     ir = _collect(parse_res, [bind])
 
-    [binding] = ir.bindings
+    binding = _binding(
+        ir, ("GetAttachment", (("attachment", ("ImageUrl", "LinkHref")),))
+    )
     [binding_slot] = binding.slots
     assert tuple(f.fragment_name for f in binding_slot.direct_fragments) == (
         "ImageUrl",
@@ -363,7 +451,10 @@ def test_a_fragment_discovered_in_two_places_keeps_both_locations(tmp_path: Path
     )
 
     parse_res = parse_gql_queries(
-        schema_path, [template_stmt, fragment_stmt, copy_stmt], [bind]
+        schema_path,
+        [template_stmt, fragment_stmt, copy_stmt],
+        [bind],
+        bind_keyword_checks=(),
     )
     assert parse_res.errors == []
 
@@ -383,7 +474,9 @@ def test_bind_template_ref_with_no_slots_is_rejected(tmp_path: Path):
         locations=("<test:bad>:1",),
     )
 
-    parse_res = parse_gql_queries(schema_path, [plain_stmt], [bind])
+    parse_res = parse_gql_queries(
+        schema_path, [plain_stmt], [bind], bind_keyword_checks=()
+    )
 
     assert any("has no slots" in error for error in parse_res.errors)
 
@@ -397,7 +490,9 @@ def test_bind_template_ref_to_a_fragment_is_rejected(tmp_path: Path):
         locations=("<test:bad>:1",),
     )
 
-    parse_res = parse_gql_queries(schema_path, [fragment_only_stmt], [bind])
+    parse_res = parse_gql_queries(
+        schema_path, [fragment_only_stmt], [bind], bind_keyword_checks=()
+    )
 
     assert any("is not an operation" in error for error in parse_res.errors)
 
@@ -417,7 +512,9 @@ def test_bind_template_ref_to_an_invalid_operation_is_diagnosed_accurately(
         locations=("<test:bad>:1",),
     )
 
-    parse_res = parse_gql_queries(schema_path, [broken_stmt], [bind])
+    parse_res = parse_gql_queries(
+        schema_path, [broken_stmt], [bind], bind_keyword_checks=()
+    )
 
     assert not any("is not an operation" in error for error in parse_res.errors)
     assert any("failed to validate" in error for error in parse_res.errors)
@@ -434,17 +531,21 @@ def test_bind_slot_arg_not_a_single_fragment_statement_is_rejected(tmp_path: Pat
         locations=("<test:bad>:1",),
     )
 
-    parse_res = parse_gql_queries(schema_path, [template_stmt, plain_stmt], [bind])
+    parse_res = parse_gql_queries(
+        schema_path,
+        [template_stmt, plain_stmt],
+        [bind],
+        bind_keyword_checks=(),
+    )
 
     assert any(
         "is not a single-fragment statement" in error for error in parse_res.errors
     )
 
 
-def test_a_fragment_in_two_slots_gives_two_binding_classes(tmp_path: Path):
-    # The slot is part of the name, not just the fragments: the same fragment
-    # bound into two slots of one template is two combinations, and each keeps
-    # its own class.
+def test_a_fragment_in_two_slots_gives_two_combination_keys(tmp_path: Path):
+    # Slot входит в логическую идентичность: один fragment в двух slots одного
+    # template образует две разные combinations.
     schema_path = tmp_path / "schema.graphql"
     schema_path.write_text(TWO_SLOT_SCHEMA, encoding="utf-8")
     template_stmt = _stmt(TWO_SLOT_TEMPLATE_TEXT, "template")
@@ -461,14 +562,27 @@ def test_a_fragment_in_two_slots_gives_two_binding_classes(tmp_path: Path):
     )
 
     binds = [on_attachment, on_preview]
-    parse_res = parse_gql_queries(schema_path, [template_stmt, fragment_stmt], binds)
+    parse_res = parse_gql_queries(
+        schema_path,
+        [template_stmt, fragment_stmt],
+        binds,
+        bind_keyword_checks=(),
+    )
     assert parse_res.errors == []
 
     ir = _collect(parse_res, binds)
 
-    assert [binding.class_name for binding in ir.bindings] == [
-        "GetAttachmentWithAttachmentImageParts",
-        "GetAttachmentWithPreviewImageParts",
+    # The whole product, which is what the enumeration writes whether or not
+    # a `.bind()` names any of it -- and inside it, the two combinations this
+    # test is about: the same fragment in two different slots keeps two keys.
+    assert [binding.combination_key for binding in ir.bindings] == [
+        ("GetAttachment", ()),
+        ("GetAttachment", (("preview", ("ImageParts",)),)),
+        ("GetAttachment", (("attachment", ("ImageParts",)),)),
+        (
+            "GetAttachment",
+            (("attachment", ("ImageParts",)), ("preview", ("ImageParts",))),
+        ),
     ]
 
 
@@ -487,15 +601,22 @@ def test_binding_variable_of_input_object_type_is_collected(tmp_path: Path):
         locations=("<test:bind>:1",),
     )
 
-    parse_res = parse_gql_queries(schema_path, [template_stmt, fragment_stmt], [bind])
+    parse_res = parse_gql_queries(
+        schema_path,
+        [template_stmt, fragment_stmt],
+        [bind],
+        bind_keyword_checks=(),
+    )
     assert parse_res.errors == []
 
     ir = _collect(parse_res, [bind])
 
-    [binding] = ir.bindings
-    [arg] = binding.arg_vars
-    assert arg.var.gql_name == "filter"
-    assert arg.var.type_info == NamedRef(name="PhotoFilter", nullable=True)
+    [fragment] = ir.fragments
+    assert isinstance(fragment, CollectedFactoryFragment)
+    [arg] = fragment.arg_vars
+    assert isinstance(arg, CollectedRequiredFragmentArg)
+    assert arg.gql_name == "filter"
+    assert arg.explicit_value_type == NamedRef(name="PhotoFilter", nullable=True)
 
     input_names = {
         artifact.name
@@ -503,6 +624,46 @@ def test_binding_variable_of_input_object_type_is_collected(tmp_path: Path):
         if isinstance(artifact, CollectedModel)
     }
     assert "PhotoFilter" in input_names
+
+
+def test_an_orphan_factorys_input_object_type_is_collected(tmp_path: Path):
+    # `OrphanBits` is on `Comment`, spread-compatible with no slot in the
+    # package (`bindings.fragment_closure`'s own "compatible with no slot in
+    # the package" case) -- so no combination ever reaches it, and
+    # `_collect_input_artifacts_with_binds`'s combination-level walk alone
+    # would never see `$filter`'s type. It is still a factory -- its own
+    # closure uses a variable -- and still renders a
+    # `with_args(*, filter: CommentFilter | None)`, so `CommentFilter` has to
+    # be collected regardless of whether any binding ever reaches it.
+    schema_path = tmp_path / "schema.graphql"
+    schema_path.write_text(ORPHAN_INPUT_TYPE_SCHEMA, encoding="utf-8")
+    template_stmt = _stmt(TEMPLATE_TEXT, "template")
+    orphan_stmt = _stmt(ORPHAN_FRAGMENT_TEXT, "orphan")
+
+    parse_res = parse_gql_queries(
+        schema_path,
+        [template_stmt, orphan_stmt],
+        [],
+        bind_keyword_checks=(),
+    )
+    assert parse_res.errors == []
+
+    ir = _collect(parse_res, [])
+
+    [fragment] = ir.fragments
+    assert fragment.fragment_name == "OrphanBits"
+    assert isinstance(fragment, CollectedFactoryFragment)
+    [arg] = fragment.arg_vars
+    assert isinstance(arg, CollectedRequiredFragmentArg)
+    assert arg.gql_name == "filter"
+    assert arg.explicit_value_type == NamedRef(name="CommentFilter", nullable=True)
+
+    input_names = {
+        artifact.name
+        for artifact in ir.input_artifacts
+        if isinstance(artifact, CollectedModel)
+    }
+    assert "CommentFilter" in input_names
 
 
 # An interface no type implements: legal SDL, and a query selecting a field of
@@ -527,7 +688,7 @@ def test_interface_with_no_implementing_type_is_diagnosed(tmp_path: Path):
     schema_path.write_text(NO_IMPLEMENTATION_SCHEMA, encoding="utf-8")
     query_stmt = _stmt("query GetNode { node { __typename id } }", "query")
 
-    parse_res = parse_gql_queries(schema_path, [query_stmt], [])
+    parse_res = parse_gql_queries(schema_path, [query_stmt], [], bind_keyword_checks=())
     assert parse_res.errors == []
 
     with pytest.raises(GraphQLGenerationError) as exc_info:
@@ -557,7 +718,9 @@ def test_nested_slot_in_a_template_is_rejected(tmp_path: Path):
         "nested",
     )
 
-    parse_res = parse_gql_queries(schema_path, [nested_stmt], [])
+    parse_res = parse_gql_queries(
+        schema_path, [nested_stmt], [], bind_keyword_checks=()
+    )
     assert parse_res.errors == []
 
     ir = _collect(parse_res, [])
@@ -591,7 +754,9 @@ def test_statically_excluded_slot_in_a_template_is_rejected(tmp_path: Path):
         "excluded",
     )
 
-    parse_res = parse_gql_queries(schema_path, [excluded_stmt], [])
+    parse_res = parse_gql_queries(
+        schema_path, [excluded_stmt], [], bind_keyword_checks=()
+    )
     assert parse_res.errors == []
 
     with pytest.raises(GraphQLGenerationError) as exc_info:
@@ -613,19 +778,24 @@ def test_binding_leaves_an_unfilled_slot_empty(tmp_path: Path):
         locations=("<test:bind>:1",),
     )
 
-    parse_res = parse_gql_queries(schema_path, [template_stmt, fragment_stmt], [bind])
+    parse_res = parse_gql_queries(
+        schema_path,
+        [template_stmt, fragment_stmt],
+        [bind],
+        bind_keyword_checks=(),
+    )
     assert parse_res.errors == []
 
     ir = _collect(parse_res, [bind])
 
-    [binding] = ir.bindings
+    binding = _binding(ir, ("GetAttachment", (("attachment", ("ImageParts",)),)))
     slots_by_name = {
         binding_slot.slot.name: binding_slot for binding_slot in binding.slots
     }
     assert set(slots_by_name) == {"attachment", "preview"}
-    assert _singletons(slots_by_name["attachment"]) == ("IMAGE_PARTS",)
+    assert _definition_classes(slots_by_name["attachment"]) == ("ImageParts",)
     assert _model_names(slots_by_name["attachment"]) == ("ImagePartsData",)
-    assert _singletons(slots_by_name["preview"]) == ()
+    assert _definition_classes(slots_by_name["preview"]) == ()
     assert _model_names(slots_by_name["preview"]) == ()
 
 
@@ -654,6 +824,7 @@ def test_multiple_broken_binds_are_reported_together(tmp_path: Path):
         schema_path,
         [template_stmt, fragment_stmt, post_fields_stmt],
         [unknown_slot, incompatible],
+        bind_keyword_checks=(),
     )
     assert parse_res.errors == []
 
@@ -661,6 +832,9 @@ def test_multiple_broken_binds_are_reported_together(tmp_path: Path):
         _collect(parse_res, [unknown_slot, incompatible])
 
     message = str(exc_info.value)
+    # Each diagnosis points at the `.bind()` call it is about: these two
+    # combinations exist because somebody wrote them, and the line they wrote
+    # is the only edit that removes either one.
     assert "unknown slot" in message
     assert "<test:unknown_slot>:1" in message
     assert "cannot be spread into slot" in message

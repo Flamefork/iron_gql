@@ -8,9 +8,13 @@ from graphlib import TopologicalSorter
 from typing import Literal
 
 from iron_gql.codegen.ir import CollectedArtifact
+from iron_gql.codegen.ir import CollectedBinding
+from iron_gql.codegen.ir import CollectedFactoryFragment
 from iron_gql.codegen.ir import CollectedField
+from iron_gql.codegen.ir import CollectedFragment
 from iron_gql.codegen.ir import CollectedModel
 from iron_gql.codegen.ir import CollectedPackageIR
+from iron_gql.codegen.ir import CollectedTemplate
 from iron_gql.codegen.ir import CollectedUnionAlias
 from iron_gql.codegen.ir import GraphQLGenerationError
 from iron_gql.codegen.ir import ListRef
@@ -19,7 +23,12 @@ from iron_gql.codegen.ir import ScalarRef
 from iron_gql.codegen.ir import TypeRef
 from iron_gql.codegen.ir import field_name_to_pascal
 from iron_gql.codegen.ir import slot_param_name
-from iron_gql.codegen.render import BIND_BODY_FREE_NAMES
+from iron_gql.codegen.render import bind_body_free_names
+from iron_gql.codegen.render import bind_signatures
+from iron_gql.codegen.render import fragment_init_body_free_names
+from iron_gql.codegen.render import operation_execute_free_names
+from iron_gql.codegen.render import template_execute_free_names
+from iron_gql.codegen.render import with_args_body_free_names
 
 
 def type_tokens(typ: TypeRef) -> Iterator[str]:
@@ -205,10 +214,9 @@ def build_rename_map(
     # GraphQL type and field set, and two slots with the same static selection
     # (`{ __typename }` alone is the common case) would end up as one class
     # whose single `slot_name__` could only name one of them.
-    # Fragment models — the root and everything reachable from it, the types a
-    # caller writes and narrows against after `read` — are excluded for a
-    # different reason: a handle's names are public API, so they may not
-    # depend on which other operations the package contains.
+    # Fragment models — root и все достижимые из него типы — исключены по другой
+    # причине: caller использует их в annotations после `read`, поэтому public
+    # names definition не должны зависеть от остальных operations пакета.
     typed_models = [
         artifact
         for artifact in artifacts
@@ -249,10 +257,10 @@ def build_rename_map(
 type ClaimKind = Literal[
     "operation",
     "fragment",
-    "singleton",
+    "applied_fragment",
+    "on_type_base",
     "template",
     "bound_base",
-    "binding",
     "scaffold",
     "model",
     "enum",
@@ -272,10 +280,23 @@ def _fixed_name_claims(ir: CollectedPackageIR) -> Iterator[tuple[str, ClaimKind,
             "operation",
             f"operation '{operation.class_name}' at {at}",
         )
+    for base in ir.on_type_bases:
+        # Base именуется GraphQL type condition, общий для всех фрагментов на
+        # этом типе, поэтому у него нет одного source location.
+        yield (
+            base.name,
+            "on_type_base",
+            f"the on-type base of '{base.graphql_type_name}'",
+        )
     for fragment in ir.fragments:
         origin = f"fragment '{fragment.fragment_name}' at {fragment.location}"
         yield fragment.class_name, "fragment", origin
-        yield fragment.singleton_name, "singleton", f"the singleton of {origin}"
+        if isinstance(fragment, CollectedFactoryFragment):
+            yield (
+                fragment.applied_class_name,
+                "applied_fragment",
+                f"the applied class of {origin}",
+            )
     for template in ir.templates:
         at = template.location
         yield (
@@ -285,29 +306,22 @@ def _fixed_name_claims(ir: CollectedPackageIR) -> Iterator[tuple[str, ClaimKind,
         )
         origin = f"the bound base of template '{template.class_name}' at {at}"
         yield template.bound_base_name, "bound_base", origin
-    for binding in ir.bindings:
-        yield (
-            binding.class_name,
-            "binding",
-            f"binding '{binding.class_name}' at {binding.location}",
-        )
+    # Binding больше не создаёт собственный class: это entry bind dispatch table
+    # с ключом `DispatchKey`, поэтому module-level Python name здесь нет.
 
 
 def fixed_module_names(ir: CollectedPackageIR) -> frozenset[str]:
-    # The names this IR pins: an operation class and a fragment handle (and
-    # that handle's singleton) are each named after something the developer
-    # wrote, so none of them can move to resolve a clash. A model can, which
-    # is why these are fed to the rename pass as reserved and only the
-    # leftovers become errors. Two more sets are pinned elsewhere: fragment
-    # data models via the rename pass's pinned names, and slot models by
-    # their exclusion from it. The module also binds the scaffold's own
-    # names — the client, the base models, the dispatch dicts and every
-    # import — which the IR knows nothing about; `render.scaffold_claims`
-    # supplies those and both sets are used together everywhere.
+    # IR закрепляет classes operations и fragments за именами, написанными
+    # developer, поэтому их нельзя перемещать для разрешения collision. Model
+    # перемещать можно. Эти names передаются rename pass как reserved, а ошибками
+    # становятся только оставшиеся collisions. Fragment data models и slot
+    # models закрепляются отдельно; scaffold names добавляет
+    # `render.scaffold_claims`.
     # A template's class name and its `{Name}Bound` base are equally
-    # developer-named (the query name, the derived base), and a binding's
-    # class name is derived from those same names plus its fragments' -- all
-    # equally fixed.
+    # developer-named (the query name, the derived base). An on-type base's
+    # name is fixed for a different reason: it names a GraphQL type, not
+    # anything a developer wrote in this package, but a fragment's own class
+    # derives from it by that exact name, so it cannot move either.
     return frozenset(name for name, _kind, _origin in _fixed_name_claims(ir))
 
 
@@ -316,9 +330,9 @@ def apply_rename(
 ) -> CollectedPackageIR:
     rename = build_rename_map(
         ir.result_artifacts,
-        # Open models are pinned wholesale: beyond a handle's names being
-        # public API, an open (extra="ignore") model must never converge with
-        # a strict one under a shared short name.
+        # Open models закреплены целиком: кроме стабильности public names,
+        # open model с `extra="ignore"` не должна объединиться со strict model
+        # под общим коротким именем.
         ir.open_model_names,
         fixed_module_names(ir) | scaffold_names,
     )
@@ -389,34 +403,19 @@ def _module_name_claims(
 def validate_module_names(
     ir: CollectedPackageIR, scaffold: Mapping[str, tuple[str, ...]]
 ) -> list[str]:
-    # Operation classes, fragment handles, their singletons, models, template
-    # classes and their `{Operation}Bound[...]` bases, bindings, and the
-    # scaffold the module is built on (client, base models, dispatch dicts,
-    # imports) all land in one namespace, and
-    # Python binds the last one written. Every rebinding here breaks something
-    # silently — dispatch resolving to a handle, a base class replaced by a
-    # model, `API_CLIENT` replaced by a fragment singleton — so any overlap is
-    # an error. Scaffold claims carry the origin of each binding, so two
-    # scaffold sources fighting over one name are an overlap like any other.
+    # Classes operations, public fragment definitions, private applied classes,
+    # models, templates, их `{Operation}Bound[...]` bases и module scaffold
+    # попадают в один namespace. Python оставляет последнее binding, поэтому
+    # любое пересечение здесь является ошибкой. Scaffold claims сохраняют origin
+    # каждого binding и проверяются тем же правилом.
     claims: dict[str, list[tuple[ClaimKind, str]]] = defaultdict(list)
     for name, kind, origin in _module_name_claims(ir, scaffold):
         claims[name].append((kind, origin))
     errors: list[str] = []
     for name, entries in sorted(claims.items()):
         origins = [origin for _kind, origin in entries]
-        kinds = {kind for kind, _origin in entries}
         if len(entries) > 1:
             message = f"Name '{name}' is claimed by {' and by '.join(origins)}"
-            if "singleton" in kinds:
-                message += (
-                    "; rename the fragment so its class and singleton names differ"
-                )
-            elif kinds == {"binding"}:
-                # Two combinations whose slot and fragment names split the
-                # same letters two ways. Neither call site named the class --
-                # the combination did -- so the fix is on the names it is
-                # built from: the slot's and the fragments'.
-                message += "; alias the slot field or rename one of the fragments"
             errors.append(message)
         # Every claim becomes a module-level binding of its own.
         if not _is_usable_identifier(name):
@@ -426,7 +425,9 @@ def validate_module_names(
     return errors
 
 
-def _signature_claims(ir: CollectedPackageIR) -> Iterator[tuple[str, str, str]]:
+def _signature_claims(
+    ir: CollectedPackageIR, package_name: str
+) -> Iterator[tuple[str, str, str]]:
     # (scope, parameter name, what claims it) for every method the generator
     # writes parameters onto. Each scope is one Python keyword namespace: the
     # method's own parameters, its receiver, and any name its rendered body
@@ -437,61 +438,156 @@ def _signature_claims(ir: CollectedPackageIR) -> Iterator[tuple[str, str, str]]:
         at = operation.location
         scope = f"execute() of operation '{operation.class_name}' at {at}"
         yield scope, "self", "the method receiver"
+        for name, origin in operation_execute_free_names(
+            operation.result_type, package_name
+        ):
+            yield scope, name, origin
         for variable in operation.variables:
             yield scope, variable.python_name, f"variable ${variable.gql_name}"
     for template in ir.templates:
-        at = template.location
-        scope = f"execute() of template '{template.class_name}' at {at}"
-        yield scope, "self", "the method receiver"
-        for variable in template.variables:
-            yield scope, variable.python_name, f"variable ${variable.gql_name}"
-        scope = f"bind() of template '{template.class_name}' at {at}"
-        yield scope, "self", "the method receiver"
-        # `bind()` carries the template's slots as parameters of the
-        # implementation under its stubs, over a body that reads the names
-        # below from an enclosing scope. There used to be a second form for a
-        # template with one binding, and claiming these names only for the
-        # other one left its parameters free to shadow the module its own body
-        # calls into; one form now, and the claim is unconditional.
-        for name, origin in BIND_BODY_FREE_NAMES:
-            yield scope, name, origin
-        for slot in template.slots:
-            yield scope, slot.python_name, f"slot '{slot.name}'"
-        # The result models' type parameters are a namespace of their own, and
-        # a narrower one than `bind()`'s keywords: the phantom name drops the
-        # underscores its slot may carry, so `details` and `_details` are two
-        # keywords and one parameter. A model would then declare fewer
-        # parameters than its bindings pass arguments, and the generated
-        # package would fail to import.
-        scope = f"the type parameters of template '{template.class_name}' at {at}"
-        for slot in template.slots:
-            yield scope, slot_param_name(slot.python_name), f"slot '{slot.name}'"
-    for binding in ir.bindings:
-        # `render._render_with_args` builds the variables mapping as a single
-        # expression, so `with_args()`'s namespace holds nothing but its
-        # receiver and its parameters.
-        scope = f"with_args() of binding '{binding.class_name}' at {binding.location}"
-        yield scope, "self", "the method receiver"
-        for arg in binding.arg_vars:
-            yield (
-                scope,
-                arg.var.python_name,
-                f"fragment variable ${arg.var.gql_name}",
-            )
+        yield from _template_signature_claims(
+            template, package_name, ir.fragments, ir.bindings
+        )
+    # A binding renders no method of its own -- it is a row in the package's
+    # bind dispatch table -- so `ir.bindings` claims no signature namespace
+    # here. `with_args` belongs to the fragment whose own variables it
+    # applies instead: two of them snaking to the same Python name is a
+    # collision within *this* fragment's own closure, unrelated to any other
+    # fragment or combination that might also declare a variable.
+    for fragment in ir.fragments:
+        yield from _fragment_init_claims(fragment)
+        yield from _fragment_with_args_claims(fragment)
 
 
-def validate_signature_names(ir: CollectedPackageIR) -> list[str]:
+def _template_signature_claims(
+    template: CollectedTemplate,
+    package_name: str,
+    fragments: list[CollectedFragment],
+    bindings: list[CollectedBinding],
+) -> Iterator[tuple[str, str, str]]:
+    at = template.location
+    scope = f"execute() of template '{template.class_name}' at {at}"
+    yield scope, "self", "the method receiver"
+    for name, origin in template_execute_free_names(template, package_name):
+        yield scope, name, origin
+    for variable in template.variables:
+        yield scope, variable.python_name, f"variable ${variable.gql_name}"
+    scope = f"bind() of template '{template.class_name}' at {at}"
+    yield scope, "self", "the method receiver"
+    # `bind()` carries the template's slots as parameters of the
+    # implementation under its stubs, over a body that reads the names
+    # below from an enclosing scope. The claim is unconditional, and has
+    # to be: `bind()` is rendered either as a set of stubs over an erased
+    # implementation or -- when nothing in the package can be spread into
+    # any of the template's slots -- as one plain signature, and both
+    # write the same parameter names over the same body. Claiming them
+    # for only one shape left the other's parameters free to shadow the
+    # module its own body calls into.
+    for name, origin in bind_body_free_names(template, package_name):
+        yield scope, name, origin
+    for slot in template.slots:
+        yield scope, slot.python_name, f"slot '{slot.name}'"
+    # The result models' type parameters are a namespace of their own, and
+    # a narrower one than `bind()`'s keywords: the phantom name drops the
+    # underscores its slot may carry, so `details` and `_details` are two
+    # keywords and one parameter. A model would then declare fewer
+    # parameters than its bindings pass arguments, and the generated
+    # package would fail to import.
+    scope = f"the type parameters of template '{template.class_name}' at {at}"
+    for slot in template.slots:
+        yield scope, slot_param_name(slot.python_name), f"slot '{slot.name}'"
+    yield from _bind_signature_type_param_claims(template, fragments, bindings)
+
+
+def _bind_signature_type_param_claims(
+    template: CollectedTemplate,
+    fragments: list[CollectedFragment],
+    bindings: list[CollectedBinding],
+) -> Iterator[tuple[str, str, str]]:
+    # PEP 695 даёт каждому rendered overload отдельный namespace type
+    # parameters. `render.bind_signatures` — источник точных overloads и имён,
+    # которые читают их annotations. Повторное приближённое построение scopes
+    # здесь объединило бы раздельные namespaces Python и потеряло бы Cartesian
+    # combinations, которые Python видит в одной signature.
+    reference_origins = {
+        template.bound_base_name: f"the bound base of template '{template.name}'",
+        template.result_type: f"the result class of template '{template.name}'",
+    }
+    for slot in template.slots:
+        for base in slot.on_type_bases:
+            reference_origins[base] = f"the on-type base '{base}'"
+    for name, fragment in _fragments_by_class_name(fragments).items():
+        reference_origins[name] = (
+            f"fragment '{fragment.fragment_name}' at {fragment.location}"
+        )
+
+    for position, signature in enumerate(bind_signatures(template, bindings), 1):
+        scope = (
+            f"the type parameters of overload {position} of template "
+            f"'{template.class_name}' at {template.location}"
+        )
+        for type_param in signature.type_params:
+            yield scope, type_param.name, type_param.origin
+        for name in signature.references:
+            yield scope, name, reference_origins[name]
+
+
+def _fragments_by_class_name(
+    fragments: list[CollectedFragment],
+) -> dict[str, CollectedFragment]:
+    # Both spellings a constraint can carry: a plain fragment is named by its
+    # own class, a factory by the applied one `with_args` returns.
+    by_class: dict[str, CollectedFragment] = {}
+    for fragment in fragments:
+        by_class[fragment.class_name] = fragment
+        if isinstance(fragment, CollectedFactoryFragment):
+            by_class[fragment.applied_class_name] = fragment
+    return by_class
+
+
+def _fragment_with_args_claims(
+    fragment: CollectedFragment,
+) -> Iterator[tuple[str, str, str]]:
+    if not isinstance(fragment, CollectedFactoryFragment):
+        return
+    at = fragment.location
+    scope = f"with_args() of fragment '{fragment.fragment_name}' at {at}"
+    yield scope, "self", "the method receiver"
+    for name, origin in with_args_body_free_names(fragment):
+        yield scope, name, origin
+    for arg in fragment.arg_vars:
+        yield scope, arg.python_name, f"variable ${arg.gql_name}"
+
+
+def _fragment_init_claims(
+    fragment: CollectedFragment,
+) -> Iterator[tuple[str, str, str]]:
+    at = fragment.location
+    scope = f"__init__() of fragment '{fragment.fragment_name}' at {at}"
+    yield scope, "self", "the method receiver"
+    for name, origin in fragment_init_body_free_names(fragment):
+        yield scope, name, origin
+    if isinstance(fragment, CollectedFactoryFragment):
+        applied_scope = (
+            f"__init__() of applied fragment '{fragment.fragment_name}' at {at}"
+        )
+        yield applied_scope, "self", "the method receiver"
+        yield applied_scope, "fragment_args", "the fragment arguments"
+        for name, origin in fragment_init_body_free_names(fragment):
+            yield applied_scope, name, origin
+
+
+def validate_signature_names(ir: CollectedPackageIR, package_name: str) -> list[str]:
     # Every generated method takes its parameters in one Python namespace, and
     # names reach it through `to_snake_fn` — so two names that differ in
     # GraphQL can render the same parameter twice, and a name that is not a
     # usable identifier renders a parameter that never compiles.
     #
     # Every parameter namespace the generator writes lives here, not just
-    # `execute`'s: a template's slots become `bind()`'s parameters and a
-    # binding's fragment variables become `with_args()`'s, and each of those
-    # is as capable of colliding as an operation's variables are.
+    # `execute`'s: a template's slots become `bind()`'s parameters too, and
+    # each is as capable of colliding as an operation's variables are.
     claims: dict[tuple[str, str], list[str]] = defaultdict(list)
-    for scope, name, origin in _signature_claims(ir):
+    for scope, name, origin in _signature_claims(ir, package_name):
         claims[scope, name].append(origin)
     for artifact in ir.result_artifacts:
         if not artifact.type_params:

@@ -15,26 +15,39 @@ from iron_gql.codegen.accessors import field_type
 from iron_gql.codegen.accessors import union_types
 from iron_gql.codegen.accessors import wrapping_of_type
 from iron_gql.codegen.bindings import ExpandedBinding
+from iron_gql.codegen.bindings import OmittableSynthesizedVar
 from iron_gql.codegen.bindings import ReadableFragment
+from iron_gql.codegen.bindings import RequiredSynthesizedVar
 from iron_gql.codegen.bindings import SlotTarget
 from iron_gql.codegen.bindings import expand_binding
+from iron_gql.codegen.bindings import fragment_closure
+from iron_gql.codegen.bindings import fragment_own_vars
+from iron_gql.codegen.bindings import unknown_slot_error
 from iron_gql.codegen.collect_inputs import collect_input_artifacts
 from iron_gql.codegen.collect_inputs import collect_input_type_closure
+from iron_gql.codegen.combinations import Combination
+from iron_gql.codegen.combinations import compatible_fragment_names
+from iron_gql.codegen.combinations import enumerate_combinations
 from iron_gql.codegen.discovery import BindDecl
+from iron_gql.codegen.discovery import BindKeywordCheck
 from iron_gql.codegen.discovery import Statement
 from iron_gql.codegen.ir import BUILTIN_SCALARS
 from iron_gql.codegen.ir import CollectedArtifact
 from iron_gql.codegen.ir import CollectedBinding
-from iron_gql.codegen.ir import CollectedBindingArg
 from iron_gql.codegen.ir import CollectedBindingSlot
 from iron_gql.codegen.ir import CollectedEnum
+from iron_gql.codegen.ir import CollectedFactoryFragment
 from iron_gql.codegen.ir import CollectedField
 from iron_gql.codegen.ir import CollectedFragment
 from iron_gql.codegen.ir import CollectedModel
+from iron_gql.codegen.ir import CollectedOmittableFragmentArg
+from iron_gql.codegen.ir import CollectedOnTypeBase
 from iron_gql.codegen.ir import CollectedOperation
 from iron_gql.codegen.ir import CollectedOperationVar
 from iron_gql.codegen.ir import CollectedPackageIR
-from iron_gql.codegen.ir import CollectedSlotHandle
+from iron_gql.codegen.ir import CollectedPlainFragment
+from iron_gql.codegen.ir import CollectedReadableFragment
+from iron_gql.codegen.ir import CollectedRequiredFragmentArg
 from iron_gql.codegen.ir import CollectedTemplate
 from iron_gql.codegen.ir import CollectedTemplateSlot
 from iron_gql.codegen.ir import CollectedUnionAlias
@@ -45,8 +58,9 @@ from iron_gql.codegen.ir import NamedRef
 from iron_gql.codegen.ir import ScalarRef
 from iron_gql.codegen.ir import StrTransform
 from iron_gql.codegen.ir import TypeRef
-from iron_gql.codegen.ir import field_name_to_pascal
+from iron_gql.codegen.ir import applied_fragment_class_name
 from iron_gql.codegen.ir import make_optional
+from iron_gql.codegen.ir import on_type_base_name
 from iron_gql.codegen.ir import result_model_name
 from iron_gql.codegen.ir import slot_param_name
 from iron_gql.codegen.ir import slot_roots
@@ -72,8 +86,7 @@ from iron_gql.codegen.util import reachable
 from iron_gql.codegen.warnings import GraphQLDeprecationWarning
 from iron_gql.codegen.warnings import UnknownGQLTypeWarning
 from iron_gql.codegen.warnings import warn_deprecated_field
-from iron_gql.slots import BindKey
-from iron_gql.slots import bind_key_shape
+from iron_gql.slots import combination_key
 
 
 @dataclass(kw_only=True, frozen=True)
@@ -773,46 +786,158 @@ def _collect_result_artifacts(
 
 
 @dataclass(kw_only=True, frozen=True)
-class _ExpandedBind:
-    bind: BindDecl
-    template_query: Template
+class _ExpandedCombination:
+    combination: Combination
+    template: CollectedTemplate
     expanded: ExpandedBinding
     # The synthesized fragment variables, parsed against the schema: their
-    # types feed the input-artifact closure and their names become
-    # `with_args`'s keywords.
+    # types feed the input-artifact closure below (`CollectedFragment.
+    # arg_vars`, built per fragment rather than per combination, is what
+    # `with_args`'s own keywords come from).
     arg_gql_vars: list[GQLVar]
+    # Места, редактирование которых создаёт или удаляет combination. Для явно
+    # записанного combination это call sites `.bind(...)`; для полученного из
+    # schema enumeration — statement template и statements всех spread
+    # fragments. Диагностика должна указывать на фактический источник, иначе
+    # разработчика отправит к template, который он не менял.
+    locations: tuple[str, ...]
 
 
-def _expand_binds(
+def _literal_combinations(
     *,
-    schema: graphql.GraphQLSchema,
     binds: list[BindDecl],
     template_by_stmt: dict[Statement, Template],
     fragment_by_stmt: dict[Statement, FragmentStatement],
-    fragment_statements: list[FragmentStatement],
     template_by_name: dict[str, CollectedTemplate],
-) -> list[_ExpandedBind]:
-    # Every fragment a bind's closure can reach is already in
-    # `fragment_statements` -- `parser.bind_closures` narrowed it to exactly
-    # that set -- so this is a complete namespace for `expand_binding`'s own
-    # closure resolution.
+) -> dict[Combination, tuple[str, ...]]:
+    # Каждый call site `.bind(...)` как combination вместе с записавшими его
+    # locations. Только multi-fragment tuple добавляет то, чего не создаёт
+    # enumeration. Но каждый bind сохраняется и для `expand_binding`, где
+    # диагностируется keyword без соответствующего slot, а явно записанный
+    # combination хранит locations для точной диагностики.
+    #
+    # Keyed by the combination, so two call sites spelling one combination
+    # (`bind(a=x)` and `bind(a=x, b=[])`) meet on one entry carrying both
+    # lines. `binds` already arrives in `(file, lineno)` order --
+    # `discover_package` sorts it there, at the one place binds enter the
+    # pipeline -- so both the keys and each entry's locations inherit one
+    # deterministic order without re-sorting.
+    literal: dict[Combination, tuple[str, ...]] = {}
+    for bind in binds:
+        template = template_by_name[template_by_stmt[bind.template].name]
+        written = {
+            key: tuple(sorted(fragment_by_stmt[stmt].name for stmt in stmts))
+            for key, stmts in bind.slot_args
+        }
+        # Every slot of the template first, in its order, so a bind spelling a
+        # combination the enumeration also produces is equal to it and merges
+        # away; then whatever keywords are left, which name no slot at all --
+        # `expand_binding` is what says so.
+        on_slots = [
+            (slot.python_name, written.pop(slot.python_name, ()))
+            for slot in template.slots
+        ]
+        combination = Combination(
+            template_name=template.name,
+            slots=(*on_slots, *sorted(written.items())),
+        )
+        literal[combination] = (*literal.get(combination, ()), *bind.locations)
+    return literal
+
+
+def _validate_bind_keyword_checks(
+    *,
+    checks: Sequence[BindKeywordCheck],
+    prepared: _PreparedPackage,
+    templates: list[CollectedTemplate],
+) -> None:
+    templates_by_name = {template.name: template for template in templates}
+    errors: list[str] = []
+    for check in checks:
+        parsed = prepared.template_by_stmt[check.template]
+        slot_names = {slot.python_name for slot in templates_by_name[parsed.name].slots}
+        errors.extend(
+            unknown_slot_error(
+                key=keyword,
+                slot_names=slot_names,
+                location=check.location,
+            )
+            for keyword in check.keywords
+            if keyword not in slot_names
+        )
+    if errors:
+        raise GraphQLGenerationError(errors)
+
+
+def _enumerate_and_expand(
+    *,
+    schema: graphql.GraphQLSchema,
+    prepared: _PreparedPackage,
+    collected_templates: list[CollectedTemplate],
+    fragment_defs: dict[str, graphql.FragmentDefinitionNode],
+    binds: list[BindDecl],
+) -> list[_ExpandedCombination]:
+    # Определяет существующие combinations и document каждого из них. Это один
+    # шаг: enumeration решает, что разворачивать, а expansion запускает
+    # validations отдельно для каждой пары, а не для каждого call site.
+    #
+    # Everything here keys templates by their GraphQL operation name, which
+    # `_dedup_statements` has already made injective -- unlike `class_name`,
+    # which two operation names differing only in the first letter's case
+    # collapse onto, silently answering one template's combination with the
+    # other template's slots.
+    by_operation_name = {template.name: template for template in collected_templates}
+    query_by_operation_name = {query.name: query for query in prepared.template_queries}
+    literal = _literal_combinations(
+        binds=binds,
+        template_by_stmt=prepared.template_by_stmt,
+        fragment_by_stmt=prepared.fragment_by_stmt,
+        template_by_name=by_operation_name,
+    )
+    return _expand_combinations(
+        schema=schema,
+        combinations=enumerate_combinations(
+            schema=schema,
+            templates=collected_templates,
+            fragments=fragment_defs,
+            literal_binds=list(literal),
+        ),
+        template_queries=query_by_operation_name,
+        template_by_name=by_operation_name,
+        fragment_statements=prepared.fragment_statements,
+        fragment_locations=prepared.fragment_locations,
+        literal_locations=literal,
+    )
+
+
+def _expand_combinations(
+    *,
+    schema: graphql.GraphQLSchema,
+    combinations: list[Combination],
+    template_queries: dict[str, Template],
+    template_by_name: dict[str, CollectedTemplate],
+    fragment_statements: list[FragmentStatement],
+    fragment_locations: dict[str, list[str]],
+    literal_locations: dict[Combination, tuple[str, ...]],
+) -> list[_ExpandedCombination]:
+    # Every fragment a combination's closure can reach is already in
+    # `fragment_statements` -- `parser.bindable_statements` is exactly the set
+    # the enumeration draws from -- so this is a complete namespace for
+    # `expand_binding`'s own closure resolution.
     all_fragment_defs = {
         statement.name: statement.definition for statement in fragment_statements
     }
-    expanded_binds: list[_ExpandedBind] = []
-    # Accumulated across every bind, like parser.py's validate_bind_* family:
-    # a user with several broken binds sees every diagnosis in one
-    # regeneration instead of fixing them one at a time.
+    expanded_combinations: list[_ExpandedCombination] = []
+    # Accumulated across every combination, like parser.py's validate_bind_*
+    # family: a user whose package produces several broken pairs sees every
+    # diagnosis in one regeneration instead of fixing them one at a time.
     errors: list[str] = []
-    # `binds` already arrives in `(file, lineno)` order -- `discover_package`
-    # sorts it there, at the one place binds enter the pipeline -- so the IR,
-    # the rendered classes and every diagnosis below inherit one deterministic
-    # order without re-sorting.
-    for bind in binds:
-        query = template_by_stmt[bind.template]
+    for combination in combinations:
+        query = template_queries[combination.template_name]
+        template = template_by_name[combination.template_name]
         spreads = {
-            key: tuple(fragment_by_stmt[stmt].definition for stmt in stmts)
-            for key, stmts in bind.slot_args
+            key: tuple(all_fragment_defs[name] for name in names)
+            for key, names in combination.slots
         }
         # Keyed by the keyword a caller writes -- the slot's `python_name`,
         # which is what `bind(...)` renders its parameters as -- so the check
@@ -823,8 +948,14 @@ def _expand_binds(
             slot.python_name: SlotTarget(
                 type_name=slot.type_name, response_key=slot.name
             )
-            for slot in template_by_name[query.name].slots
+            for slot in template.slots
         }
+        locations = _combination_locations(
+            query,
+            combination,
+            fragment_locations=fragment_locations,
+            literal_locations=literal_locations,
+        )
         try:
             expanded = expand_binding(
                 schema=schema,
@@ -834,70 +965,82 @@ def _expand_binds(
                 slots=slots,
                 spreads=spreads,
                 all_fragments=all_fragment_defs,
-                location=bind.location,
+                location=", ".join(locations),
             )
         except GraphQLGenerationError as exc:
             errors.extend(exc.errors)
             continue
-        expanded_binds.append(
-            _ExpandedBind(
-                bind=bind,
-                template_query=query,
+        expanded_combinations.append(
+            _ExpandedCombination(
+                combination=combination,
+                template=template,
                 expanded=expanded,
                 arg_gql_vars=[
-                    parse_var(var.node, schema=schema, context=bind.location)
+                    parse_var(var.node, schema=schema, context=", ".join(locations))
                     for var in expanded.fragment_vars
                 ],
+                locations=locations,
             )
         )
     if errors:
         raise GraphQLGenerationError(errors)
-    return _merge_expanded(expanded_binds)
+    return expanded_combinations
 
 
-def _merge_expanded(expanded_binds: list[_ExpandedBind]) -> list[_ExpandedBind]:
-    # One binding per combination, merged *here* rather than in the scan: the
-    # generated class is named after the combination and the runtime dispatches
-    # on it, so two call sites that reach the same one are the same binding.
-    # The scan cannot do this merge, because the normalisation it needs --
-    # dropping slots passed nothing -- also erases a keyword that names no slot
-    # of the template. By this point `expand_binding` has checked every keyword
-    # against the template's slots, so normalising is safe.
-    merged: dict[BindKey, _ExpandedBind] = {}
-    for expanded_bind in expanded_binds:
-        key = bind_key_shape(
-            expanded_bind.template_query.name,
-            (
-                (slot, (statement.hash_str for statement in statements))
-                for slot, statements in expanded_bind.bind.slot_args
-            ),
-        )
-        seen = merged.get(key)
-        if seen is None:
-            merged[key] = expanded_bind
-            continue
-        merged[key] = dataclasses.replace(
-            seen,
-            bind=dataclasses.replace(
-                seen.bind,
-                locations=(*seen.bind.locations, *expanded_bind.bind.locations),
-            ),
-        )
-    return list(merged.values())
+def _combination_locations(
+    query: Template,
+    combination: Combination,
+    *,
+    fragment_locations: dict[str, list[str]],
+    literal_locations: dict[Combination, tuple[str, ...]],
+) -> tuple[str, ...]:
+    # A combination somebody wrote answers with the lines they wrote: that is
+    # the only edit that removes it, and a diagnosis naming the template
+    # instead sends them to a file they never touched. Every other combination
+    # exists because the template's statement and its fragments' statements
+    # exist, so those are what it names -- the template first, its fragments in
+    # slot order. A fragment discovered under several spellings contributes
+    # every one of its locations, the same contract `CollectedFragment.
+    # locations` carries.
+    written = literal_locations.get(combination)
+    if written is not None:
+        return written
+    return (
+        query.stmt.location,
+        *(
+            location
+            # `dict.fromkeys` rather than a set: one fragment may fill two
+            # slots of one combination, and the order has to stay the slots'.
+            for name in dict.fromkeys(
+                name for _key, names in combination.slots for name in names
+            )
+            for location in fragment_locations[name]
+        ),
+    )
 
 
 def _collect_input_artifacts_with_binds(
     collector: PackageCollector,
     queries: Sequence[Query],
-    expanded_binds: list[_ExpandedBind],
+    expanded_combinations: list[_ExpandedCombination],
+    *,
+    fragment_gql_vars: list[GQLVar],
 ) -> list[CollectedArtifact]:
     # A binding's synthesized fragment variables can introduce an input type
-    # no query declares on its own.
+    # no query declares on its own -- and so can a factory fragment's own
+    # variables, independent of whether any combination ever reaches it: a
+    # factory compatible with no slot in the package still renders a
+    # `with_args`, and an input-object-typed parameter there needs its class
+    # defined somewhere. `fragment_gql_vars` is every factory's own variables
+    # (`collect._collect_fragments`), which is always a superset of what any
+    # one combination's `arg_gql_vars` contributes -- both are kept, rather
+    # than dropping the combination-level walk now that it is redundant,
+    # since consolidating the two is a bigger change than this gap calls for.
     extra_var_types = [
         gql_var.gql_type
-        for expanded_bind in expanded_binds
-        for gql_var in expanded_bind.arg_gql_vars
-    ]
+        for expanded in expanded_combinations
+        for gql_var in expanded.arg_gql_vars
+    ] + [gql_var.gql_type for gql_var in fragment_gql_vars]
     artifacts = collect_input_artifacts(
         collect_input_type_closure(queries, extra_types=extra_var_types),
         to_snake_fn=collector.to_snake_fn,
@@ -928,6 +1071,7 @@ def collect_package_ir(
     templates: list[Template],
     fragment_statements: list[FragmentStatement],
     binds: list[BindDecl],
+    bind_keyword_checks: Sequence[BindKeywordCheck],
     discovered_texts: tuple[str, ...],
     scalars: dict[str, ImportRef],
     to_snake_fn: StrTransform,
@@ -935,6 +1079,11 @@ def collect_package_ir(
     prepared = _prepare_package(operations, templates, fragment_statements)
     collector = PackageCollector(
         schema=schema, scalars=scalars, to_snake_fn=to_snake_fn
+    )
+    # `fragment_closure` внутри `_collect_fragments` использует полный набор
+    # slot types ещё до построения template IR.
+    slot_type_names = frozenset(
+        slot.type_name for query in prepared.template_queries for slot in query.slots
     )
 
     result_artifacts, template_artifacts = _collect_result_artifacts(
@@ -952,41 +1101,46 @@ def collect_package_ir(
         prepared.query_locations,
         prepared.query_spellings,
     )
-    fragments = _collect_fragments(
+    fragments, fragment_gql_vars = _collect_fragments(
         collector,
         prepared.fragment_statements,
         prepared.fragment_locations,
         prepared.fragment_spellings,
+        schema=schema,
+        slot_type_names=slot_type_names,
     )
+    # The package's fragment namespace, which is both what a slot's
+    # compatibility is measured against and what the enumeration draws its
+    # combinations from.
+    fragment_defs = {
+        statement.name: statement.definition
+        for statement in prepared.fragment_statements
+    }
     collected_templates = _collect_templates(
         collector,
         prepared.template_queries,
         prepared.query_locations,
         prepared.query_spellings,
         template_artifacts,
+        fragment_defs=fragment_defs,
     )
-    # Keyed by the GraphQL operation name, which `_dedup_statements` has
-    # already made injective -- unlike `class_name`, which two operation names
-    # differing only in the first letter's case collapse onto, silently
-    # answering one template's bind with another template's slots.
-    template_by_name = {
-        query.name: template
-        for query, template in zip(
-            prepared.template_queries, collected_templates, strict=True
-        )
-    }
-    expanded_binds = _expand_binds(
+    _validate_bind_keyword_checks(
+        checks=bind_keyword_checks,
+        prepared=prepared,
+        templates=collected_templates,
+    )
+    expanded_combinations = _enumerate_and_expand(
         schema=schema,
+        prepared=prepared,
+        collected_templates=collected_templates,
+        fragment_defs=fragment_defs,
         binds=binds,
-        template_by_stmt=prepared.template_by_stmt,
-        fragment_by_stmt=prepared.fragment_by_stmt,
-        fragment_statements=prepared.fragment_statements,
-        template_by_name=template_by_name,
     )
     input_artifacts = _collect_input_artifacts_with_binds(
         collector,
         [*prepared.operation_queries, *prepared.template_queries],
-        expanded_binds,
+        expanded_combinations,
+        fragment_gql_vars=fragment_gql_vars,
     )
     # Validated before any name-keyed structure is derived: the binding
     # lookups after this, the subtree walk, and the rename pass all resolve
@@ -1002,9 +1156,7 @@ def collect_package_ir(
         raise GraphQLGenerationError(name_errors)
 
     bindings = _collect_bindings(
-        collector,
-        expanded_binds=expanded_binds,
-        template_by_name=template_by_name,
+        expanded_combinations=expanded_combinations,
         collected_fragment_by_name={f.fragment_name: f for f in fragments},
     )
 
@@ -1013,6 +1165,11 @@ def collect_package_ir(
         input_artifacts=input_artifacts,
         operations=collected_operations,
         fragments=fragments,
+        on_type_bases=_collect_on_type_bases(
+            fragment_type_names=(
+                statement.type_condition for statement in prepared.fragment_statements
+            ),
+        ),
         templates=collected_templates,
         bindings=bindings,
         enums=enums,
@@ -1022,12 +1179,10 @@ def collect_package_ir(
 
 
 def parametrize_slot_paths(ir: CollectedPackageIR) -> CollectedPackageIR:
-    # One set of result models per template, generic in its slots, in place of
-    # a copy of that set per binding. Which fragments are readable at a slot is
-    # the binding's own fact, and it travels as a type argument the binding
-    # fills in when it names its result type -- so shared code that is generic
-    # over the binding still sees the shape of the result and can read a slot
-    # through a type-erased handle.
+    # Один generic по slots набор result models на template вместо копии на
+    # каждый binding. Readable fragments передаются как type argument result,
+    # поэтому generic-код сохраняет форму result и может читать slot через
+    # type-erased fragment reader.
     #
     # Parametrised are exactly the artifacts a slot node is reachable from, the
     # node itself included: what sits *below* a node is the slot's static
@@ -1152,23 +1307,132 @@ def _collect_operation_vars(
     )
 
 
+def _collect_on_type_bases(
+    *,
+    fragment_type_names: Iterable[str],
+) -> list[CollectedOnTypeBase]:
+    names = set(fragment_type_names)
+    return [
+        CollectedOnTypeBase(name=on_type_base_name(name), graphql_type_name=name)
+        for name in sorted(names)
+    ]
+
+
 def _collect_fragments(
     collector: PackageCollector,
     statements: list[FragmentStatement],
     locations: dict[str, list[str]],
     spellings: dict[str, list[str]],
-) -> list[CollectedFragment]:
-    return [
-        CollectedFragment(
-            stmt_texts=tuple(spellings[statement.name]),
-            locations=tuple(locations[statement.name]),
-            class_name=capitalize_first(statement.name),
-            singleton_name=collector.to_snake_fn(statement.name).upper(),
-            fragment_name=statement.name,
-            model_name=fragment_model_name(statement.name),
+    *,
+    schema: graphql.GraphQLSchema,
+    slot_type_names: frozenset[str],
+) -> tuple[list[CollectedFragment], list[GQLVar]]:
+    # Полное пространство имён фрагментов пакета для обхода в
+    # `fragment_closure`. Оно строится из тех же statements, что и копия в
+    # `_expand_binds`, но раньше чтения bind: общий параметр только связал бы
+    # два независимых и дешёвых lookup.
+    fragment_defs = {statement.name: statement.definition for statement in statements}
+    reader_class_names = {
+        statement.name: (
+            applied_fragment_class_name(capitalize_first(statement.name))
+            if statement.kind == "factory"
+            else capitalize_first(statement.name)
         )
         for statement in statements
-    ]
+    }
+    fragments: list[CollectedFragment] = []
+    # Собственные variables каждой factory возвращаются отдельно, чтобы
+    # `collect_package_ir` включил их input-типы в closure артефактов. Это
+    # требуется и для factory, несовместимой ни с одним slot: она не попадает
+    # ни в одну combination, но её `with_args` всё равно должен ссылаться на
+    # определённые в модуле типы.
+    fragment_gql_vars: list[GQLVar] = []
+    errors: list[str] = []
+    for statement in statements:
+        closure_names = fragment_closure(
+            schema=schema,
+            fragment=statement.definition,
+            slot_types=slot_type_names,
+            fragments=fragment_defs,
+        )
+        # Первым идёт собственный класс фрагмента, затем остальной closure по
+        # алфавиту: base expression читается как «он сам плюс всё, что он
+        # предлагает». `fragment_closure` всегда включает имя самого фрагмента.
+        rest = sorted(
+            reader_class_names[name] for name in closure_names if name != statement.name
+        )
+        class_name = capitalize_first(statement.name)
+        match statement.kind:
+            case "factory":
+                # Параметры `with_args` принадлежат document closure самой
+                # factory и не зависят от достигающих её combination.
+                synthesized, var_errors = fragment_own_vars(
+                    fragment=statement.definition,
+                    dependencies=statement.dependencies,
+                    schema=schema,
+                    location=statement.stmt.location,
+                )
+                errors.extend(var_errors)
+                arg_vars: list[
+                    CollectedRequiredFragmentArg | CollectedOmittableFragmentArg
+                ] = []
+                for synthesized_var in synthesized:
+                    gql_name = synthesized_var.node.variable.name.value
+                    python_name = collector.to_snake_fn(gql_name)
+                    fragment_gql_vars.append(
+                        GQLVar(
+                            name=gql_name,
+                            gql_type=synthesized_var.explicit_value_type,
+                        )
+                    )
+                    explicit_value_type = collector.collect_type(
+                        synthesized_var.explicit_value_type
+                    )
+                    match synthesized_var:
+                        case RequiredSynthesizedVar():
+                            arg_vars.append(
+                                CollectedRequiredFragmentArg(
+                                    gql_name=gql_name,
+                                    python_name=python_name,
+                                    explicit_value_type=explicit_value_type,
+                                )
+                            )
+                        case OmittableSynthesizedVar():
+                            arg_vars.append(
+                                CollectedOmittableFragmentArg(
+                                    gql_name=gql_name,
+                                    python_name=python_name,
+                                    explicit_value_type=explicit_value_type,
+                                )
+                            )
+                fragments.append(
+                    CollectedFactoryFragment(
+                        stmt_texts=tuple(spellings[statement.name]),
+                        locations=tuple(locations[statement.name]),
+                        class_name=class_name,
+                        fragment_name=statement.name,
+                        model_name=fragment_model_name(statement.name),
+                        on_type=on_type_base_name(statement.type_condition),
+                        closure=(reader_class_names[statement.name], *rest),
+                        applied_class_name=applied_fragment_class_name(class_name),
+                        arg_vars=tuple(arg_vars),
+                    )
+                )
+            case "plain":
+                fragments.append(
+                    CollectedPlainFragment(
+                        stmt_texts=tuple(spellings[statement.name]),
+                        locations=tuple(locations[statement.name]),
+                        class_name=class_name,
+                        fragment_name=statement.name,
+                        model_name=fragment_model_name(statement.name),
+                        on_type=on_type_base_name(statement.type_condition),
+                        closure=(reader_class_names[statement.name], *rest),
+                    )
+                )
+    if errors:
+        raise GraphQLGenerationError(errors)
+    return fragments, fragment_gql_vars
 
 
 def _collect_operations(
@@ -1211,13 +1475,29 @@ def _slot_node_types(
 
 
 def _template_slot(
-    collector: PackageCollector, slot: QuerySlot, node_types: dict[str, tuple[str, ...]]
+    collector: PackageCollector,
+    slot: QuerySlot,
+    node_types: dict[str, tuple[str, ...]],
+    fragment_defs: dict[str, graphql.FragmentDefinitionNode],
 ) -> CollectedTemplateSlot:
+    # The bases are derived from the very same compatibility predicate the
+    # enumeration runs (`combinations.compatible_fragment_names`), so the
+    # signature `bind()` renders and the combinations the dispatch table holds
+    # cannot disagree about which fragments belong to this slot.
+    bases = {
+        on_type_base_name(fragment_defs[name].type_condition.name.value)
+        for name in compatible_fragment_names(
+            schema=collector.schema,
+            slot_type=slot.type_name,
+            fragments=fragment_defs,
+        )
+    }
     return CollectedTemplateSlot(
         name=slot.name,
         python_name=python_field_name(slot.name, collector.to_snake_fn),
         type_name=slot.type_name,
         node_types=node_types[slot.name],
+        on_type_bases=tuple(sorted(bases)),
     )
 
 
@@ -1286,6 +1566,8 @@ def _collect_templates(
     locations: dict[str, list[str]],
     spellings: dict[str, list[str]],
     template_artifacts: dict[str, list[CollectedArtifact]],
+    *,
+    fragment_defs: dict[str, graphql.FragmentDefinitionNode],
 ) -> list[CollectedTemplate]:
     slot_node_types = {
         name: _slot_node_types(artifacts)
@@ -1298,12 +1580,14 @@ def _collect_templates(
     for query in queries:
         node_types = slot_node_types[query.name]
         slots = tuple(
-            _template_slot(collector, slot, node_types) for slot in query.slots
+            _template_slot(collector, slot, node_types, fragment_defs)
+            for slot in query.slots
         )
         _reject_slot_name_collisions(slots, query)
         templates.append(
             CollectedTemplate(
                 stmt_texts=tuple(spellings[query.name]),
+                name=query.name,
                 class_name=query.class_name,
                 variables=_collect_operation_vars(collector, query.variables),
                 slots=slots,
@@ -1314,42 +1598,6 @@ def _collect_templates(
     return templates
 
 
-def binding_class_name(
-    template_class_name: str, slots: Iterable[tuple[str, Sequence[str]]]
-) -> str:
-    # A binding is its combination, so its class is named after that
-    # combination and after nothing else — not after the Python name a call
-    # site assigned it to, which would make one binding two classes and pin an
-    # importable name to a local variable. Built through the same
-    # `bind_key_shape` the dispatch literal and the runtime key go through, so
-    # the canonical sorting and the unfilled-slot rule cannot drift between
-    # them. Two call sites that mean the same binding therefore land on one
-    # class whatever order and spelling each used, and a template that grows a
-    # new slot renames nothing that does not fill it.
-    #
-    # The same *shape*, not the same key: the fragments arrive here as their
-    # class names, while `render._bind_key_tuple` and the runtime's
-    # `slots.bind_key` supply the GraphQL fragment names, and one
-    # `capitalize_first` between the two is enough to sort them differently (by
-    # fragment name `Zebra` precedes `apple`; by class name `Apple` precedes
-    # `Zebra`). Nothing rests on the two agreeing on an order: dispatch matches
-    # on the key alone, and the class name only has to be one deterministic
-    # function of the combination — which it is, class names being a function
-    # of fragment names.
-    _, entries = bind_key_shape(template_class_name, slots)
-    groups = [
-        f"With{field_name_to_pascal(python_name)}{''.join(class_names)}"
-        for python_name, class_names in entries
-    ]
-    if not groups:
-        # A bind that fills no slot at all: legal, and it still needs a class
-        # of its own, which bare `{Template}` cannot be — that name belongs to
-        # the template. No real group can collide with this one, since every
-        # group names a slot and at least one fragment.
-        return f"{template_class_name}WithNothing"
-    return template_class_name + "".join(groups)
-
-
 def _binding_slot(
     template_slot: CollectedTemplateSlot,
     *,
@@ -1358,8 +1606,8 @@ def _binding_slot(
 ) -> CollectedBindingSlot:
     return CollectedBindingSlot(
         slot=template_slot,
-        readable_handles=tuple(
-            CollectedSlotHandle(
+        readable_fragments=tuple(
+            CollectedReadableFragment(
                 fragment=collected_fragment_by_name[entry.name],
                 typenames=tuple(sorted(entry.typenames)),
                 direct=entry.direct,
@@ -1370,16 +1618,14 @@ def _binding_slot(
 
 
 def _collect_bindings(
-    collector: PackageCollector,
     *,
-    expanded_binds: list[_ExpandedBind],
-    template_by_name: dict[str, CollectedTemplate],
+    expanded_combinations: list[_ExpandedCombination],
     collected_fragment_by_name: dict[str, CollectedFragment],
 ) -> list[CollectedBinding]:
     bindings: list[CollectedBinding] = []
-    for expanded_bind in expanded_binds:
-        expanded = expanded_bind.expanded
-        template = template_by_name[expanded_bind.template_query.name]
+    for expanded_combination in expanded_combinations:
+        expanded = expanded_combination.expanded
+        template = expanded_combination.template
         slots = tuple(
             _binding_slot(
                 template_slot,
@@ -1392,13 +1638,16 @@ def _collect_bindings(
             )
             for template_slot in template.slots
         )
-        class_name = binding_class_name(
+        # Каноническая логическая идентичность комбинации. Runtime dispatch
+        # отдельно использует generated definition classes, потому что строки
+        # не доказывают происхождение fragment из сгенерированного API.
+        collected_combination_key = combination_key(
             template.class_name,
             (
                 (
                     binding_slot.slot.python_name,
                     tuple(
-                        fragment.class_name
+                        fragment.fragment_name
                         for fragment in binding_slot.direct_fragments
                     ),
                 )
@@ -1407,22 +1656,11 @@ def _collect_bindings(
         )
         bindings.append(
             CollectedBinding(
-                class_name=class_name,
+                combination_key=collected_combination_key,
                 template=template,
                 exec_source=expanded.exec_source,
                 slots=slots,
-                # Zipped by position, not joined by GraphQL name:
-                # `arg_gql_vars` is built one-for-one off `fragment_vars`, in
-                # its order, at the one place binds are expanded.
-                arg_vars=tuple(
-                    CollectedBindingArg(var=var, omittable=synthesized.omittable)
-                    for var, synthesized in zip(
-                        _collect_operation_vars(collector, expanded_bind.arg_gql_vars),
-                        expanded.fragment_vars,
-                        strict=True,
-                    )
-                ),
-                locations=expanded_bind.bind.locations,
+                locations=expanded_combination.locations,
             )
         )
     return bindings

@@ -1,17 +1,13 @@
-"""What a `bind()` call means, stated as a contract over a whole package.
+"""Пакетный контракт вызова `bind()`.
 
-`slots.bind_key_shape` carries a long comment about the three layers that
-build a bind key and why an empty slot drops out of it. That is the kind of
-invariant a comment can only describe: the layers meet at exactly one
-observable place -- the generated `bind()` answering with a class -- so this
-file asks its questions there.
+`slots.combination_key` задаёт логическую идентичность комбинации, а
+`slots.dispatch_key` — nominal identity bindable fragment classes. Инвариант
+наблюдаем в одной точке: generated `bind()` обязан выбрать правильную dispatch
+entry.
 
-Two halves. Every call the package's own `queries.py` writes must dispatch to
-the class generated *from that call*; and every mutation of such a call --
-misspell a slot, pass a slot nothing under a misspelling, duplicate a fragment
--- must be refused, while the mutations that mean the same combination
-(reordering keywords, reordering a slot's fragments) must answer with the same
-class.
+Каждый вызов из `queries.py` должен выбрать entry своей комбинации. Опечатка в
+slot, пустое значение под ошибочным именем и повтор fragment должны отвергаться;
+перестановка keywords или fragments должна сохранять комбинацию.
 """
 
 from collections.abc import Callable
@@ -85,20 +81,23 @@ generated_package(
 
     nothing = get_attachment.bind()
     one = get_attachment.bind(attachment=image_parts)
-    two = get_attachment.bind(attachment=[image_parts, link_parts])
+    two = get_attachment.bind(attachment=(image_parts, link_parts))
     both_slots = get_attachment.bind(attachment=image_parts, preview=link_parts)
     ''',
 )
 
 from tests.generated.bind_contract import queries
-from tests.generated.bind_contract.gql.api import IMAGE_PARTS
-from tests.generated.bind_contract.gql.api import LINK_PARTS
 from tests.generated.bind_contract.gql.api import GetAttachment
+from tests.generated.bind_contract.gql.api import ImageParts
+from tests.generated.bind_contract.gql.api import LinkParts
+
+IMAGE_PARTS = ImageParts()
+LINK_PARTS = LinkParts()
 
 # Every call `queries.py` writes, as (the value it produced, the keywords it
 # wrote). The keywords are what the mutations below are derived from, so the
 # corpus and the source stay one thing.
-type Passed = dict[str, GQLFragment[pydantic.BaseModel] | Sequence[Any]]
+type Passed = dict[str, GQLFragment[pydantic.BaseModel, Any] | Sequence[Any]]
 
 WRITTEN: list[tuple[str, object, Passed]] = [
     ("nothing", queries.nothing, {}),
@@ -172,14 +171,14 @@ def test_a_keyword_naming_no_slot_is_refused(passed: Passed):
 )
 def test_a_repeated_fragment_is_refused(passed: Passed):
     # A slot spreads each of its fragments once, so this asks for a
-    # combination that cannot exist -- and the key, which sorts and keeps both
-    # names, must not quietly answer with the one-of-each binding.
+    # combination that cannot exist -- and the dispatch key, which sorts and
+    # keeps both classes, must not quietly answer with the one-of-each binding.
     with pytest.raises(LookupError, match="unknown bind combination"):
         _ = _bind(passed)
 
 
 # (how it is written, which written call it must come back as). One
-# combination has several spellings -- a bare handle or a one-element list,
+# combination has several spellings -- a bare fragment or a one-element list,
 # the keywords in either order, a slot's fragments in either order -- and the
 # key is the only thing that decides, so it sorts.
 SPELLINGS: list[tuple[str, Passed, str]] = [

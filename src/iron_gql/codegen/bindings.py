@@ -6,9 +6,9 @@ from dataclasses import dataclass
 import graphql
 
 from iron_gql.codegen.accessors import inline_fragment_type_condition
+from iron_gql.codegen.accessors import type_from_ast
 from iron_gql.codegen.accessors import type_info_input_type
 from iron_gql.codegen.accessors import visit_document
-from iron_gql.codegen.accessors import wrapping_of_type
 from iron_gql.codegen.ir import GraphQLGenerationError
 from iron_gql.codegen.parser import collect_fragments_from_doc
 from iron_gql.codegen.parser import collect_transitive_fragment_names
@@ -51,35 +51,28 @@ class ReadableFragment:
 
 
 @dataclass(kw_only=True, frozen=True)
-class SynthesizedVar:
-    # One fragment variable the expansion declares on the operation, paired
-    # with the one fact that separates it from a template variable. Paired
-    # here, and not handed on as a list of nodes beside a set of names, so no
-    # layer downstream has to re-join the two by raw GraphQL name -- a join
-    # that keeps type-checking and silently stops matching the day a variable
-    # is identified by anything but that name.
+class RequiredSynthesizedVar:
     node: graphql.VariableDefinitionNode
-    # Whether every position this variable fills declares a schema default.
-    # Those are the only fragment variables a caller may leave out of
-    # `with_args`, and the only ones whose absence must reach the server as an
-    # absent variable rather than an explicit null -- absent is what lets the
-    # schema's default apply, and a non-null position rejects null outright.
-    # Every other fragment variable behaves exactly like an operation variable
-    # of `execute`: always sent, `None` meaning `null`.
-    omittable: bool
+    explicit_value_type: graphql.GraphQLType
+
+
+@dataclass(kw_only=True, frozen=True)
+class OmittableSynthesizedVar:
+    node: graphql.VariableDefinitionNode
+    explicit_value_type: graphql.GraphQLType
+
+
+type SynthesizedVar = RequiredSynthesizedVar | OmittableSynthesizedVar
 
 
 @dataclass(kw_only=True, frozen=True)
 class ExpandedBinding:
     exec_source: str
-    # The fragments readable at each slot's root, keyed by the slot's response
-    # key and sorted by fragment name. Wider than what the bind named -- a
-    # fragment reached only through another fragment's root-level spread is
-    # readable through its own handle too -- but narrower than the document
-    # closure: a fragment spread inside a *field* of a bound fragment lands
-    # under that field in the payload, not on the slot root, so no handle can
-    # read it there. Which of them the bind named literally is
-    # `ReadableFragment.direct`.
+    # Fragments, читаемые в root каждого slot: ключом служит response key,
+    # значения сортируются по fragment name. Набор шире явно переданного в bind,
+    # потому что включает root-level spreads, но уже document closure: fragment
+    # внутри field попадает под этот field, а не в root payload. Явно переданные
+    # fragments отмечены `ReadableFragment.direct`.
     #
     # Total over the *template's* slots, not over the bind's arguments: a slot
     # this bind left empty has an entry of its own, an empty one. That is what
@@ -122,6 +115,13 @@ class _SlotFiller(graphql.Visitor):
         )
 
 
+def unknown_slot_error(*, key: str, slot_names: Iterable[str], location: str) -> str:
+    names = ", ".join(sorted(slot_names))
+    target = f"Combination at {location} targets unknown slot '{key}'"
+    available = f"the template's slots are: {names}"
+    return f"{target}; {available}"
+
+
 def _slot_arg_errors(
     *,
     schema: graphql.GraphQLSchema,
@@ -131,20 +131,14 @@ def _slot_arg_errors(
     location: str,
 ) -> list[str]:
     if key not in slots:
-        names = ", ".join(sorted(slots))
         # An unknown key has no slot type, so its fragments cannot be checked
         # against one -- every further diagnosis for this key would be about a
         # slot that does not exist.
-        return [
-            (
-                f"Bind at {location} targets unknown slot '{key}'; the "
-                f"template's slots are: {names}"
-            )
-        ]
+        return [unknown_slot_error(key=key, slot_names=slots, location=location)]
     slot_type = slots[key].type_name
     return [
         (
-            f"Bind at {location}: fragment '{fragment.name.value}' on "
+            f"Combination at {location}: fragment '{fragment.name.value}' on "
             f"'{fragment.type_condition.name.value}' cannot be spread into "
             f"slot '{key}' of type '{slot_type}'"
         )
@@ -184,14 +178,12 @@ def _closure_fragments(
     fragments: Mapping[str, graphql.FragmentDefinitionNode],
     location: str,
 ) -> tuple[graphql.FragmentDefinitionNode, ...]:
-    # The *document* closure: every definition the expanded operation has to
-    # carry, position-blind by necessity -- a fragment spread inside a field of
-    # a bound fragment is still a definition the document needs. Which of these
-    # are readable through their own handle at a slot is a different question,
-    # answered by `_readable_fragments` over the same namespace.
+    # Document closure содержит все definitions, необходимые expanded operation,
+    # независимо от позиции spread. Какие из них читаются через собственный
+    # definition в root slot, отдельно определяет `readable_fragments`.
     closure_names, missing = collect_transitive_fragment_names(direct_names, fragments)
     if missing:
-        # Internal invariant: `parser.bind_closures` walked this very closure
+        # Internal invariant: `parser.bindable_statements` walked this very closure
         # over this very namespace and reported every unresolvable name, so a
         # bind that reaches this far has none left.
         msg = f"unresolvable fragment(s) in the closure of a bind at {location}"
@@ -263,7 +255,7 @@ def _root_level_spreads(
     return found
 
 
-def _readable_fragments(
+def readable_fragments(
     *,
     schema: graphql.GraphQLSchema,
     slot_type: str,
@@ -285,12 +277,10 @@ def _readable_fragments(
 
     def visit(name: str, typenames: frozenset[str]) -> None:
         if not typenames:
-            # Reachable on paper, at no typename this slot can actually hold:
-            # the fragment's fields are never present on this slot's payload,
-            # so it is not readable here and gets no handle. A brick reused
-            # across slots reaches this legitimately -- it is a fact about the
-            # types, not a defect in the bind -- and registering it anyway
-            # produced a handle whose `read` returned None for every response.
+            # Fragment достижим в graph, но ни на одном typename этого slot.
+            # Его fields не появляются в payload, поэтому reader здесь не нужен.
+            # Для brick, повторно используемого в разных slots, это допустимое
+            # следствие типов, а не дефект binding.
             return
         known = typenames_by_name[name]
         if typenames <= known:
@@ -315,14 +305,10 @@ def _readable_fragments(
             slot_typenames
             & possible_type_names(schema, fragment.type_condition.name.value),
         )
-    # A conditional edge is only a problem at the typenames it *alone* would
-    # deliver its fragment at. Where the unconditional walk already reaches it,
-    # the fields are always requested and the handle is always safe to
-    # validate, so the conditional path adds nothing there. Everywhere else the
-    # handle's typenames stop short of the payloads the condition produces:
-    # asking by name alone, a brick reached unconditionally on one type and
-    # conditionally on another passed the check, and `read` then answered None
-    # on a payload that carried the fields.
+    # Conditional edge опасен только на typenames, куда лишь он доставляет
+    # fragment. Если unconditional walk уже достигает typename, fields всегда
+    # запрошены и definition безопасно валидировать. На остальных typenames
+    # coverage definition не должно включать conditional payload.
     errors = [
         _conditional_spread_error(
             outer=outer,
@@ -346,31 +332,80 @@ def _readable_fragments(
     )
 
 
+def fragment_closure(
+    *,
+    schema: graphql.GraphQLSchema,
+    fragment: graphql.FragmentDefinitionNode,
+    slot_types: Iterable[str],
+    fragments: dict[str, graphql.FragmentDefinitionNode],
+) -> frozenset[str]:
+    # What a slot's phantom may promise about this fragment, whichever slot it
+    # is bound into: the intersection of its readable sets over every
+    # compatible slot type. A brick reachable at no typename of some slot is
+    # not offered there at runtime, so promising it statically would turn a
+    # wiring guard (ValueError) into the answer for a legitimate read.
+    own = fragment.name.value
+    # The second element of `readable_fragments`'s result -- a `@skip`/
+    # `@include` conjunction diagnosis -- is discarded here on purpose: this
+    # walk runs once per *type*, ahead of any actual binding, so a path that
+    # only some binding of some slot exercises would be flagged here whether
+    # or not that combination is ever generated. The schema-driven
+    # enumeration of combinations (`collect._enumerate_and_expand`, through
+    # `expand_binding`'s own call into `readable_fragments`) is what
+    # diagnoses it, once, per pair that really is generated -- one diagnosis
+    # there beats the same one raised again for every compatible slot type
+    # here.
+    sets = [
+        frozenset(
+            entry.name
+            for entry in readable_fragments(
+                schema=schema,
+                slot_type=slot_type,
+                direct=(fragment,),
+                fragments=fragments,
+                location=f"fragment {own}",
+            )[0]
+        )
+        for slot_type in slot_types
+        if spreads_into(schema, fragment.type_condition.name.value, slot_type)
+    ]
+    if not sets:
+        # Compatible with no slot in the package: it still gets a class and a
+        # base, and its closure is itself -- nothing else can ever be read
+        # through it.
+        return frozenset({own})
+    # An instance-bound call, not `frozenset.intersection(*sets)`: called
+    # unbound on the class, basedpyright's stub loses the element type and
+    # reports the result as `frozenset[Unknown]`.
+    return sets[0].intersection(*sets[1:])
+
+
 def _conditional_spread_error(
     *, outer: str, spread: str, uncovered: set[str], location: str
 ) -> str:
-    # A fragment readable at a slot's root is validated at the response
-    # boundary whenever the payload's `__typename` matches it -- that is what
-    # makes it independently readable through its own handle. A conditional
-    # spread breaks the premise: the server leaves those fields out when the
-    # condition is false, so the handle's required fields are missing and
-    # validation fails for a response that is entirely correct. Rejected for
-    # the same reason a slot field may not carry @skip/@include (see
-    # `collect_query_slots`): a bound fragment is always requested, and "no
-    # data for this fragment" is spelled by not binding it.
+    # Fragment, читаемый в root slot, валидируется на response boundary при
+    # совпадении `__typename`; поэтому его можно независимо читать через
+    # собственный definition. Conditional spread нарушает предпосылку: при false
+    # server не возвращает fields, required fields отсутствуют и корректный
+    # response не проходит validation. По той же причине field slot не может
+    # иметь @skip/@include (см. `collect_query_slots`): bound fragment всегда
+    # запрашивается, а отсутствие данных выражается отсутствием binding.
     #
-    # Only root-level paths are rejected. The same directive on a spread
-    # nested inside a field is fine: that fragment is not offered as a handle,
-    # and the fields it contributes to the enclosing fragment's own model are
-    # collected as conditional, hence optional.
+    # Отклоняются только root-level paths. Та же directive на spread внутри
+    # field допустима: fragment не предлагается как readable definition, а его fields в
+    # model внешнего fragment собираются как conditional и потому optional.
+    # Нельзя вынести код в «fragment, недостижимый binding»: schema enumeration
+    # достигает каждый fragment на совместимом со slot type независимо от
+    # наличия явного `.bind()`.
     types = ", ".join(sorted(uncovered))
     return (
-        f"Bind at {location}: fragment '{outer}' spreads '{spread}' "
+        f"Combination at {location}: fragment '{outer}' spreads '{spread}' "
         f"under @skip/@include, and at {types} that is the only way '{spread}' "
         "reaches the slot's root; a fragment readable there is always "
         "requested and always validated, so it cannot be conditional -- drop "
-        "the directive, or move the conditional part into its own fragment "
-        "that no binding reaches"
+        f"the directive, or move the conditional part off '{outer}'s own root: "
+        "a spread nested under a field, or an inline fragment selecting those "
+        "fields directly, is conditional without offering a readable fragment"
     )
 
 
@@ -440,126 +475,307 @@ def _fragment_variable_usages(
     return by_name
 
 
-def _variable_type_conflict_error(
-    *, name: str, entries: list[_VariableUsage], location: str
-) -> str | None:
-    # A conflict is returned, not raised: `$x` disagreeing with itself says
-    # nothing about `$y`, and a developer who wrote both deserves both
-    # diagnoses in one regeneration.
-    first = entries[0]
-    for other in entries[1:]:
-        if not graphql.is_equal_type(first.input_type, other.input_type):
-            return (
-                f"Bind at {location}: variable ${name} is used as "
-                f"'{first.input_type}' in fragment '{first.fragment_name}' and "
-                f"as '{other.input_type}' in fragment '{other.fragment_name}'; "
-                "every usage of a fragment variable must agree on its type"
+def _usages_by_name(
+    closure: Iterable[graphql.FragmentDefinitionNode],
+    *,
+    schema: graphql.GraphQLSchema,
+    skip_names: frozenset[str],
+) -> dict[str, list[_VariableUsage]]:
+    # Every variable usage across a set of fragment definitions, keyed by
+    # name -- the one walk `_synthesize_var_defs` (a combination's own
+    # closure, minus what the template already defines) and
+    # `fragment_own_vars` (one fragment's own closure, nothing skipped) both
+    # need, so the per-fragment scan itself is written once.
+    usages: dict[str, list[_VariableUsage]] = defaultdict(list)
+    for fragment in closure:
+        if fragment.name.value in skip_names:
+            continue
+        for name, entries in _fragment_variable_usages(fragment, schema=schema).items():
+            usages[name].extend(entries)
+    return usages
+
+
+def fragment_own_vars(
+    *,
+    fragment: graphql.FragmentDefinitionNode,
+    dependencies: tuple[graphql.FragmentDefinitionNode, ...],
+    schema: graphql.GraphQLSchema,
+    location: str,
+) -> tuple[tuple[SynthesizedVar, ...], list[str]]:
+    # Собственные параметры `with_args` fragment: все переменные его document
+    # closure — самого fragment и всех transitively spread dependencies из
+    # `parser.FragmentStatement.dependencies`. Типизация и проверка совпадают с
+    # `_synthesize_var_defs`, но вычисляются один раз на fragment: тип и default
+    # принадлежат AST-позиции внутри closure, а не комбинации или template.
+    # Здесь нет template для shadowing и operation для collision, поэтому
+    # применяется только проверка конфликта типов.
+    usages = _usages_by_name(
+        (fragment, *dependencies), schema=schema, skip_names=frozenset()
+    )
+    errors: list[str] = []
+    defined: list[SynthesizedVar] = []
+    for name in sorted(usages):
+        declaration_type = _variable_declaration_type(entries=usages[name])
+        explicit_value_type = _variable_explicit_value_type(entries=usages[name])
+        if declaration_type is None or explicit_value_type is None:
+            errors.append(
+                _variable_type_conflict_error(
+                    name=name, entries=usages[name], location=location
+                )
             )
+            continue
+        defined.append(
+            _synthesized_var(
+                name=name,
+                entries=usages[name],
+                declaration_type=declaration_type,
+                explicit_value_type=explicit_value_type,
+                schema=schema,
+            )
+        )
+    return tuple(defined), errors
+
+
+def _common_input_type(
+    left: graphql.TypeNode, right: graphql.TypeNode
+) -> graphql.TypeNode | None:
+    if isinstance(left, graphql.NonNullTypeNode) or isinstance(
+        right, graphql.NonNullTypeNode
+    ):
+        left_inner = left.type if isinstance(left, graphql.NonNullTypeNode) else left
+        right_inner = (
+            right.type if isinstance(right, graphql.NonNullTypeNode) else right
+        )
+        common = _common_input_type(left_inner, right_inner)
+        if common is None:
+            return None
+        return graphql.NonNullTypeNode(type=common)
+    if isinstance(left, graphql.ListTypeNode) or isinstance(
+        right, graphql.ListTypeNode
+    ):
+        if not isinstance(left, graphql.ListTypeNode) or not isinstance(
+            right, graphql.ListTypeNode
+        ):
+            return None
+        common = _common_input_type(left.type, right.type)
+        if common is None:
+            return None
+        return graphql.ListTypeNode(type=common)
+    if (
+        isinstance(left, graphql.NamedTypeNode)
+        and isinstance(right, graphql.NamedTypeNode)
+        and left.name.value == right.name.value
+    ):
+        return left
     return None
 
 
-def _synthesized_var(*, name: str, entries: list[_VariableUsage]) -> SynthesizedVar:
-    # Every usage agrees on the type by the time this runs, so the first one
-    # answers for all of them.
-    #
-    # Omittable is a fact about the positions the variable fills, not about the
-    # type the generator ends up declaring: when every one of them declares a
-    # schema default, leaving the variable out of the request is what makes
-    # that default apply — and that holds whether the position is non-null or
-    # nullable. One usage without a default is still a hard requirement,
-    # whatever the others allow.
-    omittable = all(entry.has_location_default for entry in entries)
-    gql_type: graphql.GraphQLType = entries[0].input_type
-    # A non-null variable additionally has to be *declared* nullable, or the
-    # document is invalid without a value. GraphQL's
-    # `VariablesInAllowedPosition` rule is per-position and allows exactly
-    # that: a nullable variable at a non-null position that carries a default.
-    # A nullable position needs no such relaxation.
-    if omittable and isinstance(gql_type, graphql.GraphQLNonNull):
-        gql_type = wrapping_of_type(gql_type)
-    return SynthesizedVar(
-        node=graphql.VariableDefinitionNode(
-            variable=graphql.VariableNode(name=graphql.NameNode(value=name)),
-            # Round-tripped through the type's own SDL spelling rather than
-            # rebuilt wrapper by wrapper: `str(gql_type)` is what graphql-core
-            # prints and `parse_type` is its inverse, so the wrapping rules
-            # stay the library's to know.
-            type=graphql.parse_type(str(gql_type)),
-            default_value=None,
-            directives=(),
-        ),
-        omittable=omittable,
+def _declaration_type_at_usage(entry: _VariableUsage) -> graphql.TypeNode:
+    input_type = graphql.parse_type(str(entry.input_type))
+    if entry.has_location_default and isinstance(input_type, graphql.NonNullTypeNode):
+        return input_type.type
+    return input_type
+
+
+def _variable_declaration_type(
+    *, entries: list[_VariableUsage]
+) -> graphql.TypeNode | None:
+    location_types = [_declaration_type_at_usage(entry) for entry in entries]
+    common = location_types[0]
+    for location_type in location_types[1:]:
+        common = _common_input_type(common, location_type)
+        if common is None:
+            return None
+    return common
+
+
+def _variable_explicit_value_type(
+    *, entries: list[_VariableUsage]
+) -> graphql.TypeNode | None:
+    location_types = [graphql.parse_type(str(entry.input_type)) for entry in entries]
+    common = location_types[0]
+    for location_type in location_types[1:]:
+        common = _common_input_type(common, location_type)
+        if common is None:
+            return None
+    return common
+
+
+def _variable_type_conflict_error(
+    *, name: str, entries: list[_VariableUsage], location: str
+) -> str:
+    first = entries[0]
+    first_type = _declaration_type_at_usage(first)
+    for other in entries[1:]:
+        if _common_input_type(first_type, _declaration_type_at_usage(other)) is None:
+            break
+    else:
+        msg = "variable type conflict requested for compatible usages"
+        raise AssertionError(msg)
+    return (
+        f"Combination at {location}: variable ${name} is used as "
+        f"'{first.input_type}' in fragment '{first.fragment_name}' and "
+        f"as '{other.input_type}' in fragment '{other.fragment_name}'; "
+        "no GraphQL variable declaration type is allowed at every usage"
     )
 
 
-def _template_variable_collision_error(
+def _synthesized_var(
     *,
     name: str,
-    template_name: str,
     entries: list[_VariableUsage],
-    location: str,
-) -> str:
-    fragment_names = ", ".join(sorted({entry.fragment_name for entry in entries}))
-    return (
-        f"Bind at {location}: variable ${name} used in fragment(s) "
-        f"'{fragment_names}' has the same name as a variable template "
-        f"'{template_name}' already declares; a fragment's owner cannot see "
-        "the template's own variable names, so rename the fragment's variable"
+    declaration_type: graphql.TypeNode,
+    explicit_value_type: graphql.TypeNode,
+    schema: graphql.GraphQLSchema,
+) -> SynthesizedVar:
+    node = graphql.VariableDefinitionNode(
+        variable=graphql.VariableNode(name=graphql.NameNode(value=name)),
+        type=declaration_type,
+        default_value=None,
+        directives=(),
     )
+    resolved_explicit_value_type = type_from_ast(schema, explicit_value_type)
+    if resolved_explicit_value_type is None:
+        msg = f"cannot resolve synthesized fragment variable ${name}"
+        raise AssertionError(msg)
+    if all(entry.has_location_default for entry in entries):
+        return OmittableSynthesizedVar(
+            node=node, explicit_value_type=resolved_explicit_value_type
+        )
+    return RequiredSynthesizedVar(
+        node=node, explicit_value_type=resolved_explicit_value_type
+    )
+
+
+def _template_and_fragment_variable_collision_error(
+    *, name: str, template_name: str, fragment_names: list[str], location: str
+) -> str:
+    owners = ", ".join(sorted(fragment_names))
+    fragment_label = "Fragment" if len(fragment_names) == 1 else "Fragments"
+    return (
+        f"Combination at {location}: {fragment_label} '{owners}' owns variable "
+        f"${name} through with_args, but template '{template_name}' owns the "
+        "same variable through execute; rename the fragment variable"
+    )
+
+
+def _direct_variable_collision_error(
+    *, name: str, fragment_names: list[str], location: str
+) -> str:
+    names = ", ".join(sorted(fragment_names))
+    return (
+        f"Combination at {location}: variable ${name} is used by fragments "
+        f"'{names}', each named directly in this bind; every directly-named "
+        "fragment is applied independently, through its own with_args, so "
+        "their values cannot be merged into the query's one declaration of "
+        "the variable -- rename it in one of them"
+    )
+
+
+def _fragment_closure_variable_names(
+    root_name: str,
+    *,
+    fragments: Mapping[str, graphql.FragmentDefinitionNode],
+    schema: graphql.GraphQLSchema,
+) -> frozenset[str]:
+    # Собственный transitive closure напрямую указанного фрагмента: он сам и
+    # все spread на любой глубине. Именно direct fragment, а не плоский closure
+    # всего binding, определяет application, которой принадлежит variable.
+    # `_missing` отбрасывается: `_closure_fragments` уже разрешил весь closure
+    # binding, а closure `root_name` — его подмножество.
+    reachable, _missing = collect_transitive_fragment_names([root_name], fragments)
+    closure_nodes = [fragments[name] for name in reachable]
+    return frozenset(
+        _usages_by_name(closure_nodes, schema=schema, skip_names=frozenset())
+    )
+
+
+def _variable_owner_collisions(
+    *,
+    direct_by_name: Mapping[str, graphql.FragmentDefinitionNode],
+    fragments: Mapping[str, graphql.FragmentDefinitionNode],
+    operation: graphql.OperationDefinitionNode,
+    template_name: str,
+    schema: graphql.GraphQLSchema,
+    location: str,
+) -> list[str]:
+    # Каждый direct fragment независимо передаёт variables через `with_args`.
+    # Variables из его transitive closure принадлежат той же application.
+    # Поэтому два разных direct fragments не могут владеть одним именем:
+    # GraphQL объявит его один раз, а Python получит два независимых значения.
+    #
+    # Две applications одной factory в разных совместимых slots проверяются в
+    # runtime: их конкретные значения известны только при `bind()`, а полностью
+    # совпадающие applications допустимы.
+    names_by_fragment = {
+        direct_name: _fragment_closure_variable_names(
+            direct_name, fragments=fragments, schema=schema
+        )
+        for direct_name in direct_by_name
+    }
+    owners: dict[str, list[str]] = defaultdict(list)
+    for direct_name, names in names_by_fragment.items():
+        for name in names:
+            owners[name].append(direct_name)
+    template_var_names = {
+        var_def.variable.name.value for var_def in operation.variable_definitions
+    }
+    errors: list[str] = []
+    for name, owner_names in sorted(owners.items()):
+        if name in template_var_names:
+            errors.append(
+                _template_and_fragment_variable_collision_error(
+                    name=name,
+                    template_name=template_name,
+                    fragment_names=owner_names,
+                    location=location,
+                )
+            )
+        elif len(owner_names) > 1:
+            errors.append(
+                _direct_variable_collision_error(
+                    name=name, fragment_names=owner_names, location=location
+                )
+            )
+    return errors
 
 
 def _synthesize_var_defs(
     *,
     template_doc: graphql.DocumentNode,
-    operation: graphql.OperationDefinitionNode,
     closure: tuple[graphql.FragmentDefinitionNode, ...],
     schema: graphql.GraphQLSchema,
-    template_name: str,
     location: str,
 ) -> tuple[tuple[SynthesizedVar, ...], list[str]]:
-    # A fragment the template document already defines is spread by the
-    # template itself, so its variables are the template's own -- declared by
-    # the operation and supplied through `execute`. Synthesizing them again
-    # would declare them twice; treating them as the fragment's private
-    # variables reports a collision with the template that no edit can fix
-    # (renaming the fragment's variable breaks the static spread, renaming the
-    # template's just moves the clash).
+    # Variables статически spread-фрагментов принадлежат template: operation
+    # уже объявляет и получает их через `execute`. Здесь они исключаются из
+    # повторного объявления; `_variable_owner_collisions` отдельно запрещает
+    # bind application, которая попыталась бы владеть тем же именем.
     template_fragment_names = collect_fragments_from_doc(template_doc).keys()
-    template_var_names = {
-        var_def.variable.name.value for var_def in operation.variable_definitions
-    }
-    usages: dict[str, list[_VariableUsage]] = defaultdict(list)
-    for fragment in closure:
-        if fragment.name.value in template_fragment_names:
-            continue
-        for name, entries in _fragment_variable_usages(fragment, schema=schema).items():
-            usages[name].extend(entries)
-    # A fragment's variable silently shadowed by the template's own
-    # declaration would ship whatever the template's declaration means at
-    # that position -- and the fragment's owner, in another module, cannot
-    # see the template's variable names to notice the clash. This is a hard
-    # error, unlike two *fragments* agreeing on a name below: that merge is
-    # intentional.
+    usages = _usages_by_name(
+        closure, schema=schema, skip_names=frozenset(template_fragment_names)
+    )
     errors: list[str] = []
     defined: list[SynthesizedVar] = []
     for name in sorted(usages):
-        if name in template_var_names:
+        declaration_type = _variable_declaration_type(entries=usages[name])
+        explicit_value_type = _variable_explicit_value_type(entries=usages[name])
+        if declaration_type is None or explicit_value_type is None:
             errors.append(
-                _template_variable_collision_error(
-                    name=name,
-                    template_name=template_name,
-                    entries=usages[name],
-                    location=location,
+                _variable_type_conflict_error(
+                    name=name, entries=usages[name], location=location
                 )
             )
             continue
-        conflict = _variable_type_conflict_error(
-            name=name, entries=usages[name], location=location
+        defined.append(
+            _synthesized_var(
+                name=name,
+                entries=usages[name],
+                declaration_type=declaration_type,
+                explicit_value_type=explicit_value_type,
+                schema=schema,
+            )
         )
-        if conflict is not None:
-            errors.append(conflict)
-            continue
-        defined.append(_synthesized_var(name=name, entries=usages[name]))
     return tuple(defined), errors
 
 
@@ -598,7 +814,7 @@ def _build_expanded_document(
     # fragment locally (`make_validation_doc` resolves its own spreads
     # local-first), and keeping that copy over a same-named bound statement
     # would ship a document whose `Foo` selects other fields than the `FooData`
-    # model the handle validates with.
+    # model, которую валидирует definition.
     #
     # Identity first: brick reuse means the template and the closure usually
     # arrive at the very same node, and printing both sides of that is the bulk
@@ -623,7 +839,7 @@ def _build_expanded_document(
 
 def _fragment_definition_conflict_error(*, name: str, location: str) -> str:
     return (
-        f"Bind at {location} carries fragment '{name}' in its closure, but the "
+        f"Combination at {location} carries fragment '{name}' in its closure, but the "
         f"template defines a different fragment under that name; one name is "
         "one definition in the expanded document -- rename one of them"
     )
@@ -661,7 +877,7 @@ def _readable_by_response_key(
     errors: list[str] = []
     by_key: dict[str, tuple[ReadableFragment, ...]] = {}
     for key, direct in sorted(direct_by_slot.items()):
-        entries, slot_errors = _readable_fragments(
+        entries, slot_errors = readable_fragments(
             schema=schema,
             slot_type=slots[key].type_name,
             direct=direct,
@@ -760,13 +976,21 @@ def expand_binding(
     )
     fragment_vars, var_errors = _synthesize_var_defs(
         template_doc=template_doc,
-        operation=template_operation,
         closure=closure,
         schema=schema,
-        template_name=template_name,
         location=location,
     )
     closure_errors.extend(var_errors)
+    closure_errors.extend(
+        _variable_owner_collisions(
+            direct_by_name=direct_by_name,
+            fragments=effective_fragments,
+            operation=template_operation,
+            template_name=template_name,
+            schema=schema,
+            location=location,
+        )
+    )
     if closure_errors:
         raise GraphQLGenerationError(closure_errors)
 
@@ -796,7 +1020,7 @@ def expand_binding(
     if validation_errors:
         combo = _combination_label(template_name=template_name, spreads=spreads)
         raise GraphQLGenerationError([
-            f"Bind at {location} ({combo}) is invalid:",
+            f"Combination at {location} ({combo}) is invalid:",
             *(str(error) for error in validation_errors),
         ])
 

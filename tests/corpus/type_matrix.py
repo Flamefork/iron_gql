@@ -130,8 +130,11 @@ def _payload_literal() -> str:
 def queries(package: str) -> str:
     # Three positions in one file: `EveryCell` writes each cell as an operation
     # variable *and* threads the same variables through an input object's
-    # fields; `SizeParts` reads a cell through a bound fragment's own variable,
-    # which is the position no other fixture reaches.
+    # fields; `SizeParts` reads a cell through a fragment factory's own
+    # variable, which is the position no other fixture reaches. `SizeParts`
+    # has no `bind()` of its own (it is a factory: its own closure uses a
+    # variable) -- applying it and binding the result is left to the test,
+    # which is where the value is actually known.
     return f'''
     from tests.generated.{package}.gql.api import api_gql
 
@@ -171,8 +174,6 @@ def queries(package: str) -> str:
         }}
         """
     )
-
-    bound = slotted.bind(echo=size_parts)
     '''
 
 
