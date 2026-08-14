@@ -16,6 +16,7 @@ from iron_gql.codegen.accessors import type_from_ast
 from iron_gql.codegen.discovery import BindDecl
 from iron_gql.codegen.discovery import BindKeywordCheck
 from iron_gql.codegen.discovery import IgnoredBind
+from iron_gql.codegen.discovery import SkippedDir
 from iron_gql.codegen.discovery import Statement
 from iron_gql.codegen.ir import GraphQLGenerationError
 from iron_gql.codegen.slots import QuerySlot
@@ -509,6 +510,22 @@ def write_ignored_binds(debug_path: Path, ignored: Sequence[IgnoredBind]) -> Non
     dump_json(
         debug_path / "ignored_binds.json",
         [{"location": entry.location, "reason": entry.reason} for entry in ignored],
+    )
+
+
+def write_skipped_dirs(debug_path: Path, skipped: Sequence[SkippedDir]) -> None:
+    # The directories the walk refused to enter, with the reason each was
+    # refused. Here for the same reason `ignored_binds.json` is: a tree left
+    # alone on purpose and a tree the scan lost both show up as statements that
+    # are not in the package, and only this file tells them apart.
+    #
+    # The path and the reason, and nothing about the contents: counting the
+    # `.py` files under a refused directory to make the report richer is the
+    # very walk this refusal exists to avoid.
+    debug_path.mkdir(parents=True, exist_ok=True)
+    dump_json(
+        debug_path / "skipped_dirs.json",
+        [{"location": entry.location, "reason": entry.reason} for entry in skipped],
     )
 
 

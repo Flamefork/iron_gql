@@ -13,6 +13,7 @@ from iron_gql.codegen.naming import validate_module_names
 from iron_gql.codegen.naming import validate_signature_names
 from iron_gql.codegen.parser import parse_gql_queries
 from iron_gql.codegen.parser import write_ignored_binds
+from iron_gql.codegen.parser import write_skipped_dirs
 from iron_gql.codegen.render import GenerationMode
 from iron_gql.codegen.render import render_package
 from iron_gql.codegen.render import scaffold_claims
@@ -54,8 +55,10 @@ def generate_gql_package(
     if debug_path is not None:
         # Written before anything can reject the GraphQL: a bind that went
         # missing is exactly what a debug run of a package that does not
-        # generate is looking for.
+        # generate is looking for. A statement that went missing with the whole
+        # directory it stood in is the same question one level up.
         write_ignored_binds(debug_path, discovered.ignored)
+        write_skipped_dirs(debug_path, discovered.skipped)
 
     parse_res = parse_gql_queries(
         schema_path,

@@ -71,11 +71,28 @@ class IgnoredBind:
 
 
 @dataclass(kw_only=True, frozen=True)
+class SkippedDir:
+    # A directory the walk refused to descend into, with the reason it did.
+    # Recorded for the same reason `IgnoredBind` is: the only other evidence
+    # that a tree was left alone is a shorter `statements` list, which is
+    # exactly what a tree that was lost produces too.
+    location: str
+    reason: str
+
+
+@dataclass(kw_only=True, frozen=True)
+class ScannedTree:
+    files: tuple[Path, ...]
+    skipped: tuple[SkippedDir, ...]
+
+
+@dataclass(kw_only=True, frozen=True)
 class DiscoveredPackage:
     statements: list[Statement]
     binds: list[BindDecl]
     bind_keyword_checks: list[BindKeywordCheck]
     ignored: list[IgnoredBind]
+    skipped: list[SkippedDir]
 
 
 @dataclass(kw_only=True, frozen=True, slots=True)
@@ -1727,6 +1744,69 @@ def _statement_names(scans: list[_ModuleScan]) -> dict[str, list[Statement]]:
     return names
 
 
+def _skip_reason(directory: Path) -> str | None:
+    # Why the walk does not descend into this directory, or None to descend.
+    # The two answers are the two ways a directory under `src_path` holds
+    # something other than the project's own source: a hidden directory is a
+    # tool's or a VCS's store -- a cache, a second checkout, an editor's state
+    # -- and a directory holding `pyvenv.cfg` is another interpreter's
+    # installation (PEP 405), which a name alone cannot say when it is called
+    # `venv` or `env`.
+    #
+    # The name is asked first and the filesystem second: `.git` alone holds
+    # thousands of directories, and every one of them would otherwise cost a
+    # stat to learn what its name already said.
+    if directory.name.startswith("."):
+        return "hidden directory"
+    if (directory / "pyvenv.cfg").is_file():
+        return "virtual environment"
+    return None
+
+
+def walk_scanned_tree(src_path: Path) -> ScannedTree:
+    # The files the scan reads, and the directories it refused to enter.
+    #
+    # `Path.walk` rather than `glob("**/*.py")` so the refusal can prune the
+    # descent instead of filtering its result -- an unpruned walk of a project
+    # with a virtualenv in it reads tens of thousands of files that belong to
+    # other trees. The two agree on everything else: `follow_symlinks=False`
+    # is the default here and `recurse_symlinks=False` is the default there,
+    # and both classify a symlinked directory the same way, so a link out of
+    # the tree is still not followed.
+    #
+    # `_skip_reason` is asked about directories the walk *descends into*, never
+    # about `src_path` itself: a scan root legitimately carries any name at all
+    # -- pytest's `tmp_path` always sits under `pytest-of-<user>`, and a scan of
+    # installed code is rooted inside `site-packages`.
+    files: list[Path] = []
+    skipped: list[SkippedDir] = []
+    for directory, subdirs, names in src_path.walk():
+        kept: list[str] = []
+        for name in subdirs:
+            reason = _skip_reason(directory / name)
+            if reason is None:
+                kept.append(name)
+            else:
+                skipped.append(
+                    SkippedDir(
+                        location=str((directory / name).relative_to(src_path)),
+                        reason=reason,
+                    )
+                )
+        subdirs[:] = kept
+        files.extend(directory / name for name in names if name.endswith(".py"))
+
+    # Sorted over the whole tree rather than in walk order, and over `Path`
+    # rather than its text: every consumer of `statements` and `binds`
+    # inherits this order -- down to the text of a diagnosis and the generated
+    # file's diff between two machines -- and a top-down walk would hand `b.py`
+    # over before `app/a.py`.
+    return ScannedTree(
+        files=tuple(sorted(files)),
+        skipped=tuple(sorted(skipped, key=lambda entry: entry.location)),
+    )
+
+
 def discover_package(
     src_path: Path, gql_fn_name: str, *, skip_path: Path
 ) -> DiscoveredPackage:
@@ -1741,15 +1821,11 @@ def discover_package(
     # in terms of all the scans at a time.
     scans: list[_ModuleScan] = []
     skip = skip_path.resolve()
+    scanned = walk_scanned_tree(src_path)
 
-    # Sorted: `glob` walks in whatever order the filesystem hands back, and
-    # every consumer of `statements` and `binds` inherits the order this loop
-    # produces -- down to the text of a diagnosis and the generated file's
-    # diff between two machines.
-    for path in sorted(src_path.glob("**/*.py")):
+    for path in scanned.files:
         if path.resolve() == skip:
             continue
-        relative_path = path.relative_to(src_path)
         module = _module_name(path, src_path)
         content = path.read_text(encoding="utf-8")
         try:
@@ -1781,7 +1857,7 @@ def discover_package(
         scan = _ModuleScan(
             gql_fn_name=gql_fn_name,
             module=module,
-            relative_path=relative_path,
+            relative_path=path.relative_to(src_path),
             package=_package_name(module, is_init=path.name == "__init__.py"),
         )
         modules[module] = scan.run(tree)
@@ -1816,4 +1892,5 @@ def discover_package(
         # reads `ignored` positionally -- it is a debug dump and a test's
         # evidence that a `.bind(` was accounted for.
         ignored=[*(entry for scan in scans for entry in scan.ignored), *ignored],
+        skipped=list(scanned.skipped),
     )
