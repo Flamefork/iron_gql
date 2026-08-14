@@ -238,7 +238,7 @@ wheels = [
 
 [[package]]
 name = "iron-gql"
-version = "0.10.3"
+version = "0.10.4"
 source = { editable = "." }
 dependencies = [
     { name = "httpx2", extra = ["ws"] },
