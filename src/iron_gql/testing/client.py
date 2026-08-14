@@ -1,44 +1,63 @@
 from collections.abc import AsyncIterator
 from collections.abc import Iterator
+from contextlib import AbstractAsyncContextManager
+from contextlib import AbstractContextManager
 from contextlib import asynccontextmanager
 from contextlib import contextmanager
 from types import ModuleType
+from typing import cast
+from typing import overload
 
-from iron_gql.naming import client_binding_name
 from iron_gql.runtime import AsyncGQLClient
 from iron_gql.runtime import GQLClient
-
-
-def _module_client_binding(api_module: ModuleType) -> str:
-    return client_binding_name(api_module.__name__.rsplit(".", 1)[-1])
 
 
 # Binds `client` into a generated sync package for the duration of a test. The
 # original client is restored and `client` is closed on the way out.
 @contextmanager
-def use_sync_client(api_module: ModuleType, client: GQLClient) -> Iterator[GQLClient]:
-    name = _module_client_binding(api_module)
-    # Reading an attribute off a module is Any by construction.
-    previous: object = getattr(api_module, name)  # pyright: ignore[reportAny]
-    setattr(api_module, name, client)
+def _sync_client_context(
+    api_module: ModuleType, client: GQLClient
+) -> Iterator[GQLClient]:
+    namespace = cast("dict[str, object]", vars(api_module))
+    previous = namespace["_client"]
+    namespace["_client"] = client
     try:
         yield client
     finally:
-        setattr(api_module, name, previous)
+        namespace["_client"] = previous
         client.close()
 
 
-# The async counterpart of `use_sync_client`.
+# The async counterpart of `_sync_client_context`.
 @asynccontextmanager
-async def use_async_client(
+async def _async_client_context(
     api_module: ModuleType, client: AsyncGQLClient
 ) -> AsyncIterator[AsyncGQLClient]:
-    name = _module_client_binding(api_module)
-    # Reading an attribute off a module is Any by construction.
-    previous: object = getattr(api_module, name)  # pyright: ignore[reportAny]
-    setattr(api_module, name, client)
+    namespace = cast("dict[str, object]", vars(api_module))
+    previous = namespace["_client"]
+    namespace["_client"] = client
     try:
         yield client
     finally:
-        setattr(api_module, name, previous)
+        namespace["_client"] = previous
         await client.close()
+
+
+@overload
+def use_client(
+    api_module: ModuleType, client: GQLClient
+) -> AbstractContextManager[GQLClient]: ...
+
+
+@overload
+def use_client(
+    api_module: ModuleType, client: AsyncGQLClient
+) -> AbstractAsyncContextManager[AsyncGQLClient]: ...
+
+
+def use_client(
+    api_module: ModuleType, client: GQLClient | AsyncGQLClient
+) -> AbstractContextManager[GQLClient] | AbstractAsyncContextManager[AsyncGQLClient]:
+    if isinstance(client, GQLClient):
+        return _sync_client_context(api_module, client)
+    return _async_client_context(api_module, client)

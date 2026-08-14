@@ -4,6 +4,7 @@ import sys
 from collections.abc import Awaitable
 from collections.abc import Callable
 from collections.abc import MutableMapping
+from typing import cast
 from urllib.parse import urlsplit
 
 import httpx2
@@ -12,11 +13,9 @@ import pytest
 from graphql import GraphQLResolveInfo
 from pytest_httpserver import HTTPServer
 
-from iron_gql.naming import client_binding_name
 from iron_gql.runtime import AsyncGQLClient
 from iron_gql.runtime import GQLClient
-from iron_gql.testing import use_async_client
-from iron_gql.testing import use_sync_client
+from iron_gql.testing import use_client
 from iron_gql.testing.server import live_asgi_server
 from tests.conftest import ProjectBuilder
 from tests.conftest import build_schema
@@ -102,7 +101,7 @@ def _broken_app(*_args: object) -> Awaitable[None]:
     raise ValueError(msg)
 
 
-def test_client_binding_name_matches_the_generated_binding(
+def test_generated_client_binding_has_fixed_name(
     test_project: ProjectBuilder,
 ):
     test_project.gql_pkg = "sample_app.gql.reports"
@@ -116,42 +115,45 @@ def test_client_binding_name_matches_the_generated_binding(
     )
     api_module, _ = test_project.generate_and_import()
 
-    # attributes of a dynamically imported module are Any
-    binding: object = getattr(api_module, client_binding_name("reports"))  # pyright: ignore[reportAny]
+    binding = cast("dict[str, object]", vars(api_module))["_client"]
 
     assert isinstance(binding, AsyncGQLClient)
 
 
-async def test_use_async_client_swaps_restores_and_closes(httpserver: HTTPServer):
+async def test_use_client_swaps_restores_and_closes_async_client(
+    httpserver: HTTPServer,
+):
     api_module = importlib.import_module("tests.generated.testing_async_swap.gql.api")
-    # attributes of a dynamically imported module are Any
-    original: object = getattr(api_module, client_binding_name("api"))  # pyright: ignore[reportAny]
+    namespace = cast("dict[str, object]", vars(api_module))
+    original = namespace["_client"]
     client = AsyncGQLClient(base_url=_ping_url(httpserver))
 
-    async with use_async_client(api_module, client) as active:
+    # `ping` was constructed at module import, before the client is replaced.
+    async with use_client(api_module, client) as active:
         assert active is client
-        assert getattr(api_module, client_binding_name("api")) is client
+        assert namespace["_client"] is client
         result = await async_swap_queries.ping.execute()
         assert result.ping == "pong"
 
-    assert getattr(api_module, client_binding_name("api")) is original
+    assert namespace["_client"] is original
     with pytest.raises(RuntimeError, match="closed"):
         await client.query(_PingResult, "query Ping { ping }", variables={}, headers={})
 
 
-def test_use_sync_client_swaps_restores_and_closes(httpserver: HTTPServer):
+def test_use_client_swaps_restores_and_closes_sync_client(httpserver: HTTPServer):
     api_module = importlib.import_module("tests.generated.testing_sync_swap.gql.api")
-    # attributes of a dynamically imported module are Any
-    original: object = getattr(api_module, client_binding_name("api"))  # pyright: ignore[reportAny]
+    namespace = cast("dict[str, object]", vars(api_module))
+    original = namespace["_client"]
     client = GQLClient(base_url=_ping_url(httpserver))
 
-    with use_sync_client(api_module, client) as active:
+    # `ping` was constructed at module import, before the client is replaced.
+    with use_client(api_module, client) as active:
         assert active is client
-        assert getattr(api_module, client_binding_name("api")) is client
+        assert namespace["_client"] is client
         result = sync_swap_queries.ping.execute()
         assert result.ping == "pong"
 
-    assert getattr(api_module, client_binding_name("api")) is original
+    assert namespace["_client"] is original
     with pytest.raises(RuntimeError, match="closed"):
         client.query(_PingResult, "query Ping { ping }", variables={}, headers={})
 
@@ -199,4 +201,4 @@ def test_client_helpers_import_without_the_extra(monkeypatch: pytest.MonkeyPatch
 
     module = importlib.import_module("iron_gql.testing")
 
-    assert "use_async_client" in dir(module)
+    assert "use_client" in dir(module)

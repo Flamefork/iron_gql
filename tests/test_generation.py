@@ -1,5 +1,6 @@
 import importlib
 import json
+from typing import cast
 
 import pytest
 from graphql import GraphQLResolveInfo
@@ -144,8 +145,8 @@ ping = api_gql(
 
     test_project.clear_import_state()
     api_module = importlib.import_module("sample_app.gql.api")
-    # attributes of a dynamically imported module are Any
-    assert isinstance(api_module.API_CLIENT, runtime.AsyncGQLClient)  # pyright: ignore[reportAny]
+    namespace = cast("dict[str, object]", vars(api_module))
+    assert isinstance(namespace["_client"], runtime.AsyncGQLClient)
 
 
 def test_duplicate_operations_raise(test_project: ProjectBuilder):
@@ -661,8 +662,8 @@ def test_no_queries_generates_module(test_project: ProjectBuilder):
 
     assert test_project.generate() is True
     api = test_project.import_api()
-    # attributes of a dynamically imported module are Any
-    assert isinstance(api.API_CLIENT, runtime.AsyncGQLClient)  # pyright: ignore[reportAny]
+    namespace = cast("dict[str, object]", vars(api))
+    assert isinstance(namespace["_client"], runtime.AsyncGQLClient)
 
 
 def test_invalid_gql_call_arguments(test_project: ProjectBuilder):
@@ -701,12 +702,12 @@ def test_duplicate_identical_query_deduplication(test_project: ProjectBuilder):
     assert test_project.generate() is True
 
 
-def test_duplicate_query_with_different_spelling_dispatches_both(
+def test_duplicate_query_with_different_spelling_resolves_both(
     test_project: ProjectBuilder,
 ):
     # Deduplication compares dedented text, so the same query indented
-    # differently at two call sites is one operation — but the dispatch dict is
-    # keyed by the exact literal, so every spelling must be present in it.
+    # differently at two call sites is one operation — but the statement factory
+    # table is keyed by the exact literal, so every spelling must be present.
     test_project.prepare(
         schema="""
         type Query {
@@ -938,8 +939,8 @@ def test_variable_named_after_the_client_binding_is_rejected(
     test_project: ProjectBuilder,
 ):
     # `execute`'s body calls the module's own client, so a parameter spelled
-    # like it answers the call instead: `await API_CLIENT.query(...)` reaches
-    # the string the caller passed for `$API_CLIENT`. The module-scope claim
+    # like it answers the call instead: `await _client.query(...)` reaches
+    # the string the caller passed for `$_client`. The module-scope claim
     # over that name is a different check -- it settles which *binding* owns
     # it, not which name a body sees -- so the parameter namespace claims it
     # too, and the identity `to_snake_fn` is what it takes to get one.
@@ -958,7 +959,7 @@ def test_variable_named_after_the_client_binding_is_rejected(
 
         q = api_gql(
             '''
-            query GetUser($API_CLIENT: ID!) { user(id: $API_CLIENT) { id } }
+            query GetUser($_client: ID!) { user(id: $_client) { id } }
             '''
         )
         """,
@@ -966,7 +967,7 @@ def test_variable_named_after_the_client_binding_is_rejected(
     with pytest.raises(
         GraphQLGenerationError,
         match=(
-            r"Parameter 'API_CLIENT' of execute\(\) of operation 'GetUser'"
+            r"Parameter '_client' of execute\(\) of operation 'GetUser'"
             r".*the generated client binding"
         ),
     ):

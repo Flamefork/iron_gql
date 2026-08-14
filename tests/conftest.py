@@ -16,6 +16,7 @@ from dataclasses import field
 from pathlib import Path
 from types import ModuleType
 from typing import Any
+from typing import cast
 
 import graphql
 import pydantic
@@ -37,8 +38,7 @@ from iron_gql.runtime import GQLClient
 from iron_gql.slots import GQLFragment
 from iron_gql.slots import GQLSlotNode
 from iron_gql.testing import accept_graphql_ws
-from iron_gql.testing import use_async_client
-from iron_gql.testing import use_sync_client
+from iron_gql.testing import use_client
 from tests.corpus.generated_oracles import assert_documents_are_valid
 from tests.corpus.generated_oracles import assert_method_namespaces_are_closed
 from tests.corpus.generated_oracles import assert_module_is_self_contained
@@ -254,7 +254,7 @@ async def use_package_client(
 ) -> AsyncIterator[None]:
     """Point the committed generated package's client at base_url."""
     client = AsyncGQLClient(base_url=base_url, target_app=target_app)
-    async with use_async_client(_generated_api_module(package), client):
+    async with use_client(_generated_api_module(package), client):
         yield
 
 
@@ -263,7 +263,7 @@ def use_sync_package_client(package: str, base_url: str) -> Iterator[None]:
     """The sync counterpart of `use_package_client`; the sync client takes no
     target_app, so its base_url always points at a real server."""
     client = GQLClient(base_url=base_url)
-    with use_sync_client(_generated_api_module(package), client):
+    with use_client(_generated_api_module(package), client):
         yield
 
 
@@ -394,8 +394,8 @@ class ProjectBuilder:
         try:
             yield api_module, queries_module
         finally:
-            # attributes of a dynamically imported module are Any
-            await api_module.API_CLIENT.close()  # pyright: ignore[reportAny]
+            client = cast("AsyncGQLClient", vars(api_module)["_client"])
+            await client.close()
 
 
 @pytest.fixture

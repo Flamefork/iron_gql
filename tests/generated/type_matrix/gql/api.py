@@ -6,6 +6,7 @@ from __future__ import annotations
 
 
 import datetime
+import typing
 from abc import ABC
 from abc import abstractmethod
 from collections.abc import AsyncGenerator
@@ -18,7 +19,6 @@ from typing import ClassVar
 from typing import Literal
 from typing import Never
 from typing import TypeVar
-from typing import cast
 from typing import final
 from typing import overload
 from typing import override
@@ -35,11 +35,9 @@ import builtins
 from tests.generated.type_matrix.settings import GRAPHQL_URL
 
 
-API_CLIENT = runtime.AsyncGQLClient(
+_client = runtime.AsyncGQLClient(
     base_url=GRAPHQL_URL,
 )
-
-_API_GQL_CAST = cast
 
 
 class GQLModel(pydantic.BaseModel):
@@ -129,7 +127,7 @@ class Payload(GQLModel):
 class EveryCell(runtime.GQLOperation):
     # See: queries.py:3
     async def execute(self, *, string_plain: str | None, string_required: str, string_list: list[str], string_sparse: list[str | None] | None, int_plain: int | None, int_required: int, int_list: list[int], int_sparse: list[int | None] | None, id_plain: builtins.str | None, id_required: builtins.str, id_list: list[builtins.str], id_sparse: list[builtins.str | None] | None, size_plain: Size | None, size_required: Size, size_list: list[Size], size_sparse: list[Size | None] | None, filter_plain: Filter | None, filter_required: Filter, filter_list: list[Filter], filter_sparse: list[Filter | None] | None) -> EveryCellResult:
-        return await API_CLIENT.query(
+        return await _client.query(
             EveryCellResult,
             'query EveryCell($stringPlain: String, $stringRequired: String!, $stringList: [String!]!, $stringSparse: [String], $intPlain: Int, $intRequired: Int!, $intList: [Int!]!, $intSparse: [Int], $idPlain: ID, $idRequired: ID!, $idList: [ID!]!, $idSparse: [ID], $sizePlain: Size, $sizeRequired: Size!, $sizeList: [Size!]!, $sizeSparse: [Size], $filterPlain: Filter, $filterRequired: Filter!, $filterList: [Filter!]!, $filterSparse: [Filter]) {\n  echo(\n    payload: {stringPlain: $stringPlain, stringRequired: $stringRequired, stringList: $stringList, stringSparse: $stringSparse, intPlain: $intPlain, intRequired: $intRequired, intList: $intList, intSparse: $intSparse, idPlain: $idPlain, idRequired: $idRequired, idList: $idList, idSparse: $idSparse, sizePlain: $sizePlain, sizeRequired: $sizeRequired, sizeList: $sizeList, sizeSparse: $sizeSparse, filterPlain: $filterPlain, filterRequired: $filterRequired, filterList: $filterList, filterSparse: $filterSparse}\n    stringPlain: $stringPlain\n    stringRequired: $stringRequired\n    stringList: $stringList\n    stringSparse: $stringSparse\n    intPlain: $intPlain\n    intRequired: $intRequired\n    intList: $intList\n    intSparse: $intSparse\n    idPlain: $idPlain\n    idRequired: $idRequired\n    idList: $idList\n    idSparse: $idSparse\n    sizePlain: $sizePlain\n    sizeRequired: $sizeRequired\n    sizeList: $sizeList\n    sizeSparse: $sizeSparse\n    filterPlain: $filterPlain\n    filterRequired: $filterRequired\n    filterList: $filterList\n    filterSparse: $filterSparse\n  ) {\n    seen\n    size\n    sizes\n  }\n}',
             variables={"stringPlain": string_plain, "stringRequired": string_required, "stringList": string_list, "stringSparse": string_sparse, "intPlain": int_plain, "intRequired": int_required, "intList": int_list, "intSparse": int_sparse, "idPlain": id_plain, "idRequired": id_required, "idList": id_list, "idSparse": id_sparse, "sizePlain": size_plain, "sizeRequired": size_required, "sizeList": size_list, "sizeSparse": size_sparse, "filterPlain": filter_plain, "filterRequired": filter_required, "filterList": filter_list, "filterSparse": filter_sparse},
@@ -140,7 +138,7 @@ class EveryCell(runtime.GQLOperation):
 class Defaults(runtime.GQLOperation):
     # See: queries.py:15
     async def execute(self) -> DefaultsResult:
-        return await API_CLIENT.query(
+        return await _client.query(
             DefaultsResult,
             'query Defaults {\n  labelled {\n    seen\n    size\n  }\n}',
             variables={},
@@ -200,8 +198,8 @@ class _SizePartsApplied(OnEcho[SizePartsData, "_SizePartsApplied"]):
 
 class SlottedBound[TResult: pydantic.BaseModel](runtime.GQLBoundOperation):
     async def execute(self, *, payload: Payload) -> TResult:
-        return await API_CLIENT.query(
-            _API_GQL_CAST("type[TResult]", SlottedResult),
+        return await _client.query(
+            typing.cast("type[TResult]", SlottedResult),
             self.exec_source,
             variables={"payload": payload, **self.fragment_args},
             headers=self.headers,
@@ -210,24 +208,23 @@ class SlottedBound[TResult: pydantic.BaseModel](runtime.GQLBoundOperation):
 
 
 class Slotted(runtime.GQLTemplate):
+    _binding_specs: ClassVar[dict[slots.BindingKey, runtime.BoundSpec]] = {
+        # See: queries.py:23
+        (): ('query Slotted($payload: Payload!) {\n  echo(payload: $payload) {\n    __typename\n  }\n}', {"echo": ()}),
+        # See: queries.py:23, queries.py:31
+        (('echo', (_SizePartsApplied,)),): ('query Slotted($payload: Payload!, $frag_size: Size!, $frag_term: String) {\n  echo(payload: $payload) {\n    __typename\n    ...SizeParts\n  }\n}\n\nfragment SizeParts on Echo {\n  seen\n  tagged(size: $frag_size, term: $frag_term)\n}', {"echo": ((SizeParts, frozenset({'Echo'})),)}),
+    }
+
     @overload
     def bind(self, *, echo: Sequence[Never] = ()) -> SlottedBound[SlottedResult[Never]]: ...
     @overload
     def bind[TModelEcho: pydantic.BaseModel, TReadsEcho](self, *, echo: OnEcho[TModelEcho, TReadsEcho]) -> SlottedBound[SlottedResult[OnEcho[TModelEcho, TReadsEcho] | TReadsEcho]]: ...
     def bind(self, *, echo: slots.GQLBindableFragment[pydantic.BaseModel, Any] | Sequence[slots.GQLBindableFragment[pydantic.BaseModel, Any]] = ()) -> runtime.GQLBoundOperation:
-        if _API_GQL_BIND_DISPATCH.get(slots.dispatch_key('Slotted', {'echo': echo})) is None:
+        if slots.binding_key({'echo': echo}) not in self._binding_specs:
             raise LookupError("unknown bind combination for Slotted; single-fragment and empty combinations are generated from the schema, so this is a tuple combination no call site writes literally - write it, then regenerate the package. A call whose template is an expression the scan cannot follow is never read either: those are listed, with the reason, in the debug run's ignored_binds.json")
         return SlottedBound[SlottedResult].bound__(
-            _API_GQL_BIND_DISPATCH[slots.dispatch_key('Slotted', {'echo': echo})], {'echo': slots.as_bindable_fragments(echo)},
+            self._binding_specs[slots.binding_key({'echo': echo})], {'echo': slots.as_bindable_fragments(echo)},
         )
-
-
-_API_GQL_BIND_DISPATCH: dict[slots.DispatchKey, runtime.BoundSpec] = {
-    # See: queries.py:23
-    ('Slotted', ()): ('query Slotted($payload: Payload!) {\n  echo(payload: $payload) {\n    __typename\n  }\n}', {"echo": ()}),
-    # See: queries.py:23, queries.py:31
-    ('Slotted', (('echo', (_SizePartsApplied,)),)): ('query Slotted($payload: Payload!, $frag_size: Size!, $frag_term: String) {\n  echo(payload: $payload) {\n    __typename\n    ...SizeParts\n  }\n}\n\nfragment SizeParts on Echo {\n  seen\n  tagged(size: $frag_size, term: $frag_term)\n}', {"echo": ((SizeParts, frozenset({'Echo'})),)}),
-}
 
 
 @overload
@@ -242,34 +239,19 @@ def api_gql(stmt: Literal['\n    query Slotted($payload: Payload!) {\n        ec
 def api_gql(stmt: str) -> runtime.GQLOperation | slots.GQLFragment[pydantic.BaseModel, Any] | runtime.GQLTemplate: ...
 
 
-_API_GQL_DISPATCH: dict[str, type[runtime.GQLOperation]] = {
+_statement_factories: dict[str, Callable[[], runtime.GQLOperation | slots.GQLFragment[pydantic.BaseModel, Any] | runtime.GQLTemplate]] = {
     '\n    query EveryCell($stringPlain: String, $stringRequired: String!, $stringList: [String!]!, $stringSparse: [String], $intPlain: Int, $intRequired: Int!, $intList: [Int!]!, $intSparse: [Int], $idPlain: ID, $idRequired: ID!, $idList: [ID!]!, $idSparse: [ID], $sizePlain: Size, $sizeRequired: Size!, $sizeList: [Size!]!, $sizeSparse: [Size], $filterPlain: Filter, $filterRequired: Filter!, $filterList: [Filter!]!, $filterSparse: [Filter]) {\n        echo(payload: {stringPlain: $stringPlain, stringRequired: $stringRequired, stringList: $stringList, stringSparse: $stringSparse, intPlain: $intPlain, intRequired: $intRequired, intList: $intList, intSparse: $intSparse, idPlain: $idPlain, idRequired: $idRequired, idList: $idList, idSparse: $idSparse, sizePlain: $sizePlain, sizeRequired: $sizeRequired, sizeList: $sizeList, sizeSparse: $sizeSparse, filterPlain: $filterPlain, filterRequired: $filterRequired, filterList: $filterList, filterSparse: $filterSparse}, stringPlain: $stringPlain, stringRequired: $stringRequired, stringList: $stringList, stringSparse: $stringSparse, intPlain: $intPlain, intRequired: $intRequired, intList: $intList, intSparse: $intSparse, idPlain: $idPlain, idRequired: $idRequired, idList: $idList, idSparse: $idSparse, sizePlain: $sizePlain, sizeRequired: $sizeRequired, sizeList: $sizeList, sizeSparse: $sizeSparse, filterPlain: $filterPlain, filterRequired: $filterRequired, filterList: $filterList, filterSparse: $filterSparse) {\n            seen\n            size\n            sizes\n        }\n    }\n    ': EveryCell,
     '\n    query Defaults {\n        labelled { seen size }\n    }\n    ': Defaults,
-}
-
-
-_API_GQL_FRAGMENTS: dict[str, type[slots.GQLFragment[pydantic.BaseModel, Any]]] = {
-    '\n    fragment SizeParts on Echo {\n        seen\n        tagged(size: $frag_size, term: $frag_term)\n    }\n    ': SizeParts,
-}
-
-
-_API_GQL_TEMPLATES: dict[str, type[runtime.GQLTemplate]] = {
+    '\n    fragment SizeParts on Echo {\n        seen\n        tagged(size: $frag_size, term: $frag_term)\n    }\n    ': lambda: SizeParts(),
     '\n    query Slotted($payload: Payload!) {\n        echo(payload: $payload) @slot { __typename }\n    }\n    ': Slotted,
 }
 
 
 def api_gql(stmt: str) -> runtime.GQLOperation | slots.GQLFragment[pydantic.BaseModel, Any] | runtime.GQLTemplate:
-    query_cls = _API_GQL_DISPATCH.get(stmt)
-    if query_cls is not None:
-        return query_cls()
-    fragment_cls = _API_GQL_FRAGMENTS.get(stmt)
-    if fragment_cls is not None:
-        return _API_GQL_CAST("Callable[[], slots.GQLFragment[pydantic.BaseModel, Any]]", fragment_cls)()
-    template_cls = _API_GQL_TEMPLATES.get(stmt)
-    if template_cls is not None:
-        return template_cls()
-    msg = "unknown GraphQL statement passed to api_gql; "
-    msg += "the generator only discovers bare-name calls with a "
-    msg += "single string literal - check the call site, then "
-    msg += "regenerate the package"
-    raise LookupError(msg)
+    if stmt not in _statement_factories:
+        msg = "unknown GraphQL statement passed to api_gql; "
+        msg += "the generator only discovers bare-name calls with a "
+        msg += "single string literal - check the call site, then "
+        msg += "regenerate the package"
+        raise LookupError(msg)
+    return _statement_factories[stmt]()

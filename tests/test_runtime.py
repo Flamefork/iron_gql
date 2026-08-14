@@ -3,6 +3,7 @@ import io
 import json
 from decimal import Decimal
 from typing import TypedDict
+from typing import cast
 
 import httpx2
 import pytest
@@ -14,6 +15,7 @@ from werkzeug import Response
 
 from iron_gql import FileVar
 from iron_gql import GraphQLResponseError
+from iron_gql.runtime import AsyncGQLClient
 from iron_gql.runtime import serialize_variables
 from tests.conftest import generated_package
 from tests.conftest import gql_server
@@ -315,8 +317,9 @@ async def test_close(httpserver: HTTPServer):
     async with gql_server(httpserver, "runtime", {"Query": {"ping": resolve_ping}}):
         await queries.ping.execute()
 
-        await api.API_CLIENT.close()
-        await api.API_CLIENT.close()
+        client = cast("AsyncGQLClient", vars(api)["_client"])
+        await client.close()
+        await client.close()
 
 
 def test_prepare_variables_single_file():

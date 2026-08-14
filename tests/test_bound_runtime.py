@@ -177,23 +177,23 @@ def test_bound_tells_two_uploads_apart_though_their_json_is_the_same():
     assert bind(one, one)["file"] is one
 
 
-def test_dispatch_key_sorts_slots_and_fragment_classes():
+def test_binding_key_sorts_slots_and_fragment_classes():
     a = _ImageApplication(_ImageDefinition, "Image", {})
     b = _AltApplication(_AltDefinition, "Alt", {})
-    key = slots.dispatch_key("Tmpl", {"s2": b, "s1": [b, a]})
+    key = slots.binding_key({"s2": b, "s1": [b, a]})
     assert key == (
-        "Tmpl",
-        (("s1", (_AltApplication, _ImageApplication)), ("s2", (_AltApplication,))),
+        ("s1", (_AltApplication, _ImageApplication)),
+        ("s2", (_AltApplication,)),
     )
 
 
-def test_dispatch_key_omitted_slot_and_explicit_empty_list_agree():
-    # Codegen's dispatch table is built from the discovered `.bind(...)`
+def test_binding_key_omitted_slot_and_explicit_empty_list_agree():
+    # Codegen's binding specs are built from the discovered `.bind(...)`
     # call, which only ever has the omitted-slot shape — so a caller who
     # spells "no fragments for this slot" as `slot=[]` instead of leaving the
-    # kwarg out entirely must still land on the same dispatch entry.
+    # kwarg out entirely must still land on the same binding entry.
     a = _ImageApplication(_ImageDefinition, "Image", {})
-    omitted = slots.dispatch_key("Tmpl", {"s1": a})
-    explicit_empty = slots.dispatch_key("Tmpl", {"s1": a, "s2": []})
+    omitted = slots.binding_key({"s1": a})
+    explicit_empty = slots.binding_key({"s1": a, "s2": []})
     assert omitted == explicit_empty
-    assert omitted == ("Tmpl", (("s1", (_ImageApplication,)),))
+    assert omitted == (("s1", (_ImageApplication,)),)

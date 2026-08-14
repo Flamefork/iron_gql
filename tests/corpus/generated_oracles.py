@@ -113,9 +113,7 @@ def assert_method_namespaces_are_closed(module: ModuleType) -> None:
     #    parameters and nothing else, and no parameter can shadow anything.
     # 2. Every name a body reads from an enclosing scope is claimed. No
     #    spelling is exempt from this: `to_snake_fn` is a documented hook, and
-    #    nothing stops one from returning `_API_GQL_CAST` for a variable named
-    #    that -- which is how a parameter came to shadow the cast alias its own
-    #    body calls, and `execute` raised "'str' object is not callable". The
+    #    a parameter can shadow a module the generated body calls. The
     #    generated classes are the one kind of name checked by shape rather
     #    than by list: each is claimed against the single scope that reaches
     #    for it (`render.bind_body_free_names` and the `execute` lists beside
@@ -124,8 +122,7 @@ def assert_method_namespaces_are_closed(module: ModuleType) -> None:
     #
     # Methods only: the module-level `api_gql` takes no name from the schema,
     # so what its body binds is nobody's business but its own.
-    package_name = module.__name__.rsplit(".", maxsplit=1)[-1]
-    claimed = method_body_fixed_names(package_name)
+    claimed = method_body_fixed_names()
     problems: list[str] = []
     for label, function in _generated_methods(module):
         bound = sorted(set(function.get_locals()) - set(function.get_parameters()))
@@ -195,7 +192,7 @@ def assert_documents_are_valid(
         msg = (
             f"generated module {module.__name__} declares templates "
             f"({', '.join(_template_names(module))}) but this oracle found no "
-            "document to validate -- the bind dispatch table has moved"
+            "document to validate -- the template binding specs have moved"
         )
         raise AssertionError(msg)
     problems: list[str] = []
@@ -218,21 +215,19 @@ def _template_names(module: ModuleType) -> list[str]:
 
 
 def _documents(module: ModuleType) -> list[tuple[str, str]]:
-    # The package's bind dispatch table is where a combination's document is
+    # Each template's `_binding_specs` is where its combinations' documents are
     # kept: one row per combination, the document its first element (see
-    # `runtime.BoundSpec`). Found by the suffix the renderer spells it with,
-    # because the rest of the name is the package's own
-    # (`render._module_binding_name`).
+    # `runtime.BoundSpec`).
     #
     # Plain operations are deliberately absent: their document is a literal
     # inside `execute`'s body, reachable by no reflection, and it is the
     # statement the developer wrote rather than one the generator synthesized.
-    tables = [
-        cast("dict[object, BoundSpec]", value)
-        for name, value in _namespace(module).items()
-        if name.endswith("_GQL_BIND_DISPATCH") and isinstance(value, dict)
+    namespace = _namespace(module)
+    return [
+        (f"{template_name}{key}", exec_source)
+        for template_name in _template_names(module)
+        for key, (exec_source, _readers) in cast(
+            "dict[object, BoundSpec]",
+            vars(namespace[template_name])["_binding_specs"],
+        ).items()
     ]
-    if not tables:
-        return []
-    [table] = tables
-    return [(str(key), exec_source) for key, (exec_source, _readers) in table.items()]

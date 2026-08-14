@@ -620,8 +620,8 @@ def test_a_single_value_slot_is_resolved_beside_a_tuple_slot(tmp_path: Path):
     # a call that names a literal tuple for one slot is ours (the base
     # resolves and the call is validated), and once it is, a *different*
     # slot's bare value is resolved too, not dropped -- the runtime computes
-    # one `DispatchKey` from every slot a `bind()` call actually passes
-    # (`slots.dispatch_key`), so discovering only the tuple slot would enumerate a
+    # one `BindingKey` from every slot a `bind()` call actually passes
+    # (`slots.binding_key`), so discovering only the tuple slot would enumerate a
     # combination the call never makes and miss the one it does.
     _write(
         tmp_path,

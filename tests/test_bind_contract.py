@@ -1,8 +1,8 @@
 """Пакетный контракт вызова `bind()`.
 
 `slots.combination_key` задаёт логическую идентичность комбинации, а
-`slots.dispatch_key` — nominal identity bindable fragment classes. Инвариант
-наблюдаем в одной точке: generated `bind()` обязан выбрать правильную dispatch
+`slots.binding_key` — nominal identity bindable fragment classes внутри template.
+Инвариант наблюдаем в одной точке: generated `bind()` обязан выбрать правильную
 entry.
 
 Каждый вызов из `queries.py` должен выбрать entry своей комбинации. Опечатка в
@@ -124,9 +124,7 @@ def _bind(passed: Passed) -> object:
     [(written, passed) for _, written, passed in WRITTEN],
     ids=[name for name, _, _ in WRITTEN],
 )
-def test_every_written_call_dispatches_to_its_own_class(
-    written: object, passed: Passed
-):
+def test_every_written_call_resolves_to_its_bound_type(written: object, passed: Passed):
     assert type(_bind(passed)) is type(written)
 
 
@@ -171,7 +169,7 @@ def test_a_keyword_naming_no_slot_is_refused(passed: Passed):
 )
 def test_a_repeated_fragment_is_refused(passed: Passed):
     # A slot spreads each of its fragments once, so this asks for a
-    # combination that cannot exist -- and the dispatch key, which sorts and
+    # combination that cannot exist -- and the binding key, which sorts and
     # keeps both classes, must not quietly answer with the one-of-each binding.
     with pytest.raises(LookupError, match="unknown bind combination"):
         _ = _bind(passed)

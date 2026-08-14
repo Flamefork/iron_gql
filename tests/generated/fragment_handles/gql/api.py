@@ -6,6 +6,7 @@ from __future__ import annotations
 
 
 import datetime
+import typing
 from abc import ABC
 from abc import abstractmethod
 from collections.abc import AsyncGenerator
@@ -18,7 +19,6 @@ from typing import ClassVar
 from typing import Literal
 from typing import Never
 from typing import TypeVar
-from typing import cast
 from typing import final
 from typing import overload
 from typing import override
@@ -35,11 +35,9 @@ import builtins
 from tests.generated.fragment_handles.settings import GRAPHQL_URL
 
 
-API_CLIENT = runtime.AsyncGQLClient(
+_client = runtime.AsyncGQLClient(
     base_url=GRAPHQL_URL,
 )
-
-_API_GQL_CAST = cast
 
 
 class GQLModel(pydantic.BaseModel):
@@ -103,7 +101,7 @@ type NodeFieldsData = Annotated[NodeFieldsDataAdmin | NodeFieldsDataNode, pydant
 class GetViewer(runtime.GQLOperation):
     # See: queries.py:22
     async def execute(self) -> GetViewerResult:
-        return await API_CLIENT.query(
+        return await _client.query(
             GetViewerResult,
             'fragment ViewerFields on User {\n  name\n}\n\nquery GetViewer {\n  viewer {\n    id\n    ...ViewerFields\n  }\n}',
             variables={},
@@ -179,8 +177,8 @@ class NodeFields(OnNode[NodeFieldsData, "NodeFields"]):
 
 class WithSlotBound[TResult: pydantic.BaseModel](runtime.GQLBoundOperation):
     async def execute(self, *, id: builtins.str) -> TResult:
-        return await API_CLIENT.query(
-            _API_GQL_CAST("type[TResult]", WithSlotResult),
+        return await _client.query(
+            typing.cast("type[TResult]", WithSlotResult),
             self.exec_source,
             variables={"id": id, **self.fragment_args},
             headers=self.headers,
@@ -189,6 +187,15 @@ class WithSlotBound[TResult: pydantic.BaseModel](runtime.GQLBoundOperation):
 
 
 class WithSlot(runtime.GQLTemplate):
+    _binding_specs: ClassVar[dict[slots.BindingKey, runtime.BoundSpec]] = {
+        # See: queries.py:37
+        (): ('query WithSlot($id: ID!) {\n  node(id: $id) {\n    __typename\n  }\n}', {"node": ()}),
+        # See: queries.py:37, queries.py:12
+        (('node', (NodeFields,)),): ('query WithSlot($id: ID!) {\n  node(id: $id) {\n    __typename\n    ...NodeFields\n  }\n}\n\nfragment NodeFields on Node {\n  __typename\n  id\n  ... on Admin {\n    permissions\n  }\n}', {"node": ((NodeFields, frozenset({'Admin', 'User'})),)}),
+        # See: queries.py:37, queries.py:3
+        (('node', (UserFields,)),): ('query WithSlot($id: ID!) {\n  node(id: $id) {\n    __typename\n    ...UserFields\n  }\n}\n\nfragment UserFields on User {\n  id\n  name\n}', {"node": ((UserFields, frozenset({'User'})),)}),
+    }
+
     @overload
     def bind(self, *, node: Sequence[Never] = ()) -> WithSlotBound[WithSlotResult[Never]]: ...
     @overload
@@ -196,21 +203,11 @@ class WithSlot(runtime.GQLTemplate):
     @overload
     def bind[TModelNode: pydantic.BaseModel, TReadsNode](self, *, node: OnUser[TModelNode, TReadsNode]) -> WithSlotBound[WithSlotResult[OnUser[TModelNode, TReadsNode] | TReadsNode]]: ...
     def bind(self, *, node: slots.GQLBindableFragment[pydantic.BaseModel, Any] | Sequence[slots.GQLBindableFragment[pydantic.BaseModel, Any]] = ()) -> runtime.GQLBoundOperation:
-        if _API_GQL_BIND_DISPATCH.get(slots.dispatch_key('WithSlot', {'node': node})) is None:
+        if slots.binding_key({'node': node}) not in self._binding_specs:
             raise LookupError("unknown bind combination for WithSlot; single-fragment and empty combinations are generated from the schema, so this is a tuple combination no call site writes literally - write it, then regenerate the package. A call whose template is an expression the scan cannot follow is never read either: those are listed, with the reason, in the debug run's ignored_binds.json")
         return WithSlotBound[WithSlotResult].bound__(
-            _API_GQL_BIND_DISPATCH[slots.dispatch_key('WithSlot', {'node': node})], {'node': slots.as_bindable_fragments(node)},
+            self._binding_specs[slots.binding_key({'node': node})], {'node': slots.as_bindable_fragments(node)},
         )
-
-
-_API_GQL_BIND_DISPATCH: dict[slots.DispatchKey, runtime.BoundSpec] = {
-    # See: queries.py:37
-    ('WithSlot', ()): ('query WithSlot($id: ID!) {\n  node(id: $id) {\n    __typename\n  }\n}', {"node": ()}),
-    # See: queries.py:37, queries.py:12
-    ('WithSlot', (('node', (NodeFields,)),)): ('query WithSlot($id: ID!) {\n  node(id: $id) {\n    __typename\n    ...NodeFields\n  }\n}\n\nfragment NodeFields on Node {\n  __typename\n  id\n  ... on Admin {\n    permissions\n  }\n}', {"node": ((NodeFields, frozenset({'Admin', 'User'})),)}),
-    # See: queries.py:37, queries.py:3
-    ('WithSlot', (('node', (UserFields,)),)): ('query WithSlot($id: ID!) {\n  node(id: $id) {\n    __typename\n    ...UserFields\n  }\n}\n\nfragment UserFields on User {\n  id\n  name\n}', {"node": ((UserFields, frozenset({'User'})),)}),
-}
 
 
 @overload
@@ -225,34 +222,19 @@ def api_gql(stmt: Literal['\n    query WithSlot($id: ID!) {\n        node(id: $i
 def api_gql(stmt: str) -> runtime.GQLOperation | slots.GQLFragment[pydantic.BaseModel, Any] | runtime.GQLTemplate: ...
 
 
-_API_GQL_DISPATCH: dict[str, type[runtime.GQLOperation]] = {
+_statement_factories: dict[str, Callable[[], runtime.GQLOperation | slots.GQLFragment[pydantic.BaseModel, Any] | runtime.GQLTemplate]] = {
     '\n    fragment ViewerFields on User {\n        name\n    }\n\n    query GetViewer {\n        viewer {\n            id\n            ...ViewerFields\n        }\n    }\n    ': GetViewer,
-}
-
-
-_API_GQL_FRAGMENTS: dict[str, type[slots.GQLFragment[pydantic.BaseModel, Any]]] = {
-    '\n    fragment UserFields on User {\n        id\n        name\n    }\n    ': UserFields,
-    '\n    fragment NodeFields on Node {\n        __typename\n        id\n        ... on Admin { permissions }\n    }\n    ': NodeFields,
-}
-
-
-_API_GQL_TEMPLATES: dict[str, type[runtime.GQLTemplate]] = {
+    '\n    fragment UserFields on User {\n        id\n        name\n    }\n    ': lambda: UserFields(),
+    '\n    fragment NodeFields on Node {\n        __typename\n        id\n        ... on Admin { permissions }\n    }\n    ': lambda: NodeFields(),
     '\n    query WithSlot($id: ID!) {\n        node(id: $id) @slot { __typename }\n    }\n    ': WithSlot,
 }
 
 
 def api_gql(stmt: str) -> runtime.GQLOperation | slots.GQLFragment[pydantic.BaseModel, Any] | runtime.GQLTemplate:
-    query_cls = _API_GQL_DISPATCH.get(stmt)
-    if query_cls is not None:
-        return query_cls()
-    fragment_cls = _API_GQL_FRAGMENTS.get(stmt)
-    if fragment_cls is not None:
-        return _API_GQL_CAST("Callable[[], slots.GQLFragment[pydantic.BaseModel, Any]]", fragment_cls)()
-    template_cls = _API_GQL_TEMPLATES.get(stmt)
-    if template_cls is not None:
-        return template_cls()
-    msg = "unknown GraphQL statement passed to api_gql; "
-    msg += "the generator only discovers bare-name calls with a "
-    msg += "single string literal - check the call site, then "
-    msg += "regenerate the package"
-    raise LookupError(msg)
+    if stmt not in _statement_factories:
+        msg = "unknown GraphQL statement passed to api_gql; "
+        msg += "the generator only discovers bare-name calls with a "
+        msg += "single string literal - check the call site, then "
+        msg += "regenerate the package"
+        raise LookupError(msg)
+    return _statement_factories[stmt]()

@@ -259,22 +259,19 @@ def as_bindable_fragments(
     # Нормализует две допустимые формы заполненного slot — один bindable
     # fragment или их sequence — в единый tuple. Функция публична, потому что
     # generated `bind()` передаёт эту форму в аргумент `passed` метода
-    # `bound__`; та же нормализация нужна ниже для `dispatch_key`.
+    # `bound__`; та же нормализация нужна ниже для `binding_key`.
     if isinstance(value, GQLBindableFragment):
         return (value,)
     return tuple(value)
 
 
 type CombinationKey = tuple[str, tuple[tuple[str, tuple[str, ...]], ...]]
-type DispatchKey = tuple[
-    str,
+type BindingKey = tuple[
     tuple[
-        tuple[
-            str,
-            tuple[BindableFragmentType, ...],
-        ],
-        ...,
+        str,
+        tuple[BindableFragmentType, ...],
     ],
+    ...,
 ]
 
 
@@ -294,15 +291,14 @@ def combination_key(
     return (template, tuple((slot, names) for slot, names in sorted(entries) if names))
 
 
-def dispatch_key(
-    template_name: str,
+def binding_key(
     fragments: Mapping[
         str,
         GQLBindableFragment[pydantic.BaseModel, Any]
         | Sequence[GQLBindableFragment[pydantic.BaseModel, Any]],
     ],
-) -> DispatchKey:
-    # Runtime dispatch идентифицирует bindable fragment по exact generated
+) -> BindingKey:
+    # Runtime binding идентифицирует bindable fragment по exact generated
     # class. Для plain fragment это public definition class, для factory —
     # private applied class. Reader identity через `definition_type` остаётся
     # отдельным контрактом.
@@ -321,11 +317,8 @@ def dispatch_key(
         )
         for slot, raw in fragments.items()
     ]
-    return (
-        template_name,
-        tuple(
-            (slot, fragment_classes)
-            for slot, fragment_classes in sorted(entries)
-            if fragment_classes
-        ),
+    return tuple(
+        (slot, fragment_classes)
+        for slot, fragment_classes in sorted(entries)
+        if fragment_classes
     )

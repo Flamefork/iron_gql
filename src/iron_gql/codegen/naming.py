@@ -306,8 +306,8 @@ def _fixed_name_claims(ir: CollectedPackageIR) -> Iterator[tuple[str, ClaimKind,
         )
         origin = f"the bound base of template '{template.class_name}' at {at}"
         yield template.bound_base_name, "bound_base", origin
-    # Binding больше не создаёт собственный class: это entry bind dispatch table
-    # с ключом `DispatchKey`, поэтому module-level Python name здесь нет.
+    # Binding больше не создаёт собственный class: это entry `_binding_specs`
+    # соответствующего template, поэтому module-level Python name здесь нет.
 
 
 def fixed_module_names(ir: CollectedPackageIR) -> frozenset[str]:
@@ -425,9 +425,7 @@ def validate_module_names(
     return errors
 
 
-def _signature_claims(
-    ir: CollectedPackageIR, package_name: str
-) -> Iterator[tuple[str, str, str]]:
+def _signature_claims(ir: CollectedPackageIR) -> Iterator[tuple[str, str, str]]:
     # (scope, parameter name, what claims it) for every method the generator
     # writes parameters onto. Each scope is one Python keyword namespace: the
     # method's own parameters, its receiver, and any name its rendered body
@@ -438,19 +436,15 @@ def _signature_claims(
         at = operation.location
         scope = f"execute() of operation '{operation.class_name}' at {at}"
         yield scope, "self", "the method receiver"
-        for name, origin in operation_execute_free_names(
-            operation.result_type, package_name
-        ):
+        for name, origin in operation_execute_free_names(operation.result_type):
             yield scope, name, origin
         for variable in operation.variables:
             yield scope, variable.python_name, f"variable ${variable.gql_name}"
     for template in ir.templates:
-        yield from _template_signature_claims(
-            template, package_name, ir.fragments, ir.bindings
-        )
-    # A binding renders no method of its own -- it is a row in the package's
-    # bind dispatch table -- so `ir.bindings` claims no signature namespace
-    # here. `with_args` belongs to the fragment whose own variables it
+        yield from _template_signature_claims(template, ir.fragments, ir.bindings)
+    # A binding renders no method of its own -- it is a row in its template's
+    # `_binding_specs` -- so `ir.bindings` claims no signature namespace here.
+    # `with_args` belongs to the fragment whose own variables it
     # applies instead: two of them snaking to the same Python name is a
     # collision within *this* fragment's own closure, unrelated to any other
     # fragment or combination that might also declare a variable.
@@ -461,14 +455,13 @@ def _signature_claims(
 
 def _template_signature_claims(
     template: CollectedTemplate,
-    package_name: str,
     fragments: list[CollectedFragment],
     bindings: list[CollectedBinding],
 ) -> Iterator[tuple[str, str, str]]:
     at = template.location
     scope = f"execute() of template '{template.class_name}' at {at}"
     yield scope, "self", "the method receiver"
-    for name, origin in template_execute_free_names(template, package_name):
+    for name, origin in template_execute_free_names(template):
         yield scope, name, origin
     for variable in template.variables:
         yield scope, variable.python_name, f"variable ${variable.gql_name}"
@@ -483,7 +476,7 @@ def _template_signature_claims(
     # write the same parameter names over the same body. Claiming them
     # for only one shape left the other's parameters free to shadow the
     # module its own body calls into.
-    for name, origin in bind_body_free_names(template, package_name):
+    for name, origin in bind_body_free_names(template):
         yield scope, name, origin
     for slot in template.slots:
         yield scope, slot.python_name, f"slot '{slot.name}'"
@@ -577,7 +570,7 @@ def _fragment_init_claims(
             yield applied_scope, name, origin
 
 
-def validate_signature_names(ir: CollectedPackageIR, package_name: str) -> list[str]:
+def validate_signature_names(ir: CollectedPackageIR) -> list[str]:
     # Every generated method takes its parameters in one Python namespace, and
     # names reach it through `to_snake_fn` — so two names that differ in
     # GraphQL can render the same parameter twice, and a name that is not a
@@ -587,7 +580,7 @@ def validate_signature_names(ir: CollectedPackageIR, package_name: str) -> list[
     # `execute`'s: a template's slots become `bind()`'s parameters too, and
     # each is as capable of colliding as an operation's variables are.
     claims: dict[tuple[str, str], list[str]] = defaultdict(list)
-    for scope, name, origin in _signature_claims(ir, package_name):
+    for scope, name, origin in _signature_claims(ir):
         claims[scope, name].append(origin)
     for artifact in ir.result_artifacts:
         if not artifact.type_params:

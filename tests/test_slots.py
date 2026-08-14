@@ -1,5 +1,6 @@
 import inspect
 import json
+from typing import cast
 
 import pydantic
 import pytest
@@ -9,6 +10,7 @@ from werkzeug import Request
 from werkzeug import Response
 
 from iron_gql.codegen import GraphQLGenerationError
+from iron_gql.runtime import AsyncGQLClient
 from iron_gql.runtime import GQLBoundOperation
 from tests.conftest import ProjectBuilder
 from tests.conftest import generated_package
@@ -1079,8 +1081,8 @@ def test_nested_slot_in_a_merged_response_key_is_rejected(
 def test_fragment_named_like_the_client_binding_is_allowed(
     test_project: ProjectBuilder,
 ):
-    # The generated definition uses its public class name (`ApiClient`), not an
-    # upper-snake singleton binding that would collide with `API_CLIENT`.
+    # The generated definition uses its public class name (`ApiClient`), not
+    # the private client binding.
     test_project.prepare(
         schema=SCHEMA,
         queries="""
@@ -1100,7 +1102,8 @@ def test_fragment_named_like_the_client_binding_is_allowed(
         """,
     )
     api_module, _queries_module = test_project.generate_and_import()
-    assert api_module.ApiClient is not api_module.API_CLIENT  # pyright: ignore[reportAny]
+    client = cast("AsyncGQLClient", vars(api_module)["_client"])
+    assert api_module.ApiClient is not client  # pyright: ignore[reportAny]
 
 
 def test_schema_type_named_after_the_scaffold_keeps_the_model_apart(
@@ -1484,7 +1487,7 @@ def test_two_templates_may_name_a_slot_alike(test_project: ProjectBuilder):
 
 def test_fragment_named_like_an_operation_is_rejected(test_project: ProjectBuilder):
     # The fragment section renders after the operations, so by the time the
-    # dispatch dict is built the name points at the definition class and
+    # statement factory table is built the name points at the definition class and
     # `api_gql(query_text).execute()` raises AttributeError.
     test_project.prepare(
         schema=SCHEMA,
@@ -2198,7 +2201,8 @@ async def test_schema_drift_typename_fails_loudly_on_interface_slot(
         with pytest.raises(pydantic.ValidationError, match="BotOwner"):
             await queries_module.get_post_variant.execute(id="p1")  # pyright: ignore[reportAny]
     finally:
-        await api_module.API_CLIENT.close()  # pyright: ignore[reportAny]
+        client = cast("AsyncGQLClient", vars(api_module)["_client"])
+        await client.close()
 
 
 def test_slot_in_a_mutation_generates_the_same_kwarg_contract():

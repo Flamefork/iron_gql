@@ -6,6 +6,7 @@ from __future__ import annotations
 
 
 import datetime
+import typing
 from abc import ABC
 from abc import abstractmethod
 from collections.abc import AsyncGenerator
@@ -18,7 +19,6 @@ from typing import ClassVar
 from typing import Literal
 from typing import Never
 from typing import TypeVar
-from typing import cast
 from typing import final
 from typing import overload
 from typing import override
@@ -35,11 +35,9 @@ import builtins
 from tests.generated.runtime.settings import GRAPHQL_URL
 
 
-API_CLIENT = runtime.AsyncGQLClient(
+_client = runtime.AsyncGQLClient(
     base_url=GRAPHQL_URL,
 )
-
-_API_GQL_CAST = cast
 
 
 class GQLModel(pydantic.BaseModel):
@@ -129,7 +127,7 @@ class UpdateUserInput(GQLModel):
 class Ping(runtime.GQLOperation):
     # See: queries.py:3
     async def execute(self) -> PingResult:
-        return await API_CLIENT.query(
+        return await _client.query(
             PingResult,
             'query Ping {\n  ping\n}',
             variables={},
@@ -140,7 +138,7 @@ class Ping(runtime.GQLOperation):
 class Fail(runtime.GQLOperation):
     # See: queries.py:4
     async def execute(self) -> FailResult:
-        return await API_CLIENT.query(
+        return await _client.query(
             FailResult,
             'query Fail {\n  fail\n}',
             variables={},
@@ -151,7 +149,7 @@ class Fail(runtime.GQLOperation):
 class Ok(runtime.GQLOperation):
     # See: queries.py:5
     async def execute(self) -> OkResult:
-        return await API_CLIENT.query(
+        return await _client.query(
             OkResult,
             'query Ok {\n  ok\n}',
             variables={},
@@ -162,7 +160,7 @@ class Ok(runtime.GQLOperation):
 class GetUser(runtime.GQLOperation):
     # See: queries.py:7
     async def execute(self, *, id: builtins.str) -> GetUserResult:
-        return await API_CLIENT.query(
+        return await _client.query(
             GetUserResult,
             'query GetUser($id: ID!) {\n  user(id: $id) {\n    id\n    name\n  }\n}',
             variables={"id": id},
@@ -173,7 +171,7 @@ class GetUser(runtime.GQLOperation):
 class UpdateUser(runtime.GQLOperation):
     # See: queries.py:18
     async def execute(self, *, input: UpdateUserInput) -> UpdateUserResult:
-        return await API_CLIENT.query(
+        return await _client.query(
             UpdateUserResult,
             'mutation UpdateUser($input: UpdateUserInput!) {\n  updateUser(input: $input) {\n    id\n    name\n  }\n}',
             variables={"input": input},
@@ -184,7 +182,7 @@ class UpdateUser(runtime.GQLOperation):
 class Numbers(runtime.GQLOperation):
     # See: queries.py:29
     async def execute(self) -> NumbersResult:
-        return await API_CLIENT.query(
+        return await _client.query(
             NumbersResult,
             'query Numbers {\n  numbers1\n  numbers2\n}',
             variables={},
@@ -195,7 +193,7 @@ class Numbers(runtime.GQLOperation):
 class GetPosts(runtime.GQLOperation):
     # See: queries.py:38
     async def execute(self, *, limit: int | None = 5) -> GetPostsResult:
-        return await API_CLIENT.query(
+        return await _client.query(
             GetPostsResult,
             'query GetPosts($limit: Int = 5) {\n  posts(limit: $limit)\n}',
             variables={"limit": limit},
@@ -206,7 +204,7 @@ class GetPosts(runtime.GQLOperation):
 class GetEvents(runtime.GQLOperation):
     # See: queries.py:46
     async def execute(self, *, since: datetime.datetime) -> GetEventsResult:
-        return await API_CLIENT.query(
+        return await _client.query(
             GetEventsResult,
             'query GetEvents($since: DateTime!) {\n  events(since: $since) {\n    name\n    startedAt\n  }\n}',
             variables={"since": since},
@@ -217,7 +215,7 @@ class GetEvents(runtime.GQLOperation):
 class Search(runtime.GQLOperation):
     # See: queries.py:57
     async def execute(self, *, criteria: SearchCriteria) -> SearchResult:
-        return await API_CLIENT.query(
+        return await _client.query(
             SearchResult,
             'query Search($criteria: SearchCriteria!) {\n  search(criteria: $criteria)\n}',
             variables={"criteria": criteria},
@@ -228,7 +226,7 @@ class Search(runtime.GQLOperation):
 class UploadFile(runtime.GQLOperation):
     # See: queries.py:65
     async def execute(self, *, file: runtime.FileVar, label: str) -> UploadFileResult:
-        return await API_CLIENT.query(
+        return await _client.query(
             UploadFileResult,
             'mutation UploadFile($file: Upload!, $label: String!) {\n  uploadFile(file: $file, label: $label)\n}',
             variables={"file": file, "label": label},
@@ -239,7 +237,7 @@ class UploadFile(runtime.GQLOperation):
 class Upload(runtime.GQLOperation):
     # See: queries.py:73
     async def execute(self, *, file: runtime.FileVar) -> UploadResult:
-        return await API_CLIENT.query(
+        return await _client.query(
             UploadResult,
             'mutation Upload($file: Upload!) {\n  uploadFile(file: $file)\n}',
             variables={"file": file},
@@ -273,7 +271,7 @@ def api_gql(stmt: Literal['\n    mutation Upload($file: Upload!) {\n        uplo
 def api_gql(stmt: str) -> runtime.GQLOperation: ...
 
 
-_API_GQL_DISPATCH: dict[str, type[runtime.GQLOperation]] = {
+_statement_factories: dict[str, Callable[[], runtime.GQLOperation]] = {
     'query Ping { ping }': Ping,
     'query Fail { fail }': Fail,
     'query Ok { ok }': Ok,
@@ -289,11 +287,10 @@ _API_GQL_DISPATCH: dict[str, type[runtime.GQLOperation]] = {
 
 
 def api_gql(stmt: str) -> runtime.GQLOperation:
-    query_cls = _API_GQL_DISPATCH.get(stmt)
-    if query_cls is not None:
-        return query_cls()
-    msg = "unknown GraphQL statement passed to api_gql; "
-    msg += "the generator only discovers bare-name calls with a "
-    msg += "single string literal - check the call site, then "
-    msg += "regenerate the package"
-    raise LookupError(msg)
+    if stmt not in _statement_factories:
+        msg = "unknown GraphQL statement passed to api_gql; "
+        msg += "the generator only discovers bare-name calls with a "
+        msg += "single string literal - check the call site, then "
+        msg += "regenerate the package"
+        raise LookupError(msg)
+    return _statement_factories[stmt]()

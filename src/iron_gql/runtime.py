@@ -87,7 +87,7 @@ class GQLOperation:
 
 
 # The base every generated template class derives from. Deliberately empty: a
-# template is not executable and carries no state — it is a `bind()` dispatcher,
+# template is not executable and carries no state — it only exposes `bind()`,
 # and each of its bindings is a `GQLBoundOperation` of its own. It exists so the
 # generated `gql()`'s catch-all overload can name a type that covers a template,
 # instead of widening to `object` and stripping every `gql(some_variable)` in
@@ -99,9 +99,9 @@ class GQLTemplate:
 # Generated definition class и typenames, на которых он достижим в slot.
 # Одна entry на каждый fragment, читаемый в одном slot комбинации.
 type SlotReaderSpec = tuple[FragmentDefinitionType, frozenset[str]]
-# `exec_source` и readable-fragment spec для каждого slot. Dispatch table
-# хранит одну такую entry на discovered combination
-# (`render.render_bind_dispatch`): document text и per-slot reader table.
+# `exec_source` и readable-fragment spec для каждого slot. Template хранит одну
+# такую entry на discovered combination в `_binding_specs`: document text и
+# per-slot reader table.
 type BoundSpec = tuple[str, dict[str, tuple[SlotReaderSpec, ...]]]
 
 
@@ -263,7 +263,7 @@ class GQLBoundOperation(GQLOperation):
     ) -> Self:
         # Здесь static slot phantom встречается с общим runtime class всех
         # комбинаций. `render._bind_impl` вызывает метод сразу после lookup
-        # `spec` в dispatch table. Applications дают только fragment variables;
+        # `spec` в template binding specs. Applications дают только fragment variables;
         # readers создаются из generated definition classes внутри spec.
         # Поэтому definition и все applications одной factory разделяют
         # projection identity.

@@ -43,7 +43,7 @@ class ReadableFragment:
     # Whether the bind named this fragment for this slot, as opposed to
     # reaching it through another bound fragment's root-level spread. The one
     # place the distinction is recorded: `bind()`'s overloads, the binding's
-    # class name and the runtime dispatch key are built from the direct subset,
+    # binding overload and the runtime binding key are built from the direct subset,
     # while the whole set is offered to validation. Kept as a flag on the
     # readable entry rather than a second list beside it -- the two would be
     # kept in step only by an invariant no layer states.

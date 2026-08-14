@@ -6,6 +6,7 @@ from __future__ import annotations
 
 
 import datetime
+import typing
 from abc import ABC
 from abc import abstractmethod
 from collections.abc import Generator
@@ -18,7 +19,6 @@ from typing import ClassVar
 from typing import Literal
 from typing import Never
 from typing import TypeVar
-from typing import cast
 from typing import final
 from typing import overload
 from typing import override
@@ -35,11 +35,9 @@ import builtins
 from example.config import GRAPHQL_URL
 
 
-API_SYNC_CLIENT = runtime.GQLClient(
+_client = runtime.GQLClient(
     base_url=GRAPHQL_URL,
 )
-
-_API_SYNC_GQL_CAST = cast
 
 
 class GQLModel(pydantic.BaseModel):
@@ -97,7 +95,7 @@ class CreateUserInput(GQLModel):
 class GetUser(runtime.GQLOperation):
     # See: ch08_sync.py:6
     def execute(self, *, id: builtins.str) -> GetUserResult:
-        return API_SYNC_CLIENT.query(
+        return _client.query(
             GetUserResult,
             'query GetUser($id: ID!) {\n  user(id: $id) {\n    id\n    name\n    email\n    role\n  }\n}',
             variables={"id": id},
@@ -108,7 +106,7 @@ class GetUser(runtime.GQLOperation):
 class CreateUser(runtime.GQLOperation):
     # See: ch08_sync.py:22
     def execute(self, *, input: CreateUserInput) -> CreateUserResult:
-        return API_SYNC_CLIENT.query(
+        return _client.query(
             CreateUserResult,
             'mutation CreateUser($input: CreateUserInput!) {\n  createUser(input: $input) {\n    id\n    name\n    email\n    role\n  }\n}',
             variables={"input": input},
@@ -119,7 +117,7 @@ class CreateUser(runtime.GQLOperation):
 class PostAdded(runtime.GQLOperation):
     # See: ch08_sync.py:38
     def execute(self, *, user_id: builtins.str) -> AbstractContextManager[Generator[PostAddedResult]]:
-        return API_SYNC_CLIENT.subscribe(
+        return _client.subscribe(
             PostAddedResult,
             'subscription PostAdded($userId: ID!) {\n  postAdded(userId: $userId) {\n    id\n    title\n    body\n    author {\n      name\n    }\n  }\n}',
             variables={"userId": user_id},
@@ -137,7 +135,7 @@ def api_sync_gql(stmt: Literal['\n        subscription PostAdded($userId: ID!) {
 def api_sync_gql(stmt: str) -> runtime.GQLOperation: ...
 
 
-_API_SYNC_GQL_DISPATCH: dict[str, type[runtime.GQLOperation]] = {
+_statement_factories: dict[str, Callable[[], runtime.GQLOperation]] = {
     '\n        query GetUser($id: ID!) {\n            user(id: $id) {\n                id\n                name\n                email\n                role\n            }\n        }\n    ': GetUser,
     '\n        mutation CreateUser($input: CreateUserInput!) {\n            createUser(input: $input) {\n                id\n                name\n                email\n                role\n            }\n        }\n    ': CreateUser,
     '\n        subscription PostAdded($userId: ID!) {\n            postAdded(userId: $userId) {\n                id\n                title\n                body\n                author { name }\n            }\n        }\n    ': PostAdded,
@@ -145,11 +143,10 @@ _API_SYNC_GQL_DISPATCH: dict[str, type[runtime.GQLOperation]] = {
 
 
 def api_sync_gql(stmt: str) -> runtime.GQLOperation:
-    query_cls = _API_SYNC_GQL_DISPATCH.get(stmt)
-    if query_cls is not None:
-        return query_cls()
-    msg = "unknown GraphQL statement passed to api_sync_gql; "
-    msg += "the generator only discovers bare-name calls with a "
-    msg += "single string literal - check the call site, then "
-    msg += "regenerate the package"
-    raise LookupError(msg)
+    if stmt not in _statement_factories:
+        msg = "unknown GraphQL statement passed to api_sync_gql; "
+        msg += "the generator only discovers bare-name calls with a "
+        msg += "single string literal - check the call site, then "
+        msg += "regenerate the package"
+        raise LookupError(msg)
+    return _statement_factories[stmt]()

@@ -172,7 +172,7 @@ def collect_query_slots(
     # is public API — it fixes the type parameter list of `{Operation}Bound` —
     # so it follows what the developer wrote rather than an alphabetical
     # accident of the response keys. Places that need an order-independent
-    # identity (the logical combination and the runtime dispatch literal) sort for
+    # identity (the logical combination and the runtime binding key) sort for
     # themselves.
     return tuple(by_name.values())
 

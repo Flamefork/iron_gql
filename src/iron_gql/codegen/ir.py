@@ -341,8 +341,8 @@ def applied_fragment_class_name(fragment_class_name: str) -> str:
 @dataclass(kw_only=True, frozen=True)
 class CollectedOperation:
     # Every distinct literal spelling the operation was discovered under:
-    # deduplication compares dedented text, but the dispatch dict is keyed by
-    # the exact literal, so each spelling needs its own entry.
+    # deduplication compares dedented text, but the statement factory table is
+    # keyed by the exact literal, so each spelling needs its own entry.
     stmt_texts: tuple[str, ...]
     class_name: str
     # The printed operation text: static, sent as-is by `execute` — a plain
@@ -367,12 +367,12 @@ class CollectedOperation:
 class CollectedTemplateSlot:
     # A slot carries two names, and which one a layer uses is not a detail:
     # `python_name` is the whole public side (the `bind()` keyword, the type
-    # parameter, the dispatch key), while `name` is the wire side (the JSON
+    # parameter, the binding key), while `name` is the wire side (the JSON
     # response key, the point `_SlotFiller` splices at, the key of the
     # runtime's fragments context). `expand_binding` is the one place that
     # translates between them.
     name: str  # response key
-    python_name: str  # snake_case kwarg / dispatch key
+    python_name: str  # snake_case kwarg / binding key
     type_name: str  # the slot field's GraphQL type; what a fragment spreads into
     # The slot's node models, in walk order -- every model whose `slot_name`
     # is this slot's, which is where that fact is actually recorded; this is a
@@ -394,7 +394,7 @@ class CollectedTemplateSlot:
 
 @dataclass(kw_only=True, frozen=True)
 class CollectedTemplate:
-    # Same contract as CollectedOperation.stmt_texts: one dispatch entry per
+    # Same contract as CollectedOperation.stmt_texts: one factory entry per
     # distinct literal spelling.
     stmt_texts: tuple[str, ...]
     # The GraphQL operation name, which `_dedup_statements` has already made
@@ -433,7 +433,7 @@ class CollectedOnTypeBase:
 
 @dataclass(kw_only=True, frozen=True)
 class CollectedPlainFragment:
-    # Как у `CollectedOperation.stmt_texts`: один dispatch entry на каждое
+    # Как у `CollectedOperation.stmt_texts`: один factory entry на каждое
     # уникальное literal spelling.
     stmt_texts: tuple[str, ...]
     # Все call sites в discovery order: одно имя может встречаться в нескольких
@@ -460,7 +460,7 @@ class CollectedPlainFragment:
         return self.closure
 
     @property
-    def dispatch_class_name(self) -> str:
+    def binding_class_name(self) -> str:
         return self.class_name
 
 
@@ -485,7 +485,7 @@ class CollectedFactoryFragment:
         return self.closure
 
     @property
-    def dispatch_class_name(self) -> str:
+    def binding_class_name(self) -> str:
         return self.applied_class_name
 
 
@@ -507,7 +507,7 @@ class CollectedBindingSlot:
     slot: CollectedTemplateSlot
     # Все fragments, читаемые в root slot: переданные в bind и достигнутые через
     # их root-level spreads. Каждый entry хранит typenames и признак direct.
-    # Renderer переносит набор в bind dispatch table; `bound__` создаёт из spec
+    # Renderer переносит набор в template binding specs; `bound__` создаёт из spec
     # readers и передаёт весь набор в `validate_slot__` для независимого чтения
     # и boundary validation.
     readable_fragments: tuple[CollectedReadableFragment, ...]
@@ -525,8 +525,8 @@ class CollectedBindingSlot:
         # result by name -- a fragment reached along two paths has no single
         # call position to keep, and one reached transitively has none at all.
         # Binding определяется combination, поэтому logical combination и
-        # runtime dispatch независимо сортируют fragments. Два call sites с
-        # разным порядком должны попадать в одну dispatch entry; overload text
+        # runtime binding key независимо сортируют fragments. Два call sites с
+        # разным порядком должны попадать в одну binding spec; overload text
         # обязан быть только deterministic.
         return tuple(
             readable.fragment for readable in self.readable_fragments if readable.direct
@@ -536,7 +536,7 @@ class CollectedBindingSlot:
 @dataclass(kw_only=True, frozen=True)
 class CollectedBinding:
     # Логическая идентичность комбинации: template и GraphQL fragment names по
-    # slots. Она нужна discovery и IR, но не runtime dispatch: там fragment
+    # slots. Она нужна discovery и IR, но не runtime binding key: там fragment
     # идентифицируется generated definition class.
     combination_key: CombinationKey
     template: CollectedTemplate

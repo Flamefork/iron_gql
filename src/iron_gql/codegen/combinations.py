@@ -48,7 +48,7 @@ def compatible_fragment_names(
     # twice: here, to enumerate the combinations, and by
     # `collect._collect_templates`, to work out which on-type bases a slot's
     # `bind()` overloads accept. A second spelling of the rule would let the
-    # signature and the dispatch table disagree about one pair.
+    # signature and the template's binding specs disagree about one pair.
     return tuple(
         sorted(
             name

@@ -6,6 +6,7 @@ from __future__ import annotations
 
 
 import datetime
+import typing
 from abc import ABC
 from abc import abstractmethod
 from collections.abc import AsyncGenerator
@@ -18,7 +19,6 @@ from typing import ClassVar
 from typing import Literal
 from typing import Never
 from typing import TypeVar
-from typing import cast
 from typing import final
 from typing import overload
 from typing import override
@@ -35,11 +35,9 @@ import builtins
 from tests.generated.bindings_composition_chain.settings import GRAPHQL_URL
 
 
-API_CLIENT = runtime.AsyncGQLClient(
+_client = runtime.AsyncGQLClient(
     base_url=GRAPHQL_URL,
 )
-
-_API_GQL_CAST = cast
 
 
 class GQLModel(pydantic.BaseModel):
@@ -163,8 +161,8 @@ class RootParts(OnImageAttachment[RootPartsData, "RootParts | LeafParts | Middle
 
 class GetAttachmentBound[TResult: pydantic.BaseModel](runtime.GQLBoundOperation):
     async def execute(self, *, id: builtins.str) -> TResult:
-        return await API_CLIENT.query(
-            _API_GQL_CAST("type[TResult]", GetAttachmentResult),
+        return await _client.query(
+            typing.cast("type[TResult]", GetAttachmentResult),
             self.exec_source,
             variables={"id": id, **self.fragment_args},
             headers=self.headers,
@@ -173,28 +171,27 @@ class GetAttachmentBound[TResult: pydantic.BaseModel](runtime.GQLBoundOperation)
 
 
 class GetAttachment(runtime.GQLTemplate):
+    _binding_specs: ClassVar[dict[slots.BindingKey, runtime.BoundSpec]] = {
+        # See: queries.py:29
+        (): ('query GetAttachment($id: ID!) {\n  post(id: $id) {\n    id\n    attachment {\n      __typename\n    }\n  }\n}', {"attachment": ()}),
+        # See: queries.py:29, queries.py:3
+        (('attachment', (LeafParts,)),): ('query GetAttachment($id: ID!) {\n  post(id: $id) {\n    id\n    attachment {\n      __typename\n      ...LeafParts\n    }\n  }\n}\n\nfragment LeafParts on ImageAttachment {\n  url\n}', {"attachment": ((LeafParts, frozenset({'ImageAttachment'})),)}),
+        # See: queries.py:29, queries.py:11
+        (('attachment', (MiddleParts,)),): ('query GetAttachment($id: ID!) {\n  post(id: $id) {\n    id\n    attachment {\n      __typename\n      ...MiddleParts\n    }\n  }\n}\n\nfragment LeafParts on ImageAttachment {\n  url\n}\n\nfragment MiddleParts on ImageAttachment {\n  caption\n  ...LeafParts\n}', {"attachment": ((LeafParts, frozenset({'ImageAttachment'})), (MiddleParts, frozenset({'ImageAttachment'})))}),
+        # See: queries.py:29, queries.py:20
+        (('attachment', (RootParts,)),): ('query GetAttachment($id: ID!) {\n  post(id: $id) {\n    id\n    attachment {\n      __typename\n      ...RootParts\n    }\n  }\n}\n\nfragment LeafParts on ImageAttachment {\n  url\n}\n\nfragment MiddleParts on ImageAttachment {\n  caption\n  ...LeafParts\n}\n\nfragment RootParts on ImageAttachment {\n  altText\n  ...MiddleParts\n}', {"attachment": ((LeafParts, frozenset({'ImageAttachment'})), (MiddleParts, frozenset({'ImageAttachment'})), (RootParts, frozenset({'ImageAttachment'})))}),
+    }
+
     @overload
     def bind(self, *, attachment: Sequence[Never] = ()) -> GetAttachmentBound[GetAttachmentResult[Never]]: ...
     @overload
     def bind[TModelAttachment: pydantic.BaseModel, TReadsAttachment](self, *, attachment: OnImageAttachment[TModelAttachment, TReadsAttachment]) -> GetAttachmentBound[GetAttachmentResult[OnImageAttachment[TModelAttachment, TReadsAttachment] | TReadsAttachment]]: ...
     def bind(self, *, attachment: slots.GQLBindableFragment[pydantic.BaseModel, Any] | Sequence[slots.GQLBindableFragment[pydantic.BaseModel, Any]] = ()) -> runtime.GQLBoundOperation:
-        if _API_GQL_BIND_DISPATCH.get(slots.dispatch_key('GetAttachment', {'attachment': attachment})) is None:
+        if slots.binding_key({'attachment': attachment}) not in self._binding_specs:
             raise LookupError("unknown bind combination for GetAttachment; single-fragment and empty combinations are generated from the schema, so this is a tuple combination no call site writes literally - write it, then regenerate the package. A call whose template is an expression the scan cannot follow is never read either: those are listed, with the reason, in the debug run's ignored_binds.json")
         return GetAttachmentBound[GetAttachmentResult].bound__(
-            _API_GQL_BIND_DISPATCH[slots.dispatch_key('GetAttachment', {'attachment': attachment})], {'attachment': slots.as_bindable_fragments(attachment)},
+            self._binding_specs[slots.binding_key({'attachment': attachment})], {'attachment': slots.as_bindable_fragments(attachment)},
         )
-
-
-_API_GQL_BIND_DISPATCH: dict[slots.DispatchKey, runtime.BoundSpec] = {
-    # See: queries.py:29
-    ('GetAttachment', ()): ('query GetAttachment($id: ID!) {\n  post(id: $id) {\n    id\n    attachment {\n      __typename\n    }\n  }\n}', {"attachment": ()}),
-    # See: queries.py:29, queries.py:3
-    ('GetAttachment', (('attachment', (LeafParts,)),)): ('query GetAttachment($id: ID!) {\n  post(id: $id) {\n    id\n    attachment {\n      __typename\n      ...LeafParts\n    }\n  }\n}\n\nfragment LeafParts on ImageAttachment {\n  url\n}', {"attachment": ((LeafParts, frozenset({'ImageAttachment'})),)}),
-    # See: queries.py:29, queries.py:11
-    ('GetAttachment', (('attachment', (MiddleParts,)),)): ('query GetAttachment($id: ID!) {\n  post(id: $id) {\n    id\n    attachment {\n      __typename\n      ...MiddleParts\n    }\n  }\n}\n\nfragment LeafParts on ImageAttachment {\n  url\n}\n\nfragment MiddleParts on ImageAttachment {\n  caption\n  ...LeafParts\n}', {"attachment": ((LeafParts, frozenset({'ImageAttachment'})), (MiddleParts, frozenset({'ImageAttachment'})))}),
-    # See: queries.py:29, queries.py:20
-    ('GetAttachment', (('attachment', (RootParts,)),)): ('query GetAttachment($id: ID!) {\n  post(id: $id) {\n    id\n    attachment {\n      __typename\n      ...RootParts\n    }\n  }\n}\n\nfragment LeafParts on ImageAttachment {\n  url\n}\n\nfragment MiddleParts on ImageAttachment {\n  caption\n  ...LeafParts\n}\n\nfragment RootParts on ImageAttachment {\n  altText\n  ...MiddleParts\n}', {"attachment": ((LeafParts, frozenset({'ImageAttachment'})), (MiddleParts, frozenset({'ImageAttachment'})), (RootParts, frozenset({'ImageAttachment'})))}),
-}
 
 
 @overload
@@ -209,27 +206,19 @@ def api_gql(stmt: Literal['\n    query GetAttachment($id: ID!) {\n        post(i
 def api_gql(stmt: str) -> runtime.GQLOperation | slots.GQLFragment[pydantic.BaseModel, Any] | runtime.GQLTemplate: ...
 
 
-_API_GQL_FRAGMENTS: dict[str, type[slots.GQLFragment[pydantic.BaseModel, Any]]] = {
-    '\n    fragment LeafParts on ImageAttachment {\n        url\n    }\n    ': LeafParts,
-    '\n    fragment MiddleParts on ImageAttachment {\n        caption\n        ...LeafParts\n    }\n    ': MiddleParts,
-    '\n    fragment RootParts on ImageAttachment {\n        altText\n        ...MiddleParts\n    }\n    ': RootParts,
-}
-
-
-_API_GQL_TEMPLATES: dict[str, type[runtime.GQLTemplate]] = {
+_statement_factories: dict[str, Callable[[], runtime.GQLOperation | slots.GQLFragment[pydantic.BaseModel, Any] | runtime.GQLTemplate]] = {
+    '\n    fragment LeafParts on ImageAttachment {\n        url\n    }\n    ': lambda: LeafParts(),
+    '\n    fragment MiddleParts on ImageAttachment {\n        caption\n        ...LeafParts\n    }\n    ': lambda: MiddleParts(),
+    '\n    fragment RootParts on ImageAttachment {\n        altText\n        ...MiddleParts\n    }\n    ': lambda: RootParts(),
     '\n    query GetAttachment($id: ID!) {\n        post(id: $id) {\n            id\n            attachment @slot { __typename }\n        }\n    }\n    ': GetAttachment,
 }
 
 
 def api_gql(stmt: str) -> runtime.GQLOperation | slots.GQLFragment[pydantic.BaseModel, Any] | runtime.GQLTemplate:
-    fragment_cls = _API_GQL_FRAGMENTS.get(stmt)
-    if fragment_cls is not None:
-        return _API_GQL_CAST("Callable[[], slots.GQLFragment[pydantic.BaseModel, Any]]", fragment_cls)()
-    template_cls = _API_GQL_TEMPLATES.get(stmt)
-    if template_cls is not None:
-        return template_cls()
-    msg = "unknown GraphQL statement passed to api_gql; "
-    msg += "the generator only discovers bare-name calls with a "
-    msg += "single string literal - check the call site, then "
-    msg += "regenerate the package"
-    raise LookupError(msg)
+    if stmt not in _statement_factories:
+        msg = "unknown GraphQL statement passed to api_gql; "
+        msg += "the generator only discovers bare-name calls with a "
+        msg += "single string literal - check the call site, then "
+        msg += "regenerate the package"
+        raise LookupError(msg)
+    return _statement_factories[stmt]()

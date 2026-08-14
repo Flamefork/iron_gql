@@ -39,9 +39,8 @@ class BindDecl:
     slot_args: tuple[tuple[str, tuple[Statement, ...]], ...]
     # Every `.bind(...)` call site that produced this exact combination, in
     # (file, lineno) order. Two call sites that bind the same template to the
-    # same fragments are one binding, not a conflict: the generated class is
-    # named after the combination and the runtime dispatches on it, so nothing
-    # downstream could tell the two apart anyway.
+    # same fragments are one binding, not a conflict: they resolve to the same
+    # binding spec, so nothing downstream could tell the two apart anyway.
     locations: tuple[str, ...]
 
     @property
@@ -1354,7 +1353,7 @@ def _slot_statements(
     # Каждый названный в call slot разрешается независимо от формы его value.
     # `_resolve_binds` уже установил, что хотя бы один argument требует static
     # resolution. После этого все slots входят в одну runtime combination:
-    # `slots.dispatch_key` строит единый key из каждого переданного в `bind()` slot.
+    # `slots.binding_key` строит единый key из каждого переданного в `bind()` slot.
     # Поэтому bare value рядом с tuple тоже разрешается, а не теряется.
     _reject_nonempty_list(value, candidate, keyword=keyword)
     exprs = value.elts if isinstance(value, ast.List | ast.Tuple) else [value]
@@ -1700,9 +1699,8 @@ def _bind_combination_key(bind: BindDecl) -> CombinationKey:
 
 
 def _dedupe_binds(binds: list[BindDecl]) -> list[BindDecl]:
-    # One binding per combination. The generated class is named after the
-    # combination and the runtime dispatches on it, so two call sites that bind
-    # the same fragments into the same template are the same binding -- which
+    # One binding per combination. Two call sites that bind the same fragments
+    # into the same template resolve to the same binding spec -- which
     # is what makes a bind legal in a function body at all: shared code and its
     # caller may reach the same combination without knowing about each other.
     merged: dict[CombinationKey, BindDecl] = {}

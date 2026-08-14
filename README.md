@@ -214,7 +214,7 @@ get_post_attachment_any = get_post_attachment.bind(
 
 Slots you do not name in `bind()` stay unfilled: the operation still requests their static `__typename` selection, but no fragment data comes back for them. Omitting a slot and passing it an explicit empty sequence (`attachment=()`, or `attachment=[]`) mean the same thing — an empty one names no fragment, so nothing is written for it that a shorter call could land on. The same fragment can be bound into any number of templates, and a template can have any number of binds.
 
-A binding **is** its combination: the template and the fragments in each slot. The generator derives empty and single-fragment variants from the schema. It also adds multi-fragment combinations that call sites specify as literals. The dispatch table stores one entry for each canonical combination, so duplicate call sites share one entry.
+A binding **is** its combination: the template and the fragments in each slot. The generator derives empty and single-fragment variants from the schema. It also adds multi-fragment combinations that call sites specify as literals. Each template stores one binding spec for every canonical combination, so duplicate call sites share one spec.
 
 The limit of 256 applies to the final canonical set for each template. This set includes schema-derived and literal multi-fragment combinations after deduplication. If the set exceeds the limit, the error reports the total and the schema and literal contributions. Split the template or narrow its slot types.
 
@@ -308,7 +308,7 @@ The runtime validates every fragment readable at each slot at the response bound
 The scanner reads a complete combination only when a `.bind()` call contains a non-empty literal sequence or a literal `**{...}` mapping. A multi-fragment tuple is the only combination that the schema cannot derive. The scanner also reads a non-empty list to report that it has no fixed length. Empty `()` and `[]` values contain no static fragment. The scanner checks their keyword names but does not resolve adjacent single values. A named `**opts` mapping is also unresolved because its contents are not statically known. The scanner ignores calls where every slot receives one value. This rule lets a helper bind a fragment that it receives as a parameter. Therefore, the following rules apply to tuple bindings.
 
 Generation fails, naming the file and line, for:
-- a tuple `.bind()` call the scan cannot read statically: a positional argument, a `**` spread (the resolver has no keyword name to thread through, whether the spread stands alone or beside another slot's tuple), a repeated slot keyword, a slot value that is neither a name nor an inline `api_gql("...")` call nor a tuple of those, or a template reached through an attribute chain into the scanned tree (`import infra` then `infra.template.bind(...)`) instead of a directly imported name. Once a call is read at all, every one of its slots has to resolve — the key a bind dispatches on is built from the whole call, so a resolvable tuple beside an unresolvable single value is an error rather than a partial read;
+- a tuple `.bind()` call the scan cannot read statically: a positional argument, a `**` spread (the resolver has no keyword name to thread through, whether the spread stands alone or beside another slot's tuple), a repeated slot keyword, a slot value that is neither a name nor an inline `api_gql("...")` call nor a tuple of those, or a template reached through an attribute chain into the scanned tree (`import infra` then `infra.template.bind(...)`) instead of a directly imported name. Once a call is read at all, every one of its slots has to resolve — the binding key is built from the whole call, so a resolvable tuple beside an unresolvable single value is an error rather than a partial read;
 - a slot given a non-empty list rather than a tuple: no fixed-length overload can be written for a list, so one written for two fragments would accept one of them and offer a phantom that binding never bound. An empty list names no fragment and stays legal;
 - a name such a bind reads that is bound more than once in the scope it resolves in — two assignments, two imports, or a mix; which of them it means is a question the scan will not guess at;
 - a slot value of such a bind that does not resolve to a discovered fragment statement. The template it hangs off is judged differently, because `.bind()` is an ordinary method name that sockets and widgets carry too: a base that resolves to nothing at all leaves the call alone, and only a base whose name the scanned tree does hold as a statement is an error — reported with that statement's own address, since a template written where no resolution reaches it (a class body, a star import) is ours all the same. A name something else *does* bind where the call stands is answered by that binding and left alone: a same-named statement elsewhere in the tree is a coincidence, and two generator runs over one tree produce it routinely;
@@ -379,21 +379,19 @@ You supply the fake yourself. The library takes no position on how you answer a 
 
 ### Replace the client
 
-`use_async_client` and `use_sync_client` bind your own client into a generated package. On exit each one restores the previous client and closes the client that you passed in:
+`use_client` binds your client into a generated package. Use it with `async with` for `AsyncGQLClient` and `with` for `GQLClient`. On exit it restores the previous client and closes the client that you passed in:
 
 ```python
 from iron_gql.runtime import AsyncGQLClient
-from iron_gql.testing import use_async_client
+from iron_gql.testing import use_client
 from myapp.gql import api
 
 async def test_get_user():
     client = AsyncGQLClient(base_url="http://testserver", target_app=my_asgi_app)
-    async with use_async_client(api, client):
+    async with use_client(api, client):
         result = await get_user.execute(id="1")
         assert result.user.name == "Alice"
 ```
-
-The generated query classes resolve the client by module attribute name at call time, so this replacement is sufficient. The helpers derive that name from the name of the module, exactly as the generator derives it. For the package `myapp.gql.api`, the attribute is `API_CLIENT`.
 
 ### Serve an app on a loopback port
 
@@ -401,13 +399,13 @@ The generated query classes resolve the client by module attribute name at call 
 
 ```python
 from iron_gql.runtime import GQLClient
-from iron_gql.testing import use_sync_client
+from iron_gql.testing import use_client
 from iron_gql.testing.server import live_asgi_server
 
 def test_get_user_sync():
     with (
         live_asgi_server(my_asgi_app) as base_url,
-        use_sync_client(api, GQLClient(base_url=base_url)),
+        use_client(api, GQLClient(base_url=base_url)),
     ):
         result = get_user.execute(id="1")
         assert result.user.name == "Alice"

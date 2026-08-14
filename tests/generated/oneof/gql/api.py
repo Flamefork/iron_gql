@@ -6,6 +6,7 @@ from __future__ import annotations
 
 
 import datetime
+import typing
 from abc import ABC
 from abc import abstractmethod
 from collections.abc import AsyncGenerator
@@ -18,7 +19,6 @@ from typing import ClassVar
 from typing import Literal
 from typing import Never
 from typing import TypeVar
-from typing import cast
 from typing import final
 from typing import overload
 from typing import override
@@ -35,11 +35,9 @@ import builtins
 from tests.generated.oneof.settings import GRAPHQL_URL
 
 
-API_CLIENT = runtime.AsyncGQLClient(
+_client = runtime.AsyncGQLClient(
     base_url=GRAPHQL_URL,
 )
-
-_API_GQL_CAST = cast
 
 
 class GQLModel(pydantic.BaseModel):
@@ -176,7 +174,7 @@ class WrapperInput(GQLModel):
 class Search(runtime.GQLOperation):
     # See: queries.py:3
     async def execute(self, *, criteria: SearchCriteria) -> SearchResult:
-        return await API_CLIENT.query(
+        return await _client.query(
             SearchResult,
             'mutation Search($criteria: SearchCriteria!) {\n  search(criteria: $criteria)\n}',
             variables={"criteria": criteria},
@@ -187,7 +185,7 @@ class Search(runtime.GQLOperation):
 class Update(runtime.GQLOperation):
     # See: queries.py:11
     async def execute(self, *, input: UpdateAction) -> UpdateResult:
-        return await API_CLIENT.query(
+        return await _client.query(
             UpdateResult,
             'mutation Update($input: UpdateAction!) {\n  update(input: $input)\n}',
             variables={"input": input},
@@ -198,7 +196,7 @@ class Update(runtime.GQLOperation):
 class DoSearch(runtime.GQLOperation):
     # See: queries.py:19
     async def execute(self, *, input: WrapperInput) -> DoSearchResult:
-        return await API_CLIENT.query(
+        return await _client.query(
             DoSearchResult,
             'mutation DoSearch($input: WrapperInput!) {\n  doSearch(input: $input)\n}',
             variables={"input": input},
@@ -209,7 +207,7 @@ class DoSearch(runtime.GQLOperation):
 class Act(runtime.GQLOperation):
     # See: queries.py:27
     async def execute(self, *, input: SingleChoice) -> ActResult:
-        return await API_CLIENT.query(
+        return await _client.query(
             ActResult,
             'mutation Act($input: SingleChoice!) {\n  act(input: $input)\n}',
             variables={"input": input},
@@ -220,7 +218,7 @@ class Act(runtime.GQLOperation):
 class Filter(runtime.GQLOperation):
     # See: queries.py:35
     async def execute(self, *, by: FilterBy) -> FilterResult:
-        return await API_CLIENT.query(
+        return await _client.query(
             FilterResult,
             'mutation Filter($by: FilterBy!) {\n  filter(by: $by)\n}',
             variables={"by": by},
@@ -231,7 +229,7 @@ class Filter(runtime.GQLOperation):
 class ListSearch(runtime.GQLOperation):
     # See: queries.py:43
     async def execute(self, *, by: SearchBy) -> ListSearchResult:
-        return await API_CLIENT.query(
+        return await _client.query(
             ListSearchResult,
             'mutation ListSearch($by: SearchBy!) {\n  searchBy(by: $by)\n}',
             variables={"by": by},
@@ -242,7 +240,7 @@ class ListSearch(runtime.GQLOperation):
 class ActNested(runtime.GQLOperation):
     # See: queries.py:51
     async def execute(self, *, input: OuterChoice) -> ActNestedResult:
-        return await API_CLIENT.query(
+        return await _client.query(
             ActNestedResult,
             'mutation ActNested($input: OuterChoice!) {\n  actNested(input: $input)\n}',
             variables={"input": input},
@@ -268,7 +266,7 @@ def api_gql(stmt: Literal['\n    mutation ActNested($input: OuterChoice!) {\n   
 def api_gql(stmt: str) -> runtime.GQLOperation: ...
 
 
-_API_GQL_DISPATCH: dict[str, type[runtime.GQLOperation]] = {
+_statement_factories: dict[str, Callable[[], runtime.GQLOperation]] = {
     '\n    mutation Search($criteria: SearchCriteria!) {\n        search(criteria: $criteria)\n    }\n    ': Search,
     '\n    mutation Update($input: UpdateAction!) {\n        update(input: $input)\n    }\n    ': Update,
     '\n    mutation DoSearch($input: WrapperInput!) {\n        doSearch(input: $input)\n    }\n    ': DoSearch,
@@ -280,11 +278,10 @@ _API_GQL_DISPATCH: dict[str, type[runtime.GQLOperation]] = {
 
 
 def api_gql(stmt: str) -> runtime.GQLOperation:
-    query_cls = _API_GQL_DISPATCH.get(stmt)
-    if query_cls is not None:
-        return query_cls()
-    msg = "unknown GraphQL statement passed to api_gql; "
-    msg += "the generator only discovers bare-name calls with a "
-    msg += "single string literal - check the call site, then "
-    msg += "regenerate the package"
-    raise LookupError(msg)
+    if stmt not in _statement_factories:
+        msg = "unknown GraphQL statement passed to api_gql; "
+        msg += "the generator only discovers bare-name calls with a "
+        msg += "single string literal - check the call site, then "
+        msg += "regenerate the package"
+        raise LookupError(msg)
+    return _statement_factories[stmt]()

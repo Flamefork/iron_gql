@@ -6,6 +6,7 @@ from __future__ import annotations
 
 
 import datetime
+import typing
 from abc import ABC
 from abc import abstractmethod
 from collections.abc import AsyncGenerator
@@ -18,7 +19,6 @@ from typing import ClassVar
 from typing import Literal
 from typing import Never
 from typing import TypeVar
-from typing import cast
 from typing import final
 from typing import overload
 from typing import override
@@ -35,11 +35,9 @@ import builtins
 from tests.generated.directives.settings import GRAPHQL_URL
 
 
-API_CLIENT = runtime.AsyncGQLClient(
+_client = runtime.AsyncGQLClient(
     base_url=GRAPHQL_URL,
 )
-
-_API_GQL_CAST = cast
 
 
 class GQLModel(pydantic.BaseModel):
@@ -183,7 +181,7 @@ class ComplementaryConjunctionsResult(GQLModel):
 class IncludeSkip(runtime.GQLOperation):
     # See: queries.py:3
     async def execute(self, *, id: builtins.str, with_email: bool, skip_phone: bool) -> IncludeSkipResult:
-        return await API_CLIENT.query(
+        return await _client.query(
             IncludeSkipResult,
             'query IncludeSkip($id: ID!, $withEmail: Boolean!, $skipPhone: Boolean!) {\n  user(id: $id) {\n    name\n    email @include(if: $withEmail)\n    phone @skip(if: $skipPhone)\n  }\n}',
             variables={"id": id, "withEmail": with_email, "skipPhone": skip_phone},
@@ -194,7 +192,7 @@ class IncludeSkip(runtime.GQLOperation):
 class IncludeNonNull(runtime.GQLOperation):
     # See: queries.py:15
     async def execute(self, *, with_name: bool) -> IncludeNonNullResult:
-        return await API_CLIENT.query(
+        return await _client.query(
             IncludeNonNullResult,
             'query IncludeNonNull($withName: Boolean!) {\n  user {\n    id\n    name @include(if: $withName)\n  }\n}',
             variables={"withName": with_name},
@@ -205,7 +203,7 @@ class IncludeNonNull(runtime.GQLOperation):
 class SkipNonNull(runtime.GQLOperation):
     # See: queries.py:26
     async def execute(self, *, skip_name: bool) -> SkipNonNullResult:
-        return await API_CLIENT.query(
+        return await _client.query(
             SkipNonNullResult,
             'query SkipNonNull($skipName: Boolean!) {\n  user {\n    id\n    name @skip(if: $skipName)\n  }\n}',
             variables={"skipName": skip_name},
@@ -216,7 +214,7 @@ class SkipNonNull(runtime.GQLOperation):
 class IncludeNullable(runtime.GQLOperation):
     # See: queries.py:37
     async def execute(self, *, with_name: bool) -> IncludeNullableResult:
-        return await API_CLIENT.query(
+        return await _client.query(
             IncludeNullableResult,
             'query IncludeNullable($withName: Boolean!) {\n  user {\n    id\n    nullableName @include(if: $withName)\n  }\n}',
             variables={"withName": with_name},
@@ -227,7 +225,7 @@ class IncludeNullable(runtime.GQLOperation):
 class IncludeInlineFragment(runtime.GQLOperation):
     # See: queries.py:48
     async def execute(self, *, with_details: bool) -> IncludeInlineFragmentResult:
-        return await API_CLIENT.query(
+        return await _client.query(
             IncludeInlineFragmentResult,
             'query IncludeInlineFragment($withDetails: Boolean!) {\n  user {\n    id\n    ... @include(if: $withDetails) {\n      name\n      email\n    }\n  }\n}',
             variables={"withDetails": with_details},
@@ -238,7 +236,7 @@ class IncludeInlineFragment(runtime.GQLOperation):
 class ConditionalAndUnconditional(runtime.GQLOperation):
     # See: queries.py:62
     async def execute(self, *, with_details: bool) -> ConditionalAndUnconditionalResult:
-        return await API_CLIENT.query(
+        return await _client.query(
             ConditionalAndUnconditionalResult,
             'query ConditionalAndUnconditional($withDetails: Boolean!) {\n  user {\n    id\n    name\n    ... @include(if: $withDetails) {\n      name\n    }\n  }\n}',
             variables={"withDetails": with_details},
@@ -249,7 +247,7 @@ class ConditionalAndUnconditional(runtime.GQLOperation):
 class SkipLiteralFalse(runtime.GQLOperation):
     # See: queries.py:76
     async def execute(self) -> SkipLiteralFalseResult:
-        return await API_CLIENT.query(
+        return await _client.query(
             SkipLiteralFalseResult,
             'query SkipLiteralFalse {\n  user {\n    id\n    name @skip(if: false)\n  }\n}',
             variables={},
@@ -260,7 +258,7 @@ class SkipLiteralFalse(runtime.GQLOperation):
 class IncludeSkipSameField(runtime.GQLOperation):
     # See: queries.py:87
     async def execute(self, *, show: bool, hide: bool) -> IncludeSkipSameFieldResult:
-        return await API_CLIENT.query(
+        return await _client.query(
             IncludeSkipSameFieldResult,
             'query IncludeSkipSameField($show: Boolean!, $hide: Boolean!) {\n  user {\n    id\n    name @include(if: $show) @skip(if: $hide)\n  }\n}',
             variables={"show": show, "hide": hide},
@@ -271,7 +269,7 @@ class IncludeSkipSameField(runtime.GQLOperation):
 class IncludeCamelCase(runtime.GQLOperation):
     # See: queries.py:98
     async def execute(self, *, with_name: bool) -> IncludeCamelCaseResult:
-        return await API_CLIENT.query(
+        return await _client.query(
             IncludeCamelCaseResult,
             'query IncludeCamelCase($withName: Boolean!) {\n  user {\n    id\n    firstName @include(if: $withName)\n  }\n}',
             variables={"withName": with_name},
@@ -282,7 +280,7 @@ class IncludeCamelCase(runtime.GQLOperation):
 class IncludeList(runtime.GQLOperation):
     # See: queries.py:109
     async def execute(self, *, with_tags: bool) -> IncludeListResult:
-        return await API_CLIENT.query(
+        return await _client.query(
             IncludeListResult,
             'query IncludeList($withTags: Boolean!) {\n  user {\n    id\n    tags @include(if: $withTags)\n  }\n}',
             variables={"withTags": with_tags},
@@ -293,7 +291,7 @@ class IncludeList(runtime.GQLOperation):
 class IncludeLiteralTrue(runtime.GQLOperation):
     # See: queries.py:120
     async def execute(self) -> IncludeLiteralTrueResult:
-        return await API_CLIENT.query(
+        return await _client.query(
             IncludeLiteralTrueResult,
             'query IncludeLiteralTrue {\n  user {\n    id\n    name @include(if: true)\n  }\n}',
             variables={},
@@ -304,7 +302,7 @@ class IncludeLiteralTrue(runtime.GQLOperation):
 class IncludeNestedObject(runtime.GQLOperation):
     # See: queries.py:131
     async def execute(self, *, with_address: bool) -> IncludeNestedObjectResult:
-        return await API_CLIENT.query(
+        return await _client.query(
             IncludeNestedObjectResult,
             'query IncludeNestedObject($withAddress: Boolean!) {\n  user {\n    id\n    address @include(if: $withAddress) {\n      city\n      zip\n    }\n  }\n}',
             variables={"withAddress": with_address},
@@ -315,7 +313,7 @@ class IncludeNestedObject(runtime.GQLOperation):
 class SharedVariable(runtime.GQLOperation):
     # See: queries.py:145
     async def execute(self, *, flag: bool) -> SharedVariableResult:
-        return await API_CLIENT.query(
+        return await _client.query(
             SharedVariableResult,
             'query SharedVariable($flag: Boolean!) {\n  user {\n    id\n    email @include(if: $flag)\n    phone @skip(if: $flag)\n  }\n}',
             variables={"flag": flag},
@@ -326,7 +324,7 @@ class SharedVariable(runtime.GQLOperation):
 class InlineLiteralFalse(runtime.GQLOperation):
     # See: queries.py:157
     async def execute(self) -> InlineLiteralFalseResult:
-        return await API_CLIENT.query(
+        return await _client.query(
             InlineLiteralFalseResult,
             'query InlineLiteralFalse {\n  user {\n    id\n    ... @include(if: false) {\n      name\n    }\n  }\n}',
             variables={},
@@ -337,7 +335,7 @@ class InlineLiteralFalse(runtime.GQLOperation):
 class ContradictoryPair(runtime.GQLOperation):
     # See: queries.py:168
     async def execute(self, *, flag: bool) -> ContradictoryPairResult:
-        return await API_CLIENT.query(
+        return await _client.query(
             ContradictoryPairResult,
             'query ContradictoryPair($flag: Boolean!) {\n  user {\n    id\n    name @include(if: $flag) @skip(if: $flag)\n  }\n}',
             variables={"flag": flag},
@@ -348,7 +346,7 @@ class ContradictoryPair(runtime.GQLOperation):
 class MixedPolarityVariable(runtime.GQLOperation):
     # See: queries.py:179
     async def execute(self, *, a: bool, b: bool) -> MixedPolarityVariableResult:
-        return await API_CLIENT.query(
+        return await _client.query(
             MixedPolarityVariableResult,
             'query MixedPolarityVariable($a: Boolean!, $b: Boolean!) {\n  user {\n    id\n    ... @include(if: $b) {\n      name\n    }\n    ... @include(if: $a) @skip(if: $b) {\n      email\n    }\n  }\n}',
             variables={"a": a, "b": b},
@@ -359,7 +357,7 @@ class MixedPolarityVariable(runtime.GQLOperation):
 class ComplementaryConjunctions(runtime.GQLOperation):
     # See: queries.py:191
     async def execute(self, *, a: bool, b: bool) -> ComplementaryConjunctionsResult:
-        return await API_CLIENT.query(
+        return await _client.query(
             ComplementaryConjunctionsResult,
             'query ComplementaryConjunctions($a: Boolean!, $b: Boolean!) {\n  user {\n    id\n    ... @include(if: $a) {\n      ... @include(if: $b) {\n        name\n      }\n    }\n    ... @skip(if: $a) {\n      ... @skip(if: $b) {\n        name\n      }\n    }\n  }\n}',
             variables={"a": a, "b": b},
@@ -405,7 +403,7 @@ def api_gql(stmt: Literal['\n    query ComplementaryConjunctions($a: Boolean!, $
 def api_gql(stmt: str) -> runtime.GQLOperation: ...
 
 
-_API_GQL_DISPATCH: dict[str, type[runtime.GQLOperation]] = {
+_statement_factories: dict[str, Callable[[], runtime.GQLOperation]] = {
     '\n    query IncludeSkip($id: ID!, $withEmail: Boolean!, $skipPhone: Boolean!) {\n        user(id: $id) {\n            name\n            email @include(if: $withEmail)\n            phone @skip(if: $skipPhone)\n        }\n    }\n    ': IncludeSkip,
     '\n    query IncludeNonNull($withName: Boolean!) {\n        user {\n            id\n            name @include(if: $withName)\n        }\n    }\n    ': IncludeNonNull,
     '\n    query SkipNonNull($skipName: Boolean!) {\n        user {\n            id\n            name @skip(if: $skipName)\n        }\n    }\n    ': SkipNonNull,
@@ -427,11 +425,10 @@ _API_GQL_DISPATCH: dict[str, type[runtime.GQLOperation]] = {
 
 
 def api_gql(stmt: str) -> runtime.GQLOperation:
-    query_cls = _API_GQL_DISPATCH.get(stmt)
-    if query_cls is not None:
-        return query_cls()
-    msg = "unknown GraphQL statement passed to api_gql; "
-    msg += "the generator only discovers bare-name calls with a "
-    msg += "single string literal - check the call site, then "
-    msg += "regenerate the package"
-    raise LookupError(msg)
+    if stmt not in _statement_factories:
+        msg = "unknown GraphQL statement passed to api_gql; "
+        msg += "the generator only discovers bare-name calls with a "
+        msg += "single string literal - check the call site, then "
+        msg += "regenerate the package"
+        raise LookupError(msg)
+    return _statement_factories[stmt]()

@@ -6,6 +6,7 @@ from __future__ import annotations
 
 
 import datetime
+import typing
 from abc import ABC
 from abc import abstractmethod
 from collections.abc import AsyncGenerator
@@ -18,7 +19,6 @@ from typing import ClassVar
 from typing import Literal
 from typing import Never
 from typing import TypeVar
-from typing import cast
 from typing import final
 from typing import overload
 from typing import override
@@ -35,11 +35,9 @@ import builtins
 from tests.generated.fragments_dup_names.settings import GRAPHQL_URL
 
 
-API_CLIENT = runtime.AsyncGQLClient(
+_client = runtime.AsyncGQLClient(
     base_url=GRAPHQL_URL,
 )
-
-_API_GQL_CAST = cast
 
 
 class GQLModel(pydantic.BaseModel):
@@ -67,7 +65,7 @@ class GetUserResult(GQLModel):
 class GetUser(runtime.GQLOperation):
     # See: queries.py:3
     async def execute(self, *, id: builtins.str) -> GetUserResult:
-        return await API_CLIENT.query(
+        return await _client.query(
             GetUserResult,
             'fragment UserFields on User {\n  id\n  name\n}\n\nquery GetUser($id: ID!) {\n  user(id: $id) {\n    ...UserFields\n  }\n}',
             variables={"id": id},
@@ -83,24 +81,17 @@ def api_gql(stmt: Literal['\n    fragment UserFields on User {\n        id\n    
 def api_gql(stmt: str) -> runtime.GQLOperation: ...
 
 
-_API_GQL_DISPATCH: dict[str, type[runtime.GQLOperation]] = {
+_statement_factories: dict[str, Callable[[], runtime.GQLOperation]] = {
     '\n    fragment UserFields on User {\n        id\n        name\n    }\n\n    query GetUser($id: ID!) {\n        user(id: $id) {\n            ...UserFields\n        }\n    }\n    ': GetUser,
+    '\n    fragment UserFields on User {\n        id\n    }\n    ': runtime.GQLOperation,
 }
 
 
-_API_GQL_PASSTHROUGH: frozenset[str] = frozenset({
-    '\n    fragment UserFields on User {\n        id\n    }\n    ',
-})
-
-
 def api_gql(stmt: str) -> runtime.GQLOperation:
-    query_cls = _API_GQL_DISPATCH.get(stmt)
-    if query_cls is not None:
-        return query_cls()
-    if stmt in _API_GQL_PASSTHROUGH:
-        return runtime.GQLOperation()
-    msg = "unknown GraphQL statement passed to api_gql; "
-    msg += "the generator only discovers bare-name calls with a "
-    msg += "single string literal - check the call site, then "
-    msg += "regenerate the package"
-    raise LookupError(msg)
+    if stmt not in _statement_factories:
+        msg = "unknown GraphQL statement passed to api_gql; "
+        msg += "the generator only discovers bare-name calls with a "
+        msg += "single string literal - check the call site, then "
+        msg += "regenerate the package"
+        raise LookupError(msg)
+    return _statement_factories[stmt]()

@@ -69,7 +69,6 @@ def generate_gql_package(
         raise GraphQLGenerationError(parse_res.errors)
 
     scaffold = scaffold_claims(
-        package_name=package_name,
         gql_fn_name=gql_fn_name,
         base_url_ref=base_url_ref,
         scalars=scalar_refs,
@@ -103,7 +102,7 @@ def generate_gql_package(
     collected = parametrize_slot_paths(collected)
     ir_errors = [
         *validate_module_names(collected, scaffold),
-        *validate_signature_names(collected, package_name),
+        *validate_signature_names(collected),
         *nested_slot_errors,
     ]
     if ir_errors:
@@ -112,7 +111,6 @@ def generate_gql_package(
     new_content = render_package(
         mode=mode,
         base_url_ref=base_url_ref,
-        package_name=package_name,
         gql_fn_name=gql_fn_name,
         collected=collected,
         scalars=scalar_refs,

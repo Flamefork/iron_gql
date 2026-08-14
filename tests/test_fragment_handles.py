@@ -482,8 +482,8 @@ def test_duplicate_fragment_with_different_spelling_returns_new_definitions(
     test_project: ProjectBuilder,
 ):
     # Deduplication compares dedented text, so the same fragment indented
-    # differently at two call sites is one definition type — but the dispatch dict is
-    # keyed by the exact literal, so every spelling must resolve to the
+    # differently at two call sites is one definition type — but the statement
+    # factory table is keyed by the exact literal, so every spelling must resolve to the
     # generated definition class rather than fall through to a bare
     # GQLOperation.
     test_project.prepare(
@@ -651,7 +651,7 @@ def test_invalid_standalone_fragment_is_rejected(test_project: ProjectBuilder):
 def test_unknown_statement_is_rejected_instead_of_a_bare_operation():
     # A stale generated module fed a statement it does not know used to hand
     # back a bare GQLOperation whose first use failed far from the cause; the
-    # dispatch now names the actual problem.
+    # lookup now names the actual problem.
     with pytest.raises(LookupError, match="regenerate the package"):
         api.api_gql("query Unknown { viewer { id } }")
 

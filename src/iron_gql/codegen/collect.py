@@ -680,8 +680,8 @@ def _dedup_statements[T: _NamedStatement](
 ) -> tuple[list[T], dict[str, list[str]], dict[str, list[str]]]:
     # Shared by operations and fragment statements: identical (dedented) text
     # under one name is a harmless copy, differing text is ambiguous. Every
-    # distinct literal spelling is kept per name — the dispatch dict is keyed
-    # by the exact literal, so each spelling needs its own entry.
+    # distinct literal spelling is kept per name — the statement factory table
+    # is keyed by the exact literal, so each spelling needs its own entry.
     all_locations: dict[str, list[str]] = defaultdict(list)
     spellings: dict[str, dict[str, None]] = defaultdict(dict)
     first_occurrence: dict[str, T] = {}
@@ -1482,7 +1482,7 @@ def _template_slot(
 ) -> CollectedTemplateSlot:
     # The bases are derived from the very same compatibility predicate the
     # enumeration runs (`combinations.compatible_fragment_names`), so the
-    # signature `bind()` renders and the combinations the dispatch table holds
+    # signature `bind()` renders and the combinations its binding specs hold
     # cannot disagree about which fragments belong to this slot.
     bases = {
         on_type_base_name(fragment_defs[name].type_condition.name.value)
@@ -1533,7 +1533,7 @@ def _excluded_slot_error(slot_name: str, query: Template) -> str:
 def _reject_slot_name_collisions(
     slots: tuple[CollectedTemplateSlot, ...], query: Template
 ) -> None:
-    # A slot's `python_name` is the `bind()` keyword and the dispatch key, and
+    # A slot's `python_name` is the `bind()` keyword and the binding key, and
     # it comes off `to_snake_fn`, which is not injective -- so the one
     # namespace a template's slots share is checked here, where it is derived;
     # every later layer may key by it without re-checking.
@@ -1638,7 +1638,7 @@ def _collect_bindings(
             )
             for template_slot in template.slots
         )
-        # Каноническая логическая идентичность комбинации. Runtime dispatch
+        # Каноническая логическая идентичность комбинации. Runtime binding key
         # отдельно использует generated definition classes, потому что строки
         # не доказывают происхождение fragment из сгенерированного API.
         collected_combination_key = combination_key(

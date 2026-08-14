@@ -1645,7 +1645,7 @@ def test_undiscovered_tuple_bind_raises_lookuperror_at_import(
     # combinations: every single-fragment and empty combination comes from the
     # schema, so nothing a caller spells with one fragment per slot can be
     # missing. A tuple is still written by a call site alone, so a tuple
-    # nobody wrote is still a combination the dispatch table has never been
+    # nobody wrote is still a combination the template's binding specs have never been
     # given.
     test_project.prepare(
         schema=DISCOVERY_SCHEMA,
@@ -1656,7 +1656,7 @@ def test_undiscovered_tuple_bind_raises_lookuperror_at_import(
     _ = test_project.generate_and_import()
 
     # Same fragment/template literal text (still resolvable through the
-    # already-generated dispatch dicts) but a *different* list. Rewriting
+    # already-generated statement factory tables) but a *different* list. Rewriting
     # queries.py without regenerating and re-importing reproduces exactly the
     # "call site changed, forgot to regenerate" mistake this error exists to
     # catch.

@@ -6,8 +6,7 @@ subscription fake installs plain `iron-gql`. `iron_gql.testing.server` runs a
 loopback server and needs `iron-gql[testing]` for uvicorn.
 """
 
-from iron_gql.testing.client import use_async_client
-from iron_gql.testing.client import use_sync_client
+from iron_gql.testing.client import use_client
 from iron_gql.testing.ws import SUBPROTOCOL
 from iron_gql.testing.ws import WSTestConnection
 from iron_gql.testing.ws import WSTestSubscription
@@ -18,6 +17,5 @@ __all__ = [
     "WSTestConnection",
     "WSTestSubscription",
     "accept_graphql_ws",
-    "use_async_client",
-    "use_sync_client",
+    "use_client",
 ]

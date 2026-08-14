@@ -73,27 +73,28 @@ get_image_attachment = get_attachment.bind(attachment=image_parts)
 '''
 
 
-def _dispatch_block(generated: str) -> str:
+def _binding_specs_block(generated: str, template: str = "GetAttachment") -> str:
     # Every combination's exec_source now lives as data inside
-    # `_API_GQL_BIND_DISPATCH`, not a per-combination `exec_source__ = ...`
+    # its template's `_binding_specs`, not a per-combination `exec_source__ = ...`
     # line -- scoped text search over just this block keeps a raw-statement
-    # `@slot`/fragment-text occurrence elsewhere in the module (the literal
-    # `api_gql(...)` dispatch keys, which legitimately keep it) from producing
+    # `@slot`/fragment-text occurrence elsewhere in the module (the statement
+    # factory keys, which legitimately keep it) from producing
     # a false positive or a false count.
-    start = generated.index("_API_GQL_BIND_DISPATCH: dict")
-    end = generated.index("\n}", start)
+    class_start = generated.index(f"class {template}(runtime.GQLTemplate):")
+    start = generated.index("    _binding_specs: ClassVar[dict", class_start)
+    end = generated.index("\n    }", start)
     return generated[start:end]
 
 
-def _dispatch_entry(generated: str, dispatch_key: str) -> str:
+def _binding_entry(generated: str, binding_key: str) -> str:
     # One combination's row of that table. Every template is enumerated in
     # full now, so a question about *one* document ("is this definition
     # written once") has to be asked of one row: the same definition
     # legitimately appears in every row whose combination reaches it.
     [line] = [
         line
-        for line in _dispatch_block(generated).splitlines()
-        if line.strip().startswith(dispatch_key)
+        for line in _binding_specs_block(generated).splitlines()
+        if line.strip().startswith(binding_key)
     ]
     return line
 
@@ -179,21 +180,21 @@ def test_generated_source_strips_slot_and_renders_binding(test_project: ProjectB
     assert test_project.generate() is True
     generated = (test_project.root / "sample_app/gql/api.py").read_text()
     # `@slot` legitimately survives elsewhere in the file: the raw template
-    # text is still the literal key `api_gql(...)`/`.bind(...)` dispatch on
+    # text is still the literal key `api_gql(...)`/`.bind(...)` resolve through
     # (a bare `get_attachment = api_gql(...)` call must keep resolving to the
     # template object, not raise), and the discovered `.bind()` name resolves
     # through that same text. Only the combination's own exec source -- what
     # `execute()` actually sends the server, carried as data in the bind
-    # dispatch table now rather than a per-combination `exec_source__ =` line
+    # binding specs now rather than a per-combination `exec_source__ =` line
     # -- must be free of the directive; mirrors
     # `test_slot_directive_is_stripped_and_split_in_exec_source` in
     # tests/test_slots.py.
-    dispatch_key = "('GetAttachment', (('attachment', (ImageParts,)),))"
-    [dispatch_line] = [
-        line for line in generated.splitlines() if line.strip().startswith(dispatch_key)
+    binding_key = "(('attachment', (ImageParts,)),)"
+    [binding_line] = [
+        line for line in generated.splitlines() if line.strip().startswith(binding_key)
     ]
-    assert "@slot" not in dispatch_line
-    assert "...ImageParts" in dispatch_line
+    assert "@slot" not in binding_line
+    assert "...ImageParts" in binding_line
     # The combination is a `bind()` overload now, not a class of its own --
     # and the overload names the *base*, not the fragment class, so a helper
     # that only knows `OnImageAttachment[TModel]` can call it. The phantom it
@@ -368,17 +369,17 @@ def test_unfilled_slot_renders_never_and_the_partial_overload():
         "OnImageAttachment[TModelAttachment, TReadsAttachment] "
         "| TReadsAttachment, Never]]: ..."
     ) in generated
-    # The reader table for that same combination, in the bind dispatch dict:
-    # entry's own data now, keyed by the same `DispatchKey` the overload's
+    # The reader table for that same combination, in the template binding specs:
+    # entry's own data now, keyed by the same `BindingKey` the overload's
     # signature type-checks against.
-    dispatch_key = "('GetAttachment', (('attachment', (ImageParts,)),))"
-    [dispatch_line] = [
-        line for line in generated.splitlines() if line.strip().startswith(dispatch_key)
+    binding_key = "(('attachment', (ImageParts,)),)"
+    [binding_line] = [
+        line for line in generated.splitlines() if line.strip().startswith(binding_key)
     ]
     assert (
         "{\"attachment\": ((ImageParts, frozenset({'ImageAttachment'})),), "
         '"preview": ()}'
-    ) in dispatch_line
+    ) in binding_line
 
 
 def test_all_unfilled_binding_renders_an_all_defaulted_overload():
@@ -467,7 +468,7 @@ def test_bind_reusing_a_solo_fragment_inside_a_tuple_resolves_independently():
 
 
 def test_two_tuple_binds_of_one_slot_share_a_form():
-    # Две combinations одного slot и одной arity — две строки dispatch table,
+    # Две combinations одного slot и одной arity — две строки binding specs,
     # но одна форма signature. Отдельные формы пересеклись бы на
     # `(image_parts, image_parts)`, возвращая разные phantoms. Один constrained
     # form на arity не пересекается с другим form той же arity и сохраняет
@@ -607,7 +608,7 @@ def test_every_compatible_pair_is_generated_without_a_call_site():
     assert "'LinkParts'" in source
     # the fragment on a type no slot can hold gets a class but no combination
     assert "class AlbumSummary(" in source
-    assert "'AlbumSummary'" not in _dispatch_block(source)
+    assert "'AlbumSummary'" not in _binding_specs_block(source)
     # ...and no overload accepts it either: `OnAlbum` is not among the bases
     # the slot's signature names, which is what rejects an incompatible
     # fragment now that every fragment of the package is typed (its class
@@ -683,7 +684,7 @@ def test_a_one_element_tuple_reaches_the_bare_runtime_combination():
     # and where one is written the tuple form names its own arity, never a
     # shorter one (`test_bindings_tuple_scope`).
     #
-    # Runtime `dispatch_key` normalises the two spellings to one combination,
+    # Runtime `binding_key` normalises the two spellings to one combination,
     # and the second half here is what says the rejection is a
     # narrowing of the *static* surface and not a behaviour change.
     # Reached through an erased reference, the same way test_bind_contract.py
@@ -765,7 +766,7 @@ def test_a_template_one_slot_under_the_limit_still_generates(
     test_project.prepare(schema=_many_slot_schema(5), queries=_many_slot_queries(5))
     assert test_project.generate() is True
     generated = (test_project.root / "sample_app/gql/api.py").read_text()
-    assert _dispatch_block(generated).count("('Many', ") == 243
+    assert _binding_specs_block(generated, "Many").count("# See:") == 243
 
 
 CONDITIONAL_SCHEMA = """
@@ -1121,8 +1122,8 @@ def test_a_wide_tuple_bind_stays_importable(test_project: ProjectBuilder):
     # factorial: these eight fragments wrote 40 320 tuples into one
     # annotation, a 2.5 MB module CPython then refused to compile at all
     # (`RecursionError` at import), while generation reported success.
-    # `MAX_COMBINATIONS_PER_TEMPLATE` never saw it: this slot's own dispatch
-    # table holds nine rows.
+    # `MAX_COMBINATIONS_PER_TEMPLATE` never saw it: this slot's own binding
+    # specs hold nine rows.
     _wide_tuple_project(test_project)
     api_module, _queries = test_project.generate_and_import()
     generated = (test_project.root / "sample_app/gql/api.py").read_text()
@@ -1213,13 +1214,11 @@ def test_a_literal_tuple_bind_types_a_factory_by_its_applied_class(
     constraints = "(_ImageThumbnailApplied, ImageUrl)"
     assert f"TFillAttachment1: {constraints}" in generated
     assert f"TFillAttachment2: {constraints}" in generated
-    dispatch_key = (
-        "('GetAttachment', (('attachment', (ImageUrl, _ImageThumbnailApplied)),))"
-    )
-    [dispatch_entry] = [
-        line for line in generated.splitlines() if line.strip().startswith(dispatch_key)
+    binding_key = "(('attachment', (ImageUrl, _ImageThumbnailApplied)),)"
+    [binding_entry] = [
+        line for line in generated.splitlines() if line.strip().startswith(binding_key)
     ]
-    assert "((ImageThumbnail, frozenset({'ImageAttachment'}))," in dispatch_entry
+    assert "((ImageThumbnail, frozenset({'ImageAttachment'}))," in binding_entry
     # The bare factory nowhere among them: it is not a bindable application.
     [tuple_overload] = [
         line
@@ -1333,7 +1332,7 @@ def test_bind_call_matching_no_discovered_binding_raises():
     # *product* of each slot's own forms, while the texts are the product of
     # the single-fragment forms plus whatever literal binds wrote -- so a call
     # that mixes a base-filled slot with another slot's literal tuple picks a
-    # signature for a combination the dispatch table does not hold.
+    # signature for a combination the binding specs do not hold.
     # `shapes_queries.several` writes `preview=(other_parts, link_parts)` with
     # `attachment` empty; combining that tuple with a filled `attachment`
     # type-checks and raises where it runs.
@@ -1434,7 +1433,7 @@ async def test_unread_slot_of_a_binding_still_validates_eagerly(
     )
 
 
-# --- Согласованность logical combination и runtime dispatch -----------------
+# --- Согласованность logical combination и runtime binding ------------------
 
 
 def test_omitted_slot_and_explicit_empty_list_are_one_combination(
@@ -1442,8 +1441,8 @@ def test_omitted_slot_and_explicit_empty_list_are_one_combination(
 ):
     # README: "Omitting a slot and passing it an explicit empty list mean the
     # same thing." Two binds spelling it both ways are therefore the *same*
-    # combination, and one combination is one dispatch entry -- the two
-    # spellings meet in the `DispatchKey` both produce. Runtime key и rendered
+    # combination, and one combination is one binding entry -- the two
+    # spellings meet in the `BindingKey` both produce. Runtime key и rendered
     # literal должны одинаково исключать empty slots; discovery сводит эти
     # spellings к одной logical combination раньше.
     test_project.prepare(
@@ -1478,13 +1477,13 @@ def test_omitted_slot_and_explicit_empty_list_are_one_combination(
     generated = (test_project.root / "sample_app/gql/api.py").read_text(
         encoding="utf-8"
     )
-    key = "('GetAttachment', (('attachment', (ImageParts,)),))"
-    assert _dispatch_block(generated).count(key) == 1
+    key = "(('attachment', (ImageParts,)),)"
+    assert _binding_specs_block(generated).count(key) == 1
     # Both spellings also meet the *enumerated* combination of the same shape:
     # the product produces `attachment=ImageParts, preview=nothing` whether or
     # not anybody writes it, so the two call sites add no entry of their own.
     assert (
-        _dispatch_block(generated).count("('GetAttachment', ") == 4  # 2 slots x (∅, IP)
+        _binding_specs_block(generated).count("# See:") == 4  # 2 slots x (∅, IP)
     )
     # The entry points at the statements the combination is made of -- the
     # template and the fragment -- because that is what a reader has to edit
@@ -1558,7 +1557,7 @@ def _slot_name_queries(slot: str, *, binds: str) -> str:
 # renderer names them after the template rather than after the package.
 CLAIMED_BIND_NAMES = (
     ("self", "the method receiver"),
-    *bind_body_fixed_names("api"),
+    *bind_body_fixed_names(),
     ("GetAttachmentBound", "the bound base of template 'GetAttachment'"),
     ("GetAttachmentResult", "the result class of template 'GetAttachment'"),
 )
@@ -1586,14 +1585,12 @@ def test_a_slot_named_after_a_claimed_name_is_rejected(
 ):
     # A slot whose Python spelling is a name the generated `bind()` already
     # holds has nowhere to go: `slots` would shadow the module the body calls
-    # into, the dispatch dict the table the body looks the combination up in,
-    # `self` the receiver. Rejection is the only honest answer, and it is the
+    # into, and `self` the receiver. Rejection is the only honest answer, and it is the
     # same answer in both forms.
     #
     # Generated with `to_snake_fn` left as the identity, because that is what
     # it takes for a slot to reach the upper-case half of the list: the hook is
-    # documented and unconstrained, and assuming its output lower-case is what
-    # left `_API_GQL_BIND_DISPATCH` unclaimed while a body called into it.
+    # documented and unconstrained.
     #
     # The names a body *binds* are not here, and must not be: they are none.
     # `assert_method_namespaces_are_closed` holds the renderer to that, so a
@@ -1618,9 +1615,9 @@ WIDTH_ARG_SCHEMA = SLOT_NAME_SCHEMA.replace("url: String!", "url(width: Int!): S
 
 
 # Ещё два namespace, покрытые тем же правилом: template `execute` читает client,
-# cast alias и result class, а factory `with_args` — только свой Applied class.
+# typing module и result class, а factory `with_args` — только свой Applied class.
 CLAIMED_TEMPLATE_EXECUTE_NAMES = (
-    *template_execute_fixed_names("api"),
+    *template_execute_fixed_names(),
     ("GetAttachmentResult", "the result class this execute() validates against"),
 )
 
@@ -1808,9 +1805,7 @@ def test_fragment_reached_by_both_the_template_and_the_binding_composes(
     )
     test_project.generate()
     generated = (test_project.root / "sample_app/gql/api.py").read_text()
-    exec_source = _dispatch_entry(
-        generated, "('GetAttachment', (('attachment', (Outer,)),))"
-    )
+    exec_source = _binding_entry(generated, "(('attachment', (Outer,)),)")
     assert exec_source.count("fragment Common on ImageAttachment") == 1
     assert "fragment Outer on ImageAttachment" in exec_source
 

@@ -324,7 +324,7 @@ def test_binding_collected_with_spread_model_names_and_arg_vars(tmp_path: Path):
     # параметр `with_args` хранится на фрагменте, а не на binding.
     assert isinstance(fragment, CollectedFactoryFragment)
     assert fragment.applied_class_name == "_ImagePartsApplied"
-    assert fragment.dispatch_class_name == "_ImagePartsApplied"
+    assert fragment.binding_class_name == "_ImagePartsApplied"
     assert fragment.bound_closure[0] == "_ImagePartsApplied"
     [arg] = fragment.arg_vars
     assert isinstance(arg, CollectedRequiredFragmentArg)
@@ -350,10 +350,10 @@ fragment ImageParts on ImageAttachment {
 def test_readable_fragments_widen_but_direct_fields_stay_scoped(
     tmp_path: Path,
 ):
-    # The bind dispatch table (rendered from `readable_fragments`) must offer
+    # The template binding specs (rendered from `readable_fragments`) must offer
     # every fragment readable at the slot's root so it reads independently,
     # but `direct_fragments` -- what drives `bind()`'s overload
-    # shapes and the runtime dispatch key -- must stay scoped to exactly what
+    # shapes and the runtime binding key -- must stay scoped to exactly what
     # the caller passed to `bind()`, unaffected by that widening.
     schema_path = _write_schema(tmp_path)
     template_stmt = _stmt(TEMPLATE_TEXT, "template")

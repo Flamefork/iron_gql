@@ -146,8 +146,8 @@ def test_an_empty_bind_answers_alike_whatever_shape_the_template_has(
     # they used to -- and neither promise may depend on how `bind()` happens
     # to be rendered. Both did: with one signature the filled slots were
     # required parameters, so the omitted spelling raised `TypeError` from the
-    # interpreter before any dispatch ran while the `[]` spelling reached the
-    # dispatch.
+    # interpreter before any binding lookup ran while the `[]` spelling reached
+    # the lookup.
     #
     # `bind` is reached as `object` because the point is what happens at
     # runtime, and the two templates' signatures differ.
@@ -173,7 +173,7 @@ def test_a_template_nothing_can_be_bound_into_renders_one_plain_signature():
     ) in body
 
 
-def test_each_form_dispatches_on_a_colliding_slot_name():
+def test_each_form_resolves_a_colliding_slot_name():
     # The runtime half: the module type-checks (`test_generated_typecheck`)
     # *and* the calls still reach the combination their own colliding slot
     # name named -- proving a parameter shadowed by a local (the historical

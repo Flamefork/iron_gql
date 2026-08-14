@@ -6,6 +6,7 @@ from __future__ import annotations
 
 
 import datetime
+import typing
 from abc import ABC
 from abc import abstractmethod
 from collections.abc import Generator
@@ -18,7 +19,6 @@ from typing import ClassVar
 from typing import Literal
 from typing import Never
 from typing import TypeVar
-from typing import cast
 from typing import final
 from typing import overload
 from typing import override
@@ -35,11 +35,9 @@ import builtins
 from tests.generated.testing_sync_swap.settings import GRAPHQL_URL
 
 
-API_CLIENT = runtime.GQLClient(
+_client = runtime.GQLClient(
     base_url=GRAPHQL_URL,
 )
-
-_API_GQL_CAST = cast
 
 
 class GQLModel(pydantic.BaseModel):
@@ -62,7 +60,7 @@ class PingResult(GQLModel):
 class Ping(runtime.GQLOperation):
     # See: queries.py:3
     def execute(self) -> PingResult:
-        return API_CLIENT.query(
+        return _client.query(
             PingResult,
             'query Ping {\n  ping\n}',
             variables={},
@@ -76,17 +74,16 @@ def api_gql(stmt: Literal['\n    query Ping {\n        ping\n    }\n    ']) -> P
 def api_gql(stmt: str) -> runtime.GQLOperation: ...
 
 
-_API_GQL_DISPATCH: dict[str, type[runtime.GQLOperation]] = {
+_statement_factories: dict[str, Callable[[], runtime.GQLOperation]] = {
     '\n    query Ping {\n        ping\n    }\n    ': Ping,
 }
 
 
 def api_gql(stmt: str) -> runtime.GQLOperation:
-    query_cls = _API_GQL_DISPATCH.get(stmt)
-    if query_cls is not None:
-        return query_cls()
-    msg = "unknown GraphQL statement passed to api_gql; "
-    msg += "the generator only discovers bare-name calls with a "
-    msg += "single string literal - check the call site, then "
-    msg += "regenerate the package"
-    raise LookupError(msg)
+    if stmt not in _statement_factories:
+        msg = "unknown GraphQL statement passed to api_gql; "
+        msg += "the generator only discovers bare-name calls with a "
+        msg += "single string literal - check the call site, then "
+        msg += "regenerate the package"
+        raise LookupError(msg)
+    return _statement_factories[stmt]()
