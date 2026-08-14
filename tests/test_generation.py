@@ -142,7 +142,7 @@ ping = api_gql(
     )
     assert changed is True
 
-    test_project.clear_modules()
+    test_project.clear_import_state()
     api_module = importlib.import_module("sample_app.gql.api")
     # attributes of a dynamically imported module are Any
     assert isinstance(api_module.API_CLIENT, runtime.AsyncGQLClient)  # pyright: ignore[reportAny]

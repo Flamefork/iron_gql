@@ -206,10 +206,10 @@ class _Scope:
     # rather than into (PEP 572). The one binding form whose name outlives the
     # scope it is written in, so the one scope kind that has to say what it is.
     is_comprehension: bool = False
-    # A generator expression's body runs when the generator is *iterated*, not
-    # where it is written. So a call inside one reads whatever the surrounding
-    # names hold by then, exactly as a function body does -- and unlike a list,
-    # set or dict comprehension, which runs on the spot.
+    # Body generator expression исполняется при итерации. Scan не знает место
+    # итерации, поэтому после этой границы разрешает имя лексически. Если до
+    # значения дело ещё не дошло, сам `.bind()` не исполнится; runtime
+    # reachability не входит в контракт статического обхода.
     is_lazy: bool = False
 
     # A function body runs all at once, long after the module that defines it;
@@ -828,14 +828,11 @@ def _module_bindings(
 
 
 def _positional_depth(scopes: tuple[_Scope, ...]) -> int:
-    # How far out from a call site the *line* of a binding still decides
-    # whether that call can read it. A module body and a class body run top to
-    # bottom while the call sits in them, so a binding written below the call
-    # has not happened yet; a function body runs later, by which time every
-    # binding of every scope around it has. So position counts from the call
-    # site outward up to and including the first deferred scope, and not past
-    # it -- `def go(): return tmpl.bind(...)` reads a module-level `tmpl`
-    # assigned after `go` is defined, because `go()` runs after that line.
+    # Линия binding важна от call site до первой deferred-границы включительно.
+    # За ней scan разрешает лексический binding, но не моделирует расписание
+    # вызова. Для реально исполненного `.bind()` значение к этому моменту уже
+    # обязано существовать: например, `go()` может прочитать module-level
+    # `tmpl`, присвоенный после определения `go`.
     for depth, scope in enumerate(scopes):
         if scope.is_deferred:
             return depth + 1

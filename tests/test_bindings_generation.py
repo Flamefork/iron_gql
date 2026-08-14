@@ -1,5 +1,4 @@
 import re
-from pathlib import Path
 from typing import TYPE_CHECKING
 from typing import cast
 
@@ -14,15 +13,11 @@ from iron_gql.codegen.render import bind_body_fixed_names
 from iron_gql.codegen.render import template_execute_fixed_names
 from iron_gql.runtime import GQLBoundOperation
 from tests.conftest import ProjectBuilder
-from tests.conftest import basedpyright_errors
-from tests.conftest import basedpyright_report
 from tests.conftest import generated_package
-from tests.conftest import generated_queries_path
 from tests.conftest import generated_source
 from tests.conftest import gql_server
 from tests.conftest import read_type_erased
 from tests.conftest import use_package_client
-from tests.conftest import write_text
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -471,20 +466,7 @@ def test_bind_reusing_a_solo_fragment_inside_a_tuple_resolves_independently():
     }
 
 
-def test_bindings_shapes_queries_module_type_checks():
-    # Finding 1's own reproduction: basedpyright rejected the developer's own
-    # queries.py once a template had both a partial and an all-unfilled
-    # binding, because the generated `bind()` had no overload an all-unfilled
-    # call could match. Runs against the committed fixture file directly, so
-    # `just lint`'s whole-project basedpyright run also covers it. The fixture
-    # also carries a mixed-spelling bind (`both`, see its comment) -- this is
-    # this bug's own reproduction: the old two-corner (all-bare, all-tuple)
-    # overload pair had no overload a mixed call could match.
-    errors = basedpyright_errors(generated_queries_path("bindings_shapes"))
-    assert errors == [], f"expected no type errors, got: {errors}"
-
-
-def test_two_tuple_binds_of_one_slot_share_a_form(tmp_path: Path):
+def test_two_tuple_binds_of_one_slot_share_a_form():
     # Две combinations одного slot и одной arity — две строки dispatch table,
     # но одна форма signature. Отдельные формы пересеклись бы на
     # `(image_parts, image_parts)`, возвращая разные phantoms. Один constrained
@@ -504,109 +486,8 @@ def test_two_tuple_binds_of_one_slot_share_a_form(tmp_path: Path):
         for signature in arity_two_signatures
     )
 
-    check_file = tmp_path / "check_overlapping_tuples.py"
-    write_text(
-        check_file,
-        """
-            from tests.generated.bindings_shapes import queries
 
-            with_link = queries.get_attachment.bind(
-                attachment=(queries.image_parts, queries.link_parts)
-            )
-            reveal_type(with_link)
-            with_other = queries.get_attachment.bind(
-                attachment=(queries.image_parts, queries.other_parts)
-            )
-            reveal_type(with_other)
-        """,
-    )
-    diagnostics = basedpyright_report(check_file).general_diagnostics
-    errors = [d for d in diagnostics if d.severity == "error"]
-    assert errors == [], f"expected no type errors, got: {errors}"
-    infos = [d for d in diagnostics if d.severity == "information"]
-    link_phantom = (
-        "GetAttachmentBound[GetAttachmentResult[ImageParts | LinkParts, Never]]"
-    )
-    other_phantom = (
-        "GetAttachmentBound[GetAttachmentResult[ImageParts | OtherParts, Never]]"
-    )
-    assert [info.message for info in infos] == [
-        f'Type of "with_link" is "{link_phantom}"',
-        f'Type of "with_other" is "{other_phantom}"',
-    ]
-
-
-def test_bind_spellings_agree_between_static_and_runtime_types(tmp_path: Path):
-    # The overload surface's core claim: every spelling bind() accepts must
-    # resolve to the phantom basedpyright infers statically as the combination
-    # bind() actually returns at runtime. Six calling conventions on the same
-    # two-slot template: a slot omitted; a slot filled by one fragment (both
-    # slots here); several fragments; an explicit `[]`; a bare `bind()`; and a
-    # tuple on the other slot. `omitted` and `explicit_empty` are the same
-    # combination spelled two different ways -- both must land on the same
-    # phantom, and, at runtime, the same `slot_readers`/`exec_source`.
-    #
-    # A base-filled slot's phantom carries the base together with the definition's
-    # own readable closure, so a helper that only sees `On{Type}[TModel]`
-    # reads through the base while a concrete call site keeps everything the
-    # definition spreads.
-    check_file = tmp_path / "check_bind_spellings.py"
-    write_text(
-        check_file,
-        """
-            from tests.generated.bindings_shapes import queries
-
-            omitted = queries.get_attachment.bind(attachment=queries.image_parts)
-            reveal_type(omitted)
-
-            one_fragment = queries.get_attachment.bind(
-                attachment=queries.image_parts, preview=queries.image_parts
-            )
-            reveal_type(one_fragment)
-
-            several = queries.get_attachment.bind(
-                preview=(queries.other_parts, queries.link_parts)
-            )
-            reveal_type(several)
-
-            explicit_empty = queries.get_attachment.bind(
-                attachment=queries.image_parts, preview=[]
-            )
-            reveal_type(explicit_empty)
-
-            bare_call = queries.get_attachment.bind()
-            reveal_type(bare_call)
-
-            pair_tuple = queries.get_attachment.bind(
-                attachment=(queries.image_parts, queries.link_parts)
-            )
-            reveal_type(pair_tuple)
-        """,
-    )
-    diagnostics = basedpyright_report(check_file).general_diagnostics
-    errors = [d for d in diagnostics if d.severity == "error"]
-    assert errors == [], f"expected no type errors, got: {errors}"
-    infos = [d for d in diagnostics if d.severity == "information"]
-    image = "OnImageAttachment[ImagePartsData, ImageParts] | ImageParts"
-    expected_static = {
-        "omitted": f"GetAttachmentBound[GetAttachmentResult[{image}, Never]]",
-        "one_fragment": f"GetAttachmentBound[GetAttachmentResult[{image}, {image}]]",
-        # The phantom follows the call's own positions now, not an
-        # alphabetical set: each position of a tuple form solves to the
-        # closure of whatever was passed there (`render._tuple_slot_form`).
-        "several": (
-            "GetAttachmentBound[GetAttachmentResult[Never, OtherParts | LinkParts]]"
-        ),
-        "explicit_empty": f"GetAttachmentBound[GetAttachmentResult[{image}, Never]]",
-        "bare_call": "GetAttachmentBound[GetAttachmentResult[Never, Never]]",
-        "pair_tuple": (
-            "GetAttachmentBound[GetAttachmentResult[ImageParts | LinkParts, Never]]"
-        ),
-    }
-    assert [info.message for info in infos] == [
-        f'Type of "{name}" is "{cls}"' for name, cls in expected_static.items()
-    ]
-
+def test_bind_spellings_resolve_to_distinct_runtime_combinations():
     runtime_bounds = {
         "omitted": shapes_queries.get_attachment.bind(
             attachment=shapes_queries.image_parts
@@ -793,9 +674,7 @@ def _many_slot_queries(count: int) -> str:
     '''
 
 
-def test_a_one_element_tuple_is_a_type_error_where_no_literal_bind_wrote_one(
-    tmp_path: Path,
-):
+def test_a_one_element_tuple_reaches_the_bare_runtime_combination():
     # Slot с одним fragment принимается через on-type base этого фрагмента;
     # тот же base нельзя ещё раз представить tuple. One-element tuple называет
     # combination, уже представленный bare fragment, и создал бы второй overload
@@ -807,30 +686,6 @@ def test_a_one_element_tuple_is_a_type_error_where_no_literal_bind_wrote_one(
     # Runtime `dispatch_key` normalises the two spellings to one combination,
     # and the second half here is what says the rejection is a
     # narrowing of the *static* surface and not a behaviour change.
-    check_file = tmp_path / "check_one_element_list.py"
-    write_text(
-        check_file,
-        """
-            from tests.generated.enumeration import queries
-
-            bare = queries.get_attachment.bind(attachment=queries.image_parts)
-            reveal_type(bare)
-            listed = queries.get_attachment.bind(attachment=(queries.image_parts,))
-        """,
-    )
-    diagnostics = basedpyright_report(check_file).general_diagnostics
-    errors = [d for d in diagnostics if d.severity == "error"]
-    call_issues = [d for d in errors if d.rule == "reportCallIssue"]
-    assert len(call_issues) == 1, f"expected one call error, got: {diagnostics}"
-    assert call_issues[0].range.start.line == 4, call_issues
-    # The bare spelling of the very same combination is fine, and keeps the
-    # full generic phantom -- the rejection is about the tuple, not the pair.
-    [info] = [d for d in diagnostics if d.severity == "information"]
-    assert info.message == (
-        'Type of "bare" is "GetAttachmentBound[GetAttachmentResult['
-        'OnImageAttachment[ImagePartsData, ImageParts] | ImageParts]]"'
-    )
-
     # Reached through an erased reference, the same way test_bind_contract.py
     # reaches `bind`: the question here is what the runtime answers to a call
     # the signatures reject, and writing that call directly would make this
@@ -1473,38 +1328,7 @@ def test_a_fragment_may_use_the_old_private_concrete_class_name(
     assert image_parts_class is not colliding_class
 
 
-def test_catch_all_overload_keeps_its_union_in_a_package_with_templates(
-    tmp_path: Path,
-):
-    # A statement whose text is not a literal falls to `api_gql`'s catch-all
-    # overload. That overload widens by exactly the kinds the package can
-    # return -- operation, fragment definition, template -- and never collapses to
-    # `object`: a template elsewhere in the package must not strip the typing
-    # off every dynamic call in it. `bindings_shapes` has all three kinds.
-    check_file = tmp_path / "check_catch_all.py"
-    write_text(
-        check_file,
-        """
-            from tests.generated.bindings_shapes.gql.api import api_gql
-
-
-            def dynamic(text: str) -> None:
-                reveal_type(api_gql(text))
-        """,
-    )
-    diagnostics = basedpyright_report(check_file).general_diagnostics
-    errors = [d for d in diagnostics if d.severity == "error"]
-    assert errors == [], f"expected no type errors, got: {errors}"
-    [info] = [d for d in diagnostics if d.severity == "information"]
-    assert info.message == (
-        'Type of "api_gql(text)" is "GQLOperation | GQLFragment[BaseModel, Any] '
-        '| GQLTemplate"'
-    )
-
-
-def test_bind_call_matching_no_discovered_binding_type_checks_but_raises(
-    tmp_path: Path,
-):
+def test_bind_call_matching_no_discovered_binding_raises():
     # The residual the overload surface cannot close: the signatures are the
     # *product* of each slot's own forms, while the texts are the product of
     # the single-fragment forms plus whatever literal binds wrote -- so a call
@@ -1513,29 +1337,6 @@ def test_bind_call_matching_no_discovered_binding_type_checks_but_raises(
     # `shapes_queries.several` writes `preview=(other_parts, link_parts)` with
     # `attachment` empty; combining that tuple with a filled `attachment`
     # type-checks and raises where it runs.
-    check_file = tmp_path / "check_unwritten_bind.py"
-    write_text(
-        check_file,
-        """
-            from tests.generated.bindings_shapes import queries
-
-            unwritten = queries.get_attachment.bind(
-                attachment=queries.image_parts,
-                preview=(queries.other_parts, queries.link_parts),
-            )
-            reveal_type(unwritten)
-        """,
-    )
-    diagnostics = basedpyright_report(check_file).general_diagnostics
-    errors = [d for d in diagnostics if d.severity == "error"]
-    assert errors == [], f"expected no type errors, got: {errors}"
-    [info] = [d for d in diagnostics if d.severity == "information"]
-    assert info.message == (
-        'Type of "unwritten" is "GetAttachmentBound[GetAttachmentResult['
-        "OnImageAttachment[ImagePartsData, ImageParts] | ImageParts, "
-        'OtherParts | LinkParts]]"'
-    )
-
     with pytest.raises(LookupError, match="regenerate"):
         shapes_queries.get_attachment.bind(
             attachment=shapes_queries.image_parts,

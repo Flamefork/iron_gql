@@ -1666,8 +1666,7 @@ def test_undiscovered_tuple_bind_raises_lookuperror_at_import(
             "both = get_attachment.bind(attachment=(image_parts, link_parts))"
         ),
     )
-    importlib.invalidate_caches()
-    test_project.clear_modules()
+    test_project.clear_import_state()
     with pytest.raises(LookupError, match="unknown bind combination"):
         importlib.import_module(f"{test_project.package}.queries")
 

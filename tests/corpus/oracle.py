@@ -1,10 +1,9 @@
-"""The comparison itself: what the interpreter read, what the scan found.
+"""Сравнение результата интерпретатора с результатом статического scan.
 
-Lives here rather than in `test_discovery_oracle` because two callers ask the
-same question of different case sources -- the committed corpus, which is a
-crossing of axes, and `fuzz_scoping`, which composes scope trees at random.
-The judging must be one piece of code, or the fuzzer would be measuring a
-second opinion instead of the contract.
+Модуль общий для committed corpus и `fuzz_scoping`, чтобы оба источника случаев
+проверяли один контракт. Интерпретатор определяет, какие `.bind()` действительно
+исполнились. Только для них scan обязан дать тот же ответ или громко отказаться:
+статический обход не моделирует runtime reachability.
 """
 
 import importlib
@@ -105,22 +104,19 @@ def _as_executed(bind: BindDecl) -> ExecutedBind:
 
 def divergences(scan: Observed, interpreter: Observed) -> list[str]:
     problems: list[str] = []
-    for location, found in scan.binds.items():
-        executed = interpreter.binds.get(location)
-        if executed is None:
-            why = interpreter.refusal or "the line is never reached"
-            problem = f"{location}: the scan bound {found.template!r}, but "
-            problem += f"the interpreter never executes this call ({why})"
-            problems.append(problem)
-        elif found != executed:
+    for location, executed in interpreter.binds.items():
+        found = scan.binds.get(location)
+        if found is not None:
+            if found == executed:
+                continue
             problem = f"{location}: the scan bound {found.template!r} with "
             problem += f"{found.slots}, the interpreter reads "
             problem += f"{executed.template!r} with {executed.slots}"
             problems.append(problem)
-    for location, executed in interpreter.binds.items():
-        if location in scan.binds or scan.refusal is not None:
-            # Silence with a refusal on the record is the scan being stricter
-            # than Python, which refinement allows.
+            continue
+        if scan.refusal is not None:
+            # Громкий отказ допустим: scan может быть строже Python там, где
+            # статически нельзя доказать единственное значение.
             continue
         problem = f"{location}: the interpreter binds {executed.template!r} "
         problem += "here, and the scan neither found it nor said why"

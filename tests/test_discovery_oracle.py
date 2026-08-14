@@ -1,26 +1,18 @@
-"""The scan, held against the interpreter it models.
+"""Проверка статического scan по фактически исполненным вызовам Python.
 
-`discovery` decides what a `.bind(...)` call site reads by walking the AST;
-CPython decides it by running. Where the two disagree the generator writes a
-binding for a template the call never touches, and the user gets a
-`LookupError` at a line that looks correct.
+`discovery` определяет значение в `.bind(...)` обходом AST, а CPython —
+исполнением. Oracle сначала запускает каждый corpus case и проверяет scan только
+там, где вызов действительно произошёл. Reachability не входит в контракт
+статического обхода.
 
-The relation is refinement, not equality. The scan is allowed to be *stricter*
-than Python -- a name bound twice in the scope it resolves in is a hard error
-rather than a flow question -- so three outcomes are acceptable for any case:
-the same answer the interpreter gives, a loud refusal (a raised diagnosis or a
-recorded `IgnoredBind`), or silence where the interpreter never reaches the
-call at all. The one forbidden outcome is a *different* answer.
-
-The cases here are a crossing of axes, written to be read. `fuzz_scoping`
-composes the same statements into trees at random and judges them with the
-same oracle; what it finds is promoted into this corpus, where the snapshot
-can see it.
+Scan может быть строже Python: если единственное значение нельзя доказать без
+flow analysis, допустим громкий отказ. Недопустимы другой ответ и тихая потеря
+исполненного binding. Snapshot фиксирует, где scan связывает значение, а где
+отказывает, чтобы ослабление не осталось незаметным.
 """
 
+import sys
 from pathlib import Path
-
-import pytest
 
 from tests.corpus.oracle import Observed
 from tests.corpus.oracle import divergences
@@ -41,27 +33,10 @@ CORPUS = [
 ]
 
 
-@pytest.mark.parametrize("case", CORPUS, ids=[case.id for case in CORPUS])
-def test_the_scan_refines_the_interpreter(case: ScopeCase, tmp_path: Path):
-    write_case(case, tmp_path)
-    interpreter = interpreter_answer(tmp_path, case.module, case.invoke)
-    scan = scan_answer(tmp_path)
-    problems = divergences(scan, interpreter)
-    if case.must_bind and not scan.binds:
-        problem = "the scan found no binding for a case written as ordinary "
-        problem += f"valid code (refusal: {scan.refusal})"
-        problems.append(problem)
-    if problems:
-        source = (tmp_path / "app/mod.py").read_text(encoding="utf-8")
-        pytest.fail("\n".join([*problems, "", "app/mod.py:", source]), pytrace=False)
-
-
 def _outcome(scan: Observed) -> str:
-    # One line per case: what the scan *did*, not whether it was allowed to.
-    # Refinement is a correctness bound and permits a loud refusal for
-    # anything, so a case sliding from "binds" to "refuses" is invisible to it
-    # -- which is exactly how a fix for one family silently dropped bindings in
-    # another. The snapshot turns every such slide into a diff to explain.
+    # Snapshot фиксирует фактический результат scan. Refinement допускает
+    # громкий отказ, поэтому без snapshot переход из `binds` в `refuses`
+    # остался бы незаметным.
     if not scan.binds:
         return "refused" if scan.refusal else "silent"
     templates = sorted({found.template for found in scan.binds.values()})
@@ -71,15 +46,61 @@ def _outcome(scan: Observed) -> str:
 SNAPSHOT = Path(__file__).parent / "corpus" / "scoping_outcomes.txt"
 
 
-def test_outcomes_match_the_snapshot(tmp_path: Path):
-    lines: list[str] = []
+def test_scan_refines_the_interpreter_and_matches_snapshot(tmp_path: Path):
+    case_ids = [case.id for case in CORPUS]
+    assert len(case_ids) == len(set(case_ids))
+    case_inputs = [(case.files, case.module, case.invoke) for case in CORPUS]
+    assert len(case_inputs) == len(set(case_inputs))
+
+    expected = [
+        line.split(" ", maxsplit=1)
+        for line in SNAPSHOT.read_text(encoding="utf-8").splitlines()
+    ]
+
+    failures: list[str] = []
+    executed: list[tuple[ScopeCase, Path, Observed]] = []
     for index, case in enumerate(CORPUS):
         root = tmp_path / str(index)
         root.mkdir()
         write_case(case, root)
-        lines.append(f"{case.id} {_outcome(scan_answer(root))}")
-    current = "\n".join(lines) + "\n"
-    if not SNAPSHOT.exists():
-        SNAPSHOT.write_text(current, encoding="utf-8")
-        pytest.fail(f"snapshot created at {SNAPSHOT}; review it and commit")
-    assert current == SNAPSHOT.read_text(encoding="utf-8")
+        interpreter = interpreter_answer(root, case.module, case.invoke)
+        if case.must_bind and not interpreter.binds:
+            source = (root / "app/mod.py").read_text(encoding="utf-8")
+            failures.append(
+                "\n".join([
+                    case.id,
+                    f"валидный case не исполнил binding ({interpreter.refusal})",
+                    "",
+                    "app/mod.py:",
+                    source,
+                ])
+            )
+        if interpreter.binds:
+            executed.append((case, root, interpreter))
+
+    assert failures == [], "\n\n".join(failures)
+    cached_case_paths = [
+        path for path in sys.path_importer_cache if Path(path).is_relative_to(tmp_path)
+    ]
+    assert cached_case_paths == []
+    assert [case.id for case, _, _ in executed] == [case_id for case_id, _ in expected]
+
+    for (case, root, interpreter), (_, expected_outcome) in zip(
+        executed, expected, strict=True
+    ):
+        scan = scan_answer(root)
+        problems = divergences(scan, interpreter)
+        if case.must_bind and not scan.binds:
+            problems.append(
+                f"scan не нашёл binding для валидного кода (отказ: {scan.refusal})"
+            )
+        actual_outcome = _outcome(scan)
+        if actual_outcome != expected_outcome:
+            problems.append(
+                f"snapshot ожидал {expected_outcome!r}, получено {actual_outcome!r}"
+            )
+        if problems:
+            source = (root / "app/mod.py").read_text(encoding="utf-8")
+            failures.append("\n".join([case.id, *problems, "", "app/mod.py:", source]))
+
+    assert failures == [], "\n\n".join(failures)

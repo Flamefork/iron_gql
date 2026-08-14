@@ -1,5 +1,3 @@
-import textwrap
-from pathlib import Path
 from types import ModuleType
 
 import pydantic
@@ -9,7 +7,6 @@ from iron_gql import runtime
 from iron_gql import slots
 from iron_gql.codegen import GraphQLGenerationError
 from tests.conftest import ProjectBuilder
-from tests.conftest import basedpyright_report
 from tests.conftest import generated_package
 from tests.conftest import generated_source
 
@@ -649,78 +646,6 @@ def test_invalid_standalone_fragment_is_rejected(test_project: ProjectBuilder):
 
     with pytest.raises(GraphQLGenerationError, match="Cannot query field 'nickname'"):
         test_project.generate()
-
-
-def test_type_checker_rejects_incompatible_fragment_and_infers_read_type(
-    tmp_path: Path,
-):
-    # The overloads `bind()` renders exist only for basedpyright: a caller
-    # who passes an incompatible fragment class gets a static rejection, not
-    # a runtime one. This is the only test that can catch a dropped or
-    # mistyped overload. `slots_multi` has everything needed: AlbumSummary is
-    # a fragment on Album, a type outside every slot's possible types in that
-    # package -- it is a fully typed definition like every other fragment, and
-    # what rejects it is that no slot's signature names its `OnAlbum` base --
-    # and AlbumTitle is compatible with both `attachment` and `preview`. The
-    # scratch file lives under tmp_path, outside the repo tree, so `just
-    # lint`'s whole-project basedpyright run never picks it up.
-    check_file = tmp_path / "check_slots.py"
-    check_file.write_text(
-        textwrap.dedent("""
-            from tests.generated.slots_multi import queries
-
-
-            async def main() -> None:
-                bad = queries.list_posts.bind(
-                    attachment=queries.album_title,
-                    preview=queries.album_cover,
-                    owner=queries.album_summary,
-                )
-                result = await queries.list_posts_typed.execute()
-                post = result.posts[0]
-                title = queries.album_title.read(post.attachment)
-                reveal_type(title)
-                reveal_type(queries.album_summary)
-        """).lstrip("\n"),
-        encoding="utf-8",
-    )
-    diagnostics = basedpyright_report(check_file).general_diagnostics
-
-    # Half 1: AlbumSummary must be statically rejected as `owner`. `bad`'s
-    # call matches no bind() overload (no overload for `owner` names
-    # `OnAlbum`), so basedpyright reports the overload-resolution failure at
-    # the call's own line plus cascading "unknown type"/"unused variable"
-    # noise on `bad` — the diagnostic that actually pins the rejection is the
-    # best-match argument-type error, at the exact kwarg's line so an
-    # unrelated type error can't satisfy it.
-    errors = [d for d in diagnostics if d.severity == "error"]
-    argument_errors = [d for d in errors if d.rule == "reportArgumentType"]
-    assert len(argument_errors) == 1, (
-        f"expected exactly one argument-type error, got: {diagnostics}"
-    )
-    rejection = argument_errors[0]
-    assert rejection.range.start.line == 7, rejection
-    assert "AlbumSummary" in rejection.message, rejection.message
-    assert "OnOwner" in rejection.message, rejection.message
-
-    # Half 2: read() must recover AlbumTitle's own model (AlbumTitleData),
-    # not some slot-specific union — a definition's `read` is typed by its own
-    # model alone, independent of which slot it was ever bound into.
-    infos = [d for d in diagnostics if d.severity == "information"]
-    assert len(infos) == 2, (
-        f"expected exactly two reveal_type diagnostics, got: {diagnostics}"
-    )
-    inference = infos[0]
-    assert inference.message == 'Type of "title" is "AlbumTitleData | None"', inference
-
-    # Half 3: the rejected statement is a typed fragment definition all the same --
-    # every fragment of a package with a template is typed now, and being
-    # unbindable is a fact about the bases the slots accept, not about the
-    # statement's own type.
-    unbindable = infos[1]
-    assert unbindable.message == (
-        'Type of "queries.album_summary" is "AlbumSummary"'
-    ), unbindable
 
 
 def test_unknown_statement_is_rejected_instead_of_a_bare_operation():

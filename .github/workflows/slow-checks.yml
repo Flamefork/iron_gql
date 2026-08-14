@@ -1,12 +1,7 @@
 name: "Slow checks"
 
-# The two checks that cost minutes or hours instead of seconds: mutation
-# testing, which measures whether the oracles are strong, and the scoping
-# fuzzer, which searches for shapes no corpus author thought of. Both run on a
-# schedule rather than per push -- and they run here at all because a recipe
-# nothing executes is a recipe nobody notices is broken: `mutants-diff` was
-# written against a mutmut 2 option that mutmut 3 had already dropped, and
-# passed review as text.
+# Полный scan внешнего Python-кода, mutation testing и scoping fuzzer стоят
+# дороже основного suite, поэтому запускаются по расписанию и вручную.
 on:
   workflow_dispatch:
   schedule:
@@ -24,6 +19,8 @@ jobs:
         uses: extractions/setup-just@v3
       - name: Install uv
         uses: astral-sh/setup-uv@v6
+      - name: Проверить установленные Python-пакеты
+        run: just scan-real-code
       - name: Fuzz the scoping oracle
         run: just fuzz-scoping 5000
       - name: Run mutants

@@ -192,10 +192,9 @@ def modules(draw: st.DrawFn) -> Module:
     paths: list[Path] = [(), *(scope.path for scope in _walk(scopes))]
 
     bind_path = draw(st.sampled_from(paths))
-    # Biased towards a template the call can actually read: an unreadable one
-    # raises NameError at import, and a case the interpreter never executes
-    # teaches the oracle nothing. Unreadable placements stay in the draw,
-    # because "the scan must not answer either" is also worth checking.
+    # Смещаем выбор к читаемому template: иначе Python чаще падает до `.bind()`
+    # и такой пример не проверяет точность scan. Нечитаемые позиции остаются в
+    # генерации, чтобы кампания исследовала всю область программ.
     readable = _readable_from(scopes, bind_path)
     template_path = draw(st.one_of(st.sampled_from(readable), st.sampled_from(paths)))
     shadows = draw(

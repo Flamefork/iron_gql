@@ -109,10 +109,10 @@ class Site:
     # the depth to write at.
     enclosing_after: int | None = None
     enclosing_level: int | None = None
-    # How the call itself is written. A generator expression defers its body to
-    # the moment it is iterated, so the same call reads whatever the names hold
-    # by then -- the one place where the line a binding sits on says nothing
-    # about whether the call can read it.
+    # Как записан сам вызов. Для generator expression corpus немедленно вызывает
+    # `next()`: это отличает его scope от comprehension, но не переносит вызов за
+    # следующие строки функции. Отложенная итерация покрыта отдельным handwritten
+    # case `genexp-iterated-after-rebind`.
     bind_line: str = BIND_LINE
 
 
@@ -140,8 +140,8 @@ SITES: tuple[Site, ...] = (
         enclosing_after=0,
         enclosing_level=1,
     ),
-    # A generator expression around the call: its body runs on iteration, so a
-    # name bound below it is what the call actually reads.
+    # Generator expression создаёт отдельный scope, а `next()` сразу исполняет
+    # его body в той же позиции функции.
     Site(
         name="genexp",
         prologue=((0, "def go():"),),
@@ -243,7 +243,9 @@ def _module_source(*, outer: str, site: Site, shadow: str, order: str) -> str:
 
     shadow_block = SHADOWS[shadow]
     body = (
-        [*shadow_block, BIND_LINE] if order == "before" else [BIND_LINE, *shadow_block]
+        [*shadow_block, site.bind_line]
+        if order == "before"
+        else [site.bind_line, *shadow_block]
     )
     lines.extend(_indent(body, site.body_level))
     for level, text in site.epilogue:

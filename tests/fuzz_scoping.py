@@ -1,25 +1,18 @@
-"""A campaign of generated scope trees, judged by the committed oracle.
+"""Кампания сгенерированных scope trees, проверяемых общим oracle.
 
-Not a `test_` module on purpose: a run worth anything is thousands of examples
-and tens of seconds, and its verdict is a *survey* rather than a pass/fail --
-what the scan answered, what it refused, and which shapes it got wrong. It
-runs from `just fuzz-scoping`, beside the mutation recipes and on the same
-schedule.
+Модуль намеренно называется не `test_`: полезный запуск требует тысяч примеров,
+а его результат — survey ответов, отказов и ошибочных форм, а не обычный
+pass/fail. Кампания запускается через `just fuzz-scoping` рядом с mutation
+recipes и по тому же расписанию.
 
-What it finds does not stay here. A divergence is minimised, written into
-`corpus/scoping.py` as a case with axes of its own, and from then on it is the
-committed corpus and its snapshot that hold the line -- in six seconds, on
-every run, which is a promise a random search cannot make.
+Найденное расхождение минимизируется и переносится в `corpus/scoping.py` как
+case со своими осями. После этого поведение на каждом прогоне закрепляют
+committed corpus и snapshot, а не случайный поиск.
 
-Two verdicts, one contract:
-
-  divergence   the scan answered differently from CPython, or answered where
-               CPython never ran. Refinement forbids exactly this.
-  lost-plain   nothing in the module binds `tmpl` a second time and the
-               interpreter did reach the call, so a refusal is not the scan
-               being careful -- it is a real bind dropped. Refinement alone
-               cannot see this, which is why the generator reports what it
-               placed rather than only what came out.
+Программы, в которых `.bind()` не исполнился, учитываются в статистике, но не
+сканируются: статический scan не доказывает runtime reachability. Для исполненных
+вызовов допустим тот же ответ или громкий отказ. В plain-программе отказ означает
+потерянный binding, потому что второго значения `tmpl` в ней нет.
 """
 
 import sys
@@ -46,8 +39,6 @@ FOUND: dict[tuple[str, str], tuple[str, str, list[str]]] = {}
 
 
 def _classify(problem: str) -> str:
-    if "never executes this call" in problem:
-        return "answered-an-unexecuted-call"
     if "the interpreter reads" in problem:
         return "different-answer"
     if "neither found it nor said why" in problem:
@@ -71,6 +62,9 @@ def judge(module: Module) -> list[str]:
             path.write_text(source, encoding="utf-8")
         (root / "app/mod.py").write_text(module.source, encoding="utf-8")
         interpreter = interpreter_answer(root, "app.mod")
+        if not interpreter.binds:
+            STATS["never-executed"] += 1
+            return []
         scan = scan_answer(root)
     problems = divergences(scan, interpreter)
     if problems:
@@ -79,10 +73,7 @@ def judge(module: Module) -> list[str]:
     if module.plain and interpreter.binds and not scan.binds:
         STATS["lost-plain-bind"] += 1
         return [f"the scan refused ordinary code (refusal: {scan.refusal})"]
-    if not interpreter.binds:
-        STATS["never-executed"] += 1
-    else:
-        STATS["bound" if scan.binds else "refused"] += 1
+    STATS["bound" if scan.binds else "refused"] += 1
     return []
 
 

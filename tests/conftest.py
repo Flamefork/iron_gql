@@ -1,5 +1,7 @@
 import importlib
 import json
+import os
+import re
 import subprocess
 import sys
 import textwrap
@@ -80,9 +82,8 @@ def build_schema(sdl: str, resolvers: Resolvers) -> graphql.GraphQLSchema:
     return schema
 
 
-# Minimal typed slice of basedpyright's --outputjson schema: just enough to
-# reach severity/rule/message/line without json.loads's `Any` leaking into
-# every assertion under this repo's strict basedpyright config.
+# Минимальный типизированный срез схемы `basedpyright --outputjson`: его
+# достаточно для проверок, а `Any` из `json.loads` не просачивается в тесты.
 class DiagnosticPosition(pydantic.BaseModel):
     line: int
 
@@ -92,6 +93,7 @@ class DiagnosticRange(pydantic.BaseModel):
 
 
 class Diagnostic(pydantic.BaseModel):
+    file: Path
     severity: str
     message: str
     range: DiagnosticRange
@@ -104,19 +106,22 @@ class DiagnosticSummary(pydantic.BaseModel):
 
 class BasedPyrightReport(pydantic.BaseModel):
     general_diagnostics: list[Diagnostic] = pydantic.Field(alias="generalDiagnostics")
-    # An empty diagnostic list means "clean" only once it is known that
-    # anything was read at all: a path that matches no file reports exactly the
-    # same silence as a package that type-checks.
+    # Пустой список означает успех только после подтверждения, что файлы
+    # действительно были прочитаны: несуществующий путь даёт тот же результат.
     summary: DiagnosticSummary
 
 
-def basedpyright_report(check_file: Path) -> BasedPyrightReport:
-    # Type-checks one file with this repo's own basedpyright config: run from
-    # the repo root, so `pyproject.toml`'s settings apply rather than
-    # basedpyright's defaults. A parse failure is reported as the schema drift
-    # it is, instead of as a bare ValidationError from deep inside a test.
+def basedpyright_report(*check_paths: Path) -> BasedPyrightReport:
+    # Запускается из корня, чтобы применялся конфиг проекта. Ошибка разбора JSON
+    # явно сообщает о расхождении схемы ответа, а не теряется внутри теста.
     completed = subprocess.run(
-        [sys.executable, "-m", "basedpyright", "--outputjson", str(check_file)],
+        [
+            sys.executable,
+            "-m",
+            "basedpyright",
+            "--outputjson",
+            *(str(check_path) for check_path in check_paths),
+        ],
         capture_output=True,
         text=True,
         check=False,
@@ -126,19 +131,11 @@ def basedpyright_report(check_file: Path) -> BasedPyrightReport:
         return pydantic.TypeAdapter(BasedPyrightReport).validate_json(completed.stdout)
     except pydantic.ValidationError as exc:
         msg = (
-            "basedpyright's JSON output no longer matches the expected shape "
+            "JSON-ответ basedpyright больше не соответствует ожидаемой форме "
             f"(exit code {completed.returncode}): {exc}\n"
             f"stdout={completed.stdout!r}\nstderr={completed.stderr!r}"
         )
         pytest.fail(msg)
-
-
-def basedpyright_errors(check_file: Path) -> list[Diagnostic]:
-    return [
-        diagnostic
-        for diagnostic in basedpyright_report(check_file).general_diagnostics
-        if diagnostic.severity == "error"
-    ]
 
 
 def make_subscription_app(messages: list[dict[str, object]]) -> ASGIApp:
@@ -157,6 +154,16 @@ def make_subscription_app(messages: list[dict[str, object]]) -> ASGIApp:
 def write_text(path: Path, content: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(textwrap.dedent(content).lstrip("\n"), encoding="utf-8")
+
+
+def readme_fenced_blocks() -> list[str]:
+    readme = (Path(__file__).parent.parent / "README.md").read_text(encoding="utf-8")
+    _, _, after = readme.partition("\n## Fragment Slots\n")
+    section, _, _ = after.partition("\n## Customization Hooks\n")
+    return [
+        match.group(1).rstrip("\n")
+        for match in re.finditer(r"```python\n(.*?)```", section, re.DOTALL)
+    ]
 
 
 # What a fixture's schema gets unless it asks for more. A scalar mapping is
@@ -311,12 +318,17 @@ class ProjectBuilder:
     def write_file(self, path: Path, content: str) -> None:
         write_text(path, content)
 
-    def clear_modules(self) -> None:
+    def clear_import_state(self) -> None:
         for module_name in list(sys.modules):
             if module_name == self.package or module_name.startswith(
                 f"{self.package}."
             ):
-                sys.modules.pop(module_name, None)
+                del sys.modules[module_name]
+        root_path = str(self.root)
+        root_prefix = root_path + os.sep
+        for path in list(sys.path_importer_cache):
+            if path == root_path or path.startswith(root_prefix):
+                del sys.path_importer_cache[path]
 
     def prepare(
         self, *, schema: str, queries: str, base_url: str = "http://testserver/graphql/"
@@ -329,7 +341,6 @@ class ProjectBuilder:
             f"GRAPHQL_URL = {base_url!r}\n",
         )
         self.write_file(self.root / f"{self.package}/queries.py", queries)
-        importlib.invalidate_caches()
 
     def generate(
         self,
@@ -351,20 +362,18 @@ class ProjectBuilder:
         )
 
     def import_api(self) -> ModuleType:
-        self.clear_modules()
+        self.clear_import_state()
         return importlib.import_module(self.gql_pkg)
 
     def activate_workspace(self, path: Path) -> None:
         self._monkeypatch.chdir(path)
         # pytest leaves `syspath_prepend`'s `path` parameter unannotated
         self._monkeypatch.syspath_prepend(str(path))  # pyright: ignore[reportUnknownMemberType]
-        importlib.invalidate_caches()
 
     def generate_and_import(self) -> tuple[ModuleType, ModuleType]:
         changed = self.generate()
         assert changed is True  # noqa: S101
-        importlib.invalidate_caches()
-        self.clear_modules()
+        self.clear_import_state()
         api_module = importlib.import_module(self.gql_pkg)
         queries_module = importlib.import_module(f"{self.package}.queries")
         _check_generated(api_module, self.root / "schema.graphql")
@@ -390,9 +399,12 @@ class ProjectBuilder:
 
 
 @pytest.fixture
-def test_project(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> ProjectBuilder:
+def test_project(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> Iterator[ProjectBuilder]:
     # pytest leaves `syspath_prepend`'s `path` parameter unannotated
     monkeypatch.syspath_prepend(str(tmp_path))  # pyright: ignore[reportUnknownMemberType]
     monkeypatch.chdir(tmp_path)
-    importlib.invalidate_caches()
-    return ProjectBuilder(root=tmp_path, _monkeypatch=monkeypatch)
+    builder = ProjectBuilder(root=tmp_path, _monkeypatch=monkeypatch)
+    yield builder
+    builder.clear_import_state()

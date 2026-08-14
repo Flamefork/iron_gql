@@ -65,3 +65,8 @@ mutants-diff:
 # where the snapshot holds it in six seconds on every run.
 fuzz-scoping examples="3000":
     uv run python -m tests.fuzz_scoping {{ examples }}
+
+# Полный survey установленного Python-кода. Основной suite проверяет четыре
+# репрезентативных пакета, а этот рецепт сохраняет широкий внешний корпус.
+scan-real-code:
+    uv run python -m tests.scan_real_code

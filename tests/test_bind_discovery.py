@@ -10,7 +10,7 @@ from iron_gql.codegen.discovery import DiscoveredPackage
 from iron_gql.codegen.discovery import discover_package
 from tests.conftest import ProjectBuilder
 from tests.conftest import write_text
-from tests.corpus.recorder import forget_modules
+from tests.corpus.recorder import forget_import_state
 from tests.corpus.scoping import BINDER_FORMS
 from tests.corpus.scoping import PREAMBLE
 
@@ -199,6 +199,39 @@ def test_a_local_non_gql_name_hides_the_module_level_template(tmp_path: Path):
     assert "an enclosing function or class body binds that name" in ignored.reason
 
 
+# Одинаковый дефект проходит двумя путями разрешения имени: через lexical scope
+# функции и через module graph. В обоих случаях scan должен записать явный отказ:
+# найденный template ещё не имеет значения в позиции вызова.
+@pytest.mark.parametrize(
+    ("body", "location"),
+    [
+        (
+            f"frag = {FRAGMENT}\nbound = tmpl.bind(f=(frag,))\ntmpl = {TEMPLATE}\n",
+            "app/mod.py:2",
+        ),
+        (
+            (
+                f"frag = {FRAGMENT}\n"
+                "def go():\n"
+                "    bound = tmpl.bind(f=(frag,))\n"
+                f"    tmpl = {TEMPLATE}\n"
+            ),
+            "app/mod.py:3",
+        ),
+    ],
+    ids=["module", "function"],
+)
+def test_template_written_below_bind_is_diagnosed(
+    tmp_path: Path, body: str, location: str
+):
+    _write(tmp_path, "app/mod.py", body)
+    package = _discover(tmp_path)
+    assert package.binds == []
+    [ignored] = package.ignored
+    assert ignored.location == location
+    assert "written below the call" in ignored.reason
+
+
 # Where that line has to hold in practice: two packages generated from one tree
 # (an async one and a sync one, as this repository's own example does) each scan
 # the other's statements as plain values, so `tmpl = api_sync_gql(...)` binds an
@@ -302,7 +335,7 @@ def _module_level_is_visible(binder: str, root: Path) -> bool:
         # so running one leaves this tree's modules behind under names every
         # other tree uses too. Left there, the next tree's import answers with
         # this one's source.
-        forget_modules()
+        forget_import_state(root)
 
 
 @pytest.mark.parametrize("binder", _BINDER_FORMS)

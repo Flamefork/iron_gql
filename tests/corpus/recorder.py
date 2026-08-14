@@ -10,8 +10,8 @@ no file of it ever lands in the scanned tree -- the scan must see exactly the
 source the interpreter runs, and nothing else.
 """
 
-import importlib
 import inspect
+import os
 import sys
 import textwrap
 from collections.abc import Iterator
@@ -100,6 +100,7 @@ def api_gql(stmt: str) -> Statement:
 # different directory, so one left in `sys.modules` answers the next case --
 # or the next test file -- with the previous tree's source.
 CORPUS_MODULES = ("app", "tmpl")
+_CORPUS_MODULE_PREFIXES = tuple(f"{name}." for name in CORPUS_MODULES)
 
 
 @contextmanager
@@ -113,26 +114,28 @@ def record_run(root: Path) -> Iterator[Recording]:
     previous, _current = _current, recording
     sys.modules[MODULE_NAME] = sys.modules[__name__]
     sys.path.insert(0, str(root))
-    # Cleared going in as well as coming out: another test may have imported a
-    # tree of its own under these names, and inheriting it would run that
-    # tree's source against this case's expectations.
-    forget_modules()
-    importlib.invalidate_caches()
+    # Очищаем на входе и выходе: одинаковые module names используются каждым
+    # case, а PathFinder иначе сохраняет finder для уже удалённого temp root.
+    forget_import_state(root)
     try:
         yield recording
     finally:
         sys.path.remove(str(root))
         del sys.modules[MODULE_NAME]
         _current = previous
-        forget_modules()
+        forget_import_state(root)
 
 
-def forget_modules() -> None:
+def forget_import_state(root: Path) -> None:
     stale = [
         name
         for name in sys.modules
-        if name in CORPUS_MODULES
-        or any(name.startswith(f"{top}.") for top in CORPUS_MODULES)
+        if name in CORPUS_MODULES or name.startswith(_CORPUS_MODULE_PREFIXES)
     ]
     for name in stale:
         del sys.modules[name]
+    root_path = str(root)
+    root_prefix = root_path + os.sep
+    for path in list(sys.path_importer_cache):
+        if path == root_path or path.startswith(root_prefix):
+            del sys.path_importer_cache[path]
