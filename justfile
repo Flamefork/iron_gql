@@ -10,8 +10,12 @@ lint:
 # `--cov` runs here rather than only in the `coverage` recipe: `fail_under` in
 # pyproject is the project's dead-branch gate, and a gate no automatic run
 # executes is decoration. CI calls this recipe.
-test +args="":
-    uv run pytest -vv --color=yes --showlocals --cov=iron_gql '{{ args }}'
+test:
+    uv run pytest -vv --color=yes --showlocals --cov=iron_gql
+
+[positional-arguments]
+pytest *args:
+    uv run pytest -vv --color=yes --showlocals "$@"
 
 coverage:
     rm -rf .coverage/*
