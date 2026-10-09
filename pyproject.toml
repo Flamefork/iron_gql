@@ -1,6 +1,6 @@
 [project]
 name = "iron-gql"
-version = "0.10.4"
+version = "0.11.0"
 
 description = "iron_gql generates typed sync and async GraphQL clients and runtime helpers from schemas for Python services"
 readme = "README.md"
