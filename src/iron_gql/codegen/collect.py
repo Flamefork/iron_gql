@@ -5,12 +5,11 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from dataclasses import field
 from typing import Protocol
-from typing import cast
 from warnings import warn
 
 import graphql
-from graphql.execution.execute import get_field_def
 
+from iron_gql.codegen.accessors import enum_values
 from iron_gql.codegen.accessors import field_type
 from iron_gql.codegen.accessors import union_types
 from iron_gql.codegen.accessors import wrapping_of_type
@@ -236,7 +235,7 @@ class ModuleCollector:
     ) -> None:
         if gql_type.name in self.enums:
             return
-        for value_name, enum_value in gql_type.values.items():
+        for value_name, enum_value in enum_values(gql_type).items():
             if enum_value.deprecation_reason is not None:
                 value_path = f"{gql_type.name}.{value_name}"
                 reason = enum_value.deprecation_reason
@@ -247,7 +246,7 @@ class ModuleCollector:
                 )
         self.enums[gql_type.name] = CollectedEnum(
             name=gql_type.name,
-            values=tuple(gql_type.values),
+            values=tuple(enum_values(gql_type)),
         )
 
     def collect_operation_models(
@@ -401,10 +400,7 @@ class ModuleCollector:
             )
 
         representative = entries[0].node
-        field_def = cast(
-            graphql.GraphQLField | None,
-            get_field_def(self.schema, runtime_type, representative),
-        )
+        field_def = self.schema.get_field(runtime_type, representative.name.value)
         if field_def is None:
             # Internal invariant: `collect_conditional_fields` only groups a
             # node whose enclosing type condition matches `runtime_type`, and a
@@ -499,11 +495,11 @@ class ModuleCollector:
         # the existence-based walks (explicit variants, base __typename), which
         # do not read conditions.
         merged_selections = graphql.SelectionSetNode(
-            selections=[
+            selections=tuple(
                 selection
                 for selection_set, _ in roots
                 for selection in selection_set.selections
-            ]
+            )
         )
         match named:
             case graphql.GraphQLObjectType():

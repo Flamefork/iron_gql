@@ -69,19 +69,22 @@ def _echo(payload: object, arguments: dict[str, object]) -> dict[str, object]:
 
 
 def _resolve_echo(
-    _root: object, _info: GraphQLResolveInfo, payload: object, **arguments: object
+    _root: object,
+    _info: GraphQLResolveInfo[object],
+    payload: object,
+    **arguments: object,
 ) -> dict[str, object]:
     return _echo(payload, arguments)
 
 
 def _resolve_labelled(
-    _root: object, _info: GraphQLResolveInfo, **arguments: object
+    _root: object, _info: GraphQLResolveInfo[object], **arguments: object
 ) -> dict[str, object]:
     return _echo({}, arguments)
 
 
 def _resolve_tagged(
-    _root: object, _info: GraphQLResolveInfo, **arguments: object
+    _root: object, _info: GraphQLResolveInfo[object], **arguments: object
 ) -> str:
     return json.dumps(arguments, sort_keys=True)
 

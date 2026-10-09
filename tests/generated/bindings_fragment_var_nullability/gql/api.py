@@ -123,8 +123,8 @@ class ImageParts(slots.GQLFragment[ImagePartsData, "_ImagePartsApplied"]):
 
     _omitted__: ClassVar[slots.Omitted] = slots.OMITTED
 
-    def with_args(self, *, height: int | slots.Omitted = slots.OMITTED, pad: int | None | slots.Omitted = slots.OMITTED, slots: int | slots.Omitted = slots.OMITTED, width: int | None) -> _ImagePartsApplied:
-        return _ImagePartsApplied({**({"height": height} if height is not self._omitted__ else {}), **({"pad": pad} if pad is not self._omitted__ else {}), **({"slots": slots} if slots is not self._omitted__ else {}), "width": width})
+    def with_args(self, *, height: int, pad: int | None | slots.Omitted = slots.OMITTED, slots: int | None | slots.Omitted = slots.OMITTED, width: int | None) -> _ImagePartsApplied:
+        return _ImagePartsApplied({"height": height, **({"pad": pad} if pad is not self._omitted__ else {}), **({"slots": slots} if slots is not self._omitted__ else {}), "width": width})
 
 
 @final
@@ -155,7 +155,7 @@ class GetAttachment(runtime.GQLTemplate):
         # See: queries.py:3
         (): ('query GetAttachment($id: ID!) {\n  post(id: $id) {\n    id\n    attachment {\n      __typename\n    }\n  }\n}', {"attachment": ()}),
         # See: queries.py:3, queries.py:14
-        (('attachment', (_ImagePartsApplied,)),): ('query GetAttachment($id: ID!, $height: Int, $pad: Int, $slots: Int, $width: Int) {\n  post(id: $id) {\n    id\n    attachment {\n      __typename\n      ...ImageParts\n    }\n  }\n}\n\nfragment ImageParts on ImageAttachment {\n  url(width: $width, height: $height, pad: $pad, slots: $slots)\n}', {"attachment": ((ImageParts, frozenset({'ImageAttachment'})),)}),
+        (('attachment', (_ImagePartsApplied,)),): ('query GetAttachment($id: ID!, $height: Int!, $pad: Int, $slots: Int, $width: Int) {\n  post(id: $id) {\n    id\n    attachment {\n      __typename\n      ...ImageParts\n    }\n  }\n}\n\nfragment ImageParts on ImageAttachment {\n  url(width: $width, height: $height, pad: $pad, slots: $slots)\n}', {"attachment": ((ImageParts, frozenset({'ImageAttachment'})),)}),
     }
 
     @overload

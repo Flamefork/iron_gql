@@ -5,8 +5,6 @@ from dataclasses import field
 
 import graphql
 
-from iron_gql.codegen.accessors import inline_fragment_type_condition
-
 # The two schema directives that make a selection conditional. Named once: the
 # condition algebra below reads them, a slot field may not carry them at all
 # (a slot is always requested, see `slots._SlotCollector.enter_field`), and a
@@ -86,7 +84,7 @@ class _FieldWalk:
                 case graphql.FieldNode():
                     self._field(selection, cond)
                 case graphql.InlineFragmentNode():
-                    type_condition = inline_fragment_type_condition(selection)
+                    type_condition = selection.type_condition
                     self._nested(
                         selection, selection.selection_set, type_condition, cond
                     )
@@ -262,7 +260,7 @@ def collect_type_conditions(
                 case graphql.FieldNode():
                     pass
                 case graphql.InlineFragmentNode():
-                    type_condition = inline_fragment_type_condition(selection)
+                    type_condition = selection.type_condition
                     if type_condition is not None:
                         conditions.add(type_condition.name.value)
                     stack.append(selection.selection_set)
@@ -302,7 +300,7 @@ def interface_has_base_typename(
                     if selection.alias is None and selection.name.value == "__typename":
                         return True
                 case graphql.InlineFragmentNode():
-                    type_cond = inline_fragment_type_condition(selection)
+                    type_cond = selection.type_condition
                     if type_cond is None or type_cond.name.value == interface_name:
                         stack.append(selection.selection_set)
                 case graphql.FragmentSpreadNode():

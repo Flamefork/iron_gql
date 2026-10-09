@@ -100,7 +100,7 @@ def _binding_entry(generated: str, binding_key: str) -> str:
 
 
 def _resolve_post(
-    _root: None, _info: GraphQLResolveInfo, *, id: str
+    _root: None, _info: GraphQLResolveInfo[object], *, id: str
 ) -> dict[str, object]:
     return {
         "id": id,
@@ -1344,7 +1344,7 @@ def test_bind_call_matching_no_discovered_binding_raises():
 
 
 def _resolve_shapes_post(
-    _root: None, _info: GraphQLResolveInfo, *, id: str
+    _root: None, _info: GraphQLResolveInfo[object], *, id: str
 ) -> dict[str, object]:
     return {
         "id": id,

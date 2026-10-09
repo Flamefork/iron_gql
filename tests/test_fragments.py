@@ -312,7 +312,9 @@ from tests.generated.fragments_transitive import queries as transitive_queries
 
 
 async def test_inline_fragment_without_type_condition(httpserver: HTTPServer):
-    def resolve_viewer(_root: None, _info: GraphQLResolveInfo) -> dict[str, str]:
+    def resolve_viewer(
+        _root: None, _info: GraphQLResolveInfo[object]
+    ) -> dict[str, str]:
         return {"id": "user-1", "name": "Bob", "email": "bob@example.com"}
 
     async with gql_server(
@@ -328,7 +330,7 @@ async def test_inline_fragment_without_type_condition(httpserver: HTTPServer):
 
 async def test_named_fragments(httpserver: HTTPServer):
     def resolve_user(
-        _root: None, _info: GraphQLResolveInfo, *, id: str
+        _root: None, _info: GraphQLResolveInfo[object], *, id: str
     ) -> dict[str, str]:
         return {"id": id, "name": "Bob", "email": "bob@example.com"}
 
@@ -346,7 +348,7 @@ async def test_named_fragments(httpserver: HTTPServer):
 
 async def test_duplicate_fragment_names_use_local_definition(httpserver: HTTPServer):
     def resolve_user(
-        _root: None, _info: GraphQLResolveInfo, *, id: str
+        _root: None, _info: GraphQLResolveInfo[object], *, id: str
     ) -> dict[str, str]:
         return {"id": id, "name": "Bob"}
 
@@ -363,12 +365,12 @@ async def test_duplicate_fragment_names_use_local_definition(httpserver: HTTPSer
 
 async def test_fragment_validation_scoped_to_query(httpserver: HTTPServer):
     def resolve_user(
-        _root: None, _info: GraphQLResolveInfo, *, id: str
+        _root: None, _info: GraphQLResolveInfo[object], *, id: str
     ) -> dict[str, str]:
         return {"id": id, "name": "Bob"}
 
     def resolve_post(
-        _root: None, _info: GraphQLResolveInfo, *, id: str
+        _root: None, _info: GraphQLResolveInfo[object], *, id: str
     ) -> dict[str, str]:
         return {"id": id, "title": "GraphQL 101"}
 
@@ -390,7 +392,7 @@ async def test_fragment_validation_scoped_to_query(httpserver: HTTPServer):
 
 async def test_inline_fragment_definitions_not_duplicated(httpserver: HTTPServer):
     def resolve_user(
-        _root: None, _info: GraphQLResolveInfo, *, id: str
+        _root: None, _info: GraphQLResolveInfo[object], *, id: str
     ) -> dict[str, str]:
         return {"id": id, "name": "Bob"}
 
@@ -409,7 +411,7 @@ async def test_transitive_fragments(httpserver: HTTPServer):
     """Test that nested fragment deps (A → B → C) are resolved correctly."""
 
     def resolve_user(
-        _root: None, _info: GraphQLResolveInfo, *, id: str
+        _root: None, _info: GraphQLResolveInfo[object], *, id: str
     ) -> dict[str, str]:
         return {
             "id": id,
@@ -435,7 +437,7 @@ async def test_exec_source_contains_expanded_fragments(httpserver: HTTPServer):
     """Verify that the request string contains expanded fragment definitions."""
 
     def resolve_user(
-        _root: None, _info: GraphQLResolveInfo, *, id: str
+        _root: None, _info: GraphQLResolveInfo[object], *, id: str
     ) -> dict[str, str]:
         return {"id": id, "name": "Bob"}
 

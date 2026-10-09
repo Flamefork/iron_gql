@@ -1,11 +1,10 @@
 from typing import Any
-from typing import cast
 
 import graphql
 
 # Typed accessors over graphql-core
 #
-# Stub holes in graphql-core 3.2, all localized here so the rest of the
+# Stub holes in graphql-core 3.3, all localized here so the rest of the
 # codebase stays fully typed. A function boundary with a declared return type
 # is the only construct that stops the taint from spreading, hence the helper
 # shape. Attribute accessors are named <owner>_<attribute>; `visit_document`
@@ -19,13 +18,12 @@ import graphql
 # `wrapping_of_type` parameter accepts the Unknown-tainted match output without
 # polluting call-sites (any narrower parameter type re-triggers
 # reportUnknownArgumentType there), and the assert keeps the runtime contract
-# honest. Resolved upstream in graphql-core 3.3.0 (covariant TypeVars, fully
-# parameterized output type aliases).
+# honest.
 #
 # Any from untyped `cached_property`: graphql-core re-exports cached_property
-# through a conditional import that pyright resolves to Any, so `.fields` and
-# `.types` on schema types are Any. The field/type accessors pin them back to
-# their documented types.
+# through a conditional import that pyright resolves to Any, so `.fields`,
+# `.types` and `.values` on schema types are Any. The field/type/value
+# accessors pin them back to their documented types.
 #
 # Any from `graphql.visit`: its declared return type is a bare `Any` (it can
 # return any node, depending on what a visitor does), even though every call
@@ -37,11 +35,6 @@ import graphql
 # Unknown from `TypeInfo.get_type`: the stub leaves the return unannotated, so
 # `type_info_type` pins it to the documented `GraphQLType | None`.
 #
-# Over-wide `InlineFragmentNode.type_condition`: the stub declares it
-# `NamedTypeNode`, but an inline fragment without a type condition
-# (`... @include(if: $x) { ... }`) really carries `None` at runtime, so every
-# reader has to narrow it back. `inline_fragment_type_condition` does that once.
-#
 # Unknown from `TypeInfo.get_input_type`, on top of the stub hole above:
 # `GraphQLInputType` is itself a `Union[..., GraphQLWrappingType]` with the
 # same bare, unparameterized `GraphQLWrappingType` member described above, so
@@ -50,15 +43,17 @@ import graphql
 # same widening `wrapping_of_type` already does for the identical reason —
 # rather than reproducing a tainted alias under a new name.
 #
-# On upgrade to graphql-core 3.3+, re-check which of these accessors can be
-# deleted in favor of direct attribute access.
+# Unknown from `coerce_input_literal`: its `type_` parameter is that same
+# tainted alias, and its return is a bare `Any` (a coerced input value of any
+# shape). `coerce_input_field_literal` takes the input field instead of its
+# type, so the tainted alias never leaves this module.
 
 
 def wrapping_of_type(gql_type: Any) -> graphql.GraphQLType:  # pyright: ignore[reportAny]
     assert isinstance(gql_type, graphql.GraphQLWrappingType), (  # noqa: S101
         "wrapping_of_type expects a GraphQLNonNull or GraphQLList"
     )
-    return gql_type.of_type  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+    return gql_type.of_type
 
 
 def field_type(
@@ -85,12 +80,6 @@ def union_types(
     return tuple(gql_type.types)  # pyright: ignore[reportAny]
 
 
-def inline_fragment_type_condition(
-    node: graphql.InlineFragmentNode,
-) -> graphql.NamedTypeNode | None:
-    return cast("graphql.NamedTypeNode | None", node.type_condition)
-
-
 def type_info_type(
     type_info: graphql.TypeInfo,
 ) -> graphql.GraphQLType | None:
@@ -115,3 +104,18 @@ def visit_document(
     doc: graphql.DocumentNode, visitor: graphql.Visitor
 ) -> graphql.DocumentNode:
     return graphql.visit(doc, visitor)  # pyright: ignore[reportAny]
+
+
+def enum_values(
+    gql_type: graphql.GraphQLEnumType,
+) -> dict[str, graphql.GraphQLEnumValue]:
+    return gql_type.values  # pyright: ignore[reportAny]
+
+
+def coerce_input_field_literal(
+    field: graphql.GraphQLInputField, literal: graphql.ConstValueNode
+) -> object:
+    return graphql.coerce_input_literal(  # pyright: ignore[reportUnknownMemberType, reportAny]
+        literal,
+        field.type,  # pyright: ignore[reportUnknownMemberType]
+    )

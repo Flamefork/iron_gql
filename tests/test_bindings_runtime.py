@@ -109,7 +109,7 @@ from tests.generated.bindings_disjoint.gql.api import LinkPartsData
 
 
 def _resolve_disjoint_post(
-    _root: None, _info: GraphQLResolveInfo, *, id: str
+    _root: None, _info: GraphQLResolveInfo[object], *, id: str
 ) -> dict[str, object]:
     if id == "img":
         return {"id": id, "attachment": {"__typename": "ImageAttachment", "url": "u1"}}
@@ -242,7 +242,7 @@ from tests.generated.bindings_overlap import queries as overlap_queries
 
 
 def _resolve_overlap_post(
-    _root: None, _info: GraphQLResolveInfo, *, id: str
+    _root: None, _info: GraphQLResolveInfo[object], *, id: str
 ) -> dict[str, object]:
     return {
         "id": id,
@@ -414,7 +414,7 @@ from tests.generated.bindings_composition.gql import api as composition_api
 
 
 def _resolve_composition_post(
-    _root: None, _info: GraphQLResolveInfo, *, id: str
+    _root: None, _info: GraphQLResolveInfo[object], *, id: str
 ) -> dict[str, object]:
     return {"id": id, "attachment": {"__typename": "ImageAttachment", "url": "u1"}}
 
@@ -566,7 +566,7 @@ from tests.generated.bindings_composition_chain import queries as chain_queries
 
 
 def _resolve_chain_post(
-    _root: None, _info: GraphQLResolveInfo, *, id: str
+    _root: None, _info: GraphQLResolveInfo[object], *, id: str
 ) -> dict[str, object]:
     return {
         "id": id,
@@ -1165,10 +1165,12 @@ def test_user_on_type_subclass_cannot_select_a_generated_combination():
 
 # Четыре позиции, два поведения. `$width` nullable без default, поэтому ведёт
 # себя как operation variable в `execute`: keyword обязателен, а `None`
-# отправляется как явный null. `$height`, `$pad` и `$slots` имеют schema default
-# и могут быть пропущены. `$slots` намеренно совпадает с именем runtime-модуля,
-# который импортирует generated code: допустимое GraphQL-имя не должно менять
-# разрешение sentinel в теле `with_args`.
+# отправляется как явный null. `$height` non-null: schema default его не
+# освобождает, keyword обязателен (`test_binding_expansion` объясняет почему).
+# `$pad` и `$slots` nullable со schema default и могут быть пропущены. `$slots`
+# намеренно совпадает с именем runtime-модуля, который импортирует generated
+# code: допустимое GraphQL-имя не должно менять разрешение sentinel в теле
+# `with_args`.
 FRAGMENT_VAR_NULLABILITY_SCHEMA = """
 type Query {
     post(id: ID!): Post
@@ -1182,7 +1184,7 @@ type Post {
 union Attachment = ImageAttachment | LinkAttachment
 
 type ImageAttachment {
-    url(width: Int, height: Int! = 10, pad: Int = 7, slots: Int! = 13): String!
+    url(width: Int, height: Int! = 10, pad: Int = 7, slots: Int = 13): String!
 }
 
 type LinkAttachment {
@@ -1223,30 +1225,34 @@ from tests.generated.bindings_fragment_var_nullability import (
 
 
 def _resolve_nullability_post(
-    _root: None, _info: GraphQLResolveInfo, *, id: str
+    _root: None, _info: GraphQLResolveInfo[object], *, id: str
 ) -> dict[str, object]:
     return {"id": id, "attachment": {"__typename": "ImageAttachment"}}
 
 
 def _resolve_sized_url(
     _root: object,
-    _info: GraphQLResolveInfo,
+    _info: GraphQLResolveInfo[object],
     *,
     width: int | None,
     height: int,
     pad: int | None,
-    slots: int,
+    slots: int | None,
 ) -> str:
     return f"{width}-{height}-{pad}-{slots}"
 
 
-async def test_only_the_defaulted_fragment_variable_may_be_omitted(
+async def test_only_a_nullable_defaulted_fragment_variable_may_be_omitted(
     httpserver: HTTPServer,
 ):
-    # `$height` and `$pad` carry a schema default and drop out of the request
+    # `$pad` and `$slots` carry a schema default and drop out of the request
     # when the keyword is left out of `with_args` entirely, so the schema's
-    # own `= 10` and `= 7` apply; `$width` has no default and an explicit
-    # `None` crosses the wire as a real null.
+    # own `= 7` and `= 13` apply; `$width` has no default and an explicit
+    # `None` crosses the wire as a real null; `$height` must be written.
+    with_args = cast("Callable[..., object]", nullability_queries.image_parts.with_args)
+    with pytest.raises(TypeError, match="height"):
+        with_args(width=5)
+
     async with gql_server(
         httpserver,
         "bindings_fragment_var_nullability",
@@ -1255,7 +1261,7 @@ async def test_only_the_defaulted_fragment_variable_may_be_omitted(
             "ImageAttachment": {"url": _resolve_sized_url},
         },
     ):
-        applied = nullability_queries.image_parts.with_args(width=None)
+        applied = nullability_queries.image_parts.with_args(width=None, height=10)
         bound = nullability_queries.get_attachment.bind(attachment=applied)
         result = await bound.execute(id="1")
         assert result.post is not None
@@ -1273,11 +1279,11 @@ async def test_only_the_defaulted_fragment_variable_may_be_omitted(
         assert image is not None
         assert image.url == "5-20-1-21"
 
-        # Каждая application задаёт весь набор: пропущенные здесь `height` и
-        # `pad` возвращаются к schema defaults независимо от предыдущей
+        # Каждая application задаёт весь набор: пропущенные здесь `pad` и
+        # `slots` возвращаются к schema defaults независимо от предыдущей
         # application. Повторное применение создаёт новую application и bind, а не
         # изменяет предыдущий.
-        again_applied = nullability_queries.image_parts.with_args(width=5)
+        again_applied = nullability_queries.image_parts.with_args(width=5, height=10)
         again_bound = nullability_queries.get_attachment.bind(attachment=again_applied)
         result = await again_bound.execute(id="1")
         assert result.post is not None
@@ -1285,7 +1291,9 @@ async def test_only_the_defaulted_fragment_variable_may_be_omitted(
         assert image is not None
         assert image.url == "5-10-7-13"
 
-        null_applied = nullability_queries.image_parts.with_args(width=5, pad=None)
+        null_applied = nullability_queries.image_parts.with_args(
+            width=5, height=10, pad=None
+        )
         null_bound = nullability_queries.get_attachment.bind(attachment=null_applied)
         result = await null_bound.execute(id="1")
         assert result.post is not None
@@ -1753,7 +1761,7 @@ from tests.generated.bindings_two_templates import queries as two_templates_quer
 
 
 def _resolve_two_templates_post(
-    _root: None, _info: GraphQLResolveInfo, *, id: str
+    _root: None, _info: GraphQLResolveInfo[object], *, id: str
 ) -> dict[str, object]:
     return {
         "id": id,
@@ -1992,7 +2000,7 @@ from tests.generated.bindings_closure_shape import queries as shape_queries
 
 
 def _resolve_shape_post(
-    _root: None, _info: GraphQLResolveInfo, *, id: str
+    _root: None, _info: GraphQLResolveInfo[object], *, id: str
 ) -> dict[str, object]:
     if id == "link":
         return {"id": id, "attachment": {"__typename": "LinkAttachment", "href": "h"}}

@@ -73,7 +73,7 @@ class _PingResult(pydantic.BaseModel):
     ping: str
 
 
-def _resolve_ping(_root: None, _info: GraphQLResolveInfo) -> str:
+def _resolve_ping(_root: None, _info: GraphQLResolveInfo[object]) -> str:
     return "pong"
 
 

@@ -365,7 +365,9 @@ def test_input_enums_and_defaults(test_project: ProjectBuilder):
 
 
 async def test_operation_variable_enum_variable_executes(httpserver: HTTPServer):
-    def resolve_search(_root: None, _info: GraphQLResolveInfo, *, status: str) -> bool:
+    def resolve_search(
+        _root: None, _info: GraphQLResolveInfo[object], *, status: str
+    ) -> bool:
         return status == "ACTIVE"
 
     async with gql_server(
@@ -558,7 +560,7 @@ def test_default_scalars_and_nested_list_input(test_project: ProjectBuilder):
 
 
 async def test_anonymous_query_generation(httpserver: HTTPServer):
-    def resolve_ping(_root: None, _info: GraphQLResolveInfo) -> str:
+    def resolve_ping(_root: None, _info: GraphQLResolveInfo[object]) -> str:
         return "pong"
 
     async with gql_server(
@@ -598,7 +600,7 @@ async def test_list_variable_argument(
     )
 
     def resolve_users(
-        _root: None, _info: GraphQLResolveInfo, *, ids: list[str] | None = None
+        _root: None, _info: GraphQLResolveInfo[object], *, ids: list[str] | None = None
     ) -> list[dict[str, str]]:
         if ids is None:
             return []

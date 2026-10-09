@@ -90,7 +90,7 @@ class Query:
     def variables(self) -> list[GQLVar]:
         return [
             parse_var(var_def, schema=self.schema, context=self.stmt.location)
-            for var_def in self.operation_def.variable_definitions
+            for var_def in self.operation_def.variable_definitions or ()
         ]
 
     @property
@@ -150,7 +150,7 @@ class FragmentStatement:
         # definition it transitively spreads, so a name-spread fragment (and
         # a bind-reachable one, which may itself spread further fragments)
         # can be validated standalone.
-        return graphql.DocumentNode(definitions=[self.definition, *self.dependencies])
+        return graphql.DocumentNode(definitions=(self.definition, *self.dependencies))
 
     @functools.cached_property
     def kind(self) -> Literal["plain", "factory"]:
@@ -619,7 +619,7 @@ def make_validation_doc(
         for name in sorted(referenced_fragments)
         if name not in defined_fragments
     ]
-    return graphql.DocumentNode(definitions=[*doc.definitions, *extra_definitions])
+    return graphql.DocumentNode(definitions=(*doc.definitions, *extra_definitions))
 
 
 def bindable_statements(

@@ -104,7 +104,7 @@ def test_sync_module_runs_query_and_mutation(httpserver: HTTPServer):
     state = {"user-1": "Graph"}
 
     def resolve_user(
-        _root: None, _info: GraphQLResolveInfo, *, id: str
+        _root: None, _info: GraphQLResolveInfo[object], *, id: str
     ) -> dict[str, str] | None:
         name = state.get(id)
         if name is None:
@@ -112,7 +112,7 @@ def test_sync_module_runs_query_and_mutation(httpserver: HTTPServer):
         return {"id": id, "name": name}
 
     def resolve_rename_user(
-        _root: None, _info: GraphQLResolveInfo, *, id: str, name: str
+        _root: None, _info: GraphQLResolveInfo[object], *, id: str, name: str
     ) -> dict[str, str]:
         state[id] = name
         return {"id": id, "name": name}
@@ -145,7 +145,7 @@ def test_sync_binding_executes_and_reads_the_slot(httpserver: HTTPServer):
     # one. `resolve_user` returns the manager nested in the same dict, so
     # graphql-core's default resolver reads it without a dedicated resolver.
     def resolve_user(
-        _root: None, _info: GraphQLResolveInfo, *, id: str
+        _root: None, _info: GraphQLResolveInfo[object], *, id: str
     ) -> dict[str, object]:
         return {
             "id": id,
@@ -162,7 +162,9 @@ def test_sync_binding_executes_and_reads_the_slot(httpserver: HTTPServer):
 
 
 def test_sync_module_raises_graphql_errors(httpserver: HTTPServer):
-    def resolve_user(_root: None, _info: GraphQLResolveInfo, *, id: str) -> None:
+    def resolve_user(
+        _root: None, _info: GraphQLResolveInfo[object], *, id: str
+    ) -> None:
         msg = f"no such user: {id}"
         raise RuntimeError(msg)
 

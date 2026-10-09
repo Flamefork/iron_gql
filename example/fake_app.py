@@ -12,7 +12,7 @@ from iron_gql.testing import accept_graphql_ws
 POSTS = [{"id": "10", "title": "Typed clients"}]
 
 
-def _resolve_thumbnail(_info: graphql.GraphQLResolveInfo, **args: int) -> str:
+def _resolve_thumbnail(_info: graphql.GraphQLResolveInfo[object], **args: int) -> str:
     return f"https://cdn.example/pic-{args['width']}.png"
 
 
@@ -45,13 +45,13 @@ SCHEMA = graphql.build_schema(
 
 
 def _resolve_user(
-    _info: graphql.GraphQLResolveInfo, **args: str
+    _info: graphql.GraphQLResolveInfo[object], **args: str
 ) -> dict[str, object] | None:
     return ALICE if args["id"] == ALICE["id"] else None
 
 
 def _resolve_post(
-    _info: graphql.GraphQLResolveInfo, **args: str
+    _info: graphql.GraphQLResolveInfo[object], **args: str
 ) -> dict[str, object] | None:
     return IMAGE_POST if args["id"] == IMAGE_POST["id"] else None
 

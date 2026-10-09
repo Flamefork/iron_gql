@@ -5,7 +5,6 @@ from dataclasses import dataclass
 
 import graphql
 
-from iron_gql.codegen.accessors import inline_fragment_type_condition
 from iron_gql.codegen.accessors import type_from_ast
 from iron_gql.codegen.accessors import type_info_input_type
 from iron_gql.codegen.accessors import visit_document
@@ -99,13 +98,13 @@ class _SlotFiller(graphql.Visitor):
         if not has_slot_directive(node):
             return None
         names = self.names_by_key[response_key(node)]
-        selections: list[graphql.SelectionNode] = [
-            *(node.selection_set.selections if node.selection_set else []),
+        selections: tuple[graphql.SelectionNode, ...] = (
+            *(node.selection_set.selections if node.selection_set else ()),
             *(
                 graphql.FragmentSpreadNode(name=graphql.NameNode(value=name))
                 for name in names
             ),
-        ]
+        )
         return graphql.FieldNode(
             alias=node.alias,
             name=node.name,
@@ -225,7 +224,7 @@ def _root_level_spreads(
                 case graphql.FieldNode():
                     continue
                 case graphql.InlineFragmentNode():
-                    type_condition = inline_fragment_type_condition(selection)
+                    type_condition = selection.type_condition
                     walk(
                         selection.selection_set,
                         current
@@ -419,8 +418,7 @@ class _VariableUsage:
     input_type: graphql.GraphQLType
     # Whether the schema declares a default for the argument/input field this
     # usage fills — not a default on the variable itself, which a fragment
-    # cannot declare. A non-null usage with a location default is still safe
-    # to omit: the schema's own default applies when it is.
+    # cannot declare.
     has_location_default: bool
 
 
@@ -515,9 +513,8 @@ def fragment_own_vars(
     errors: list[str] = []
     defined: list[SynthesizedVar] = []
     for name in sorted(usages):
-        declaration_type = _variable_declaration_type(entries=usages[name])
-        explicit_value_type = _variable_explicit_value_type(entries=usages[name])
-        if declaration_type is None or explicit_value_type is None:
+        var_type = _variable_type(entries=usages[name])
+        if var_type is None:
             errors.append(
                 _variable_type_conflict_error(
                     name=name, entries=usages[name], location=location
@@ -528,8 +525,7 @@ def fragment_own_vars(
             _synthesized_var(
                 name=name,
                 entries=usages[name],
-                declaration_type=declaration_type,
-                explicit_value_type=explicit_value_type,
+                var_type=var_type,
                 schema=schema,
             )
         )
@@ -539,60 +535,53 @@ def fragment_own_vars(
 def _common_input_type(
     left: graphql.TypeNode, right: graphql.TypeNode
 ) -> graphql.TypeNode | None:
+    common = _common_nullable_type(_nullable(left), _nullable(right))
+    if common is None:
+        return None
     if isinstance(left, graphql.NonNullTypeNode) or isinstance(
         right, graphql.NonNullTypeNode
     ):
-        left_inner = left.type if isinstance(left, graphql.NonNullTypeNode) else left
-        right_inner = (
-            right.type if isinstance(right, graphql.NonNullTypeNode) else right
-        )
-        common = _common_input_type(left_inner, right_inner)
-        if common is None:
-            return None
         return graphql.NonNullTypeNode(type=common)
-    if isinstance(left, graphql.ListTypeNode) or isinstance(
-        right, graphql.ListTypeNode
-    ):
-        if not isinstance(left, graphql.ListTypeNode) or not isinstance(
-            right, graphql.ListTypeNode
-        ):
-            return None
-        common = _common_input_type(left.type, right.type)
-        if common is None:
-            return None
-        return graphql.ListTypeNode(type=common)
-    if (
-        isinstance(left, graphql.NamedTypeNode)
-        and isinstance(right, graphql.NamedTypeNode)
-        and left.name.value == right.name.value
-    ):
-        return left
-    return None
-
-
-def _declaration_type_at_usage(entry: _VariableUsage) -> graphql.TypeNode:
-    input_type = graphql.parse_type(str(entry.input_type))
-    if entry.has_location_default and isinstance(input_type, graphql.NonNullTypeNode):
-        return input_type.type
-    return input_type
-
-
-def _variable_declaration_type(
-    *, entries: list[_VariableUsage]
-) -> graphql.TypeNode | None:
-    location_types = [_declaration_type_at_usage(entry) for entry in entries]
-    common = location_types[0]
-    for location_type in location_types[1:]:
-        common = _common_input_type(common, location_type)
-        if common is None:
-            return None
     return common
 
 
-def _variable_explicit_value_type(
-    *, entries: list[_VariableUsage]
-) -> graphql.TypeNode | None:
-    location_types = [graphql.parse_type(str(entry.input_type)) for entry in entries]
+def _nullable(
+    node: graphql.TypeNode,
+) -> graphql.NamedTypeNode | graphql.ListTypeNode:
+    match node:
+        case graphql.NonNullTypeNode():
+            return node.type
+        case graphql.NamedTypeNode() | graphql.ListTypeNode():
+            return node
+        case _:
+            # Internal invariant: the parser builds only the three concrete
+            # type nodes; `TypeNode` itself is their abstract base.
+            msg = f"Unsupported GraphQL type node: {node}"
+            raise AssertionError(msg)
+
+
+def _common_nullable_type(
+    left: graphql.NamedTypeNode | graphql.ListTypeNode,
+    right: graphql.NamedTypeNode | graphql.ListTypeNode,
+) -> graphql.NamedTypeNode | graphql.ListTypeNode | None:
+    match left, right:
+        case graphql.ListTypeNode(), graphql.ListTypeNode():
+            common = _common_input_type(left.type, right.type)
+            return None if common is None else graphql.ListTypeNode(type=common)
+        case graphql.NamedTypeNode(), graphql.NamedTypeNode() if (
+            left.name.value == right.name.value
+        ):
+            return left
+        case _:
+            return None
+
+
+def _location_type(entry: _VariableUsage) -> graphql.TypeNode:
+    return graphql.parse_type(str(entry.input_type))
+
+
+def _variable_type(*, entries: list[_VariableUsage]) -> graphql.TypeNode | None:
+    location_types = [_location_type(entry) for entry in entries]
     common = location_types[0]
     for location_type in location_types[1:]:
         common = _common_input_type(common, location_type)
@@ -605,9 +594,9 @@ def _variable_type_conflict_error(
     *, name: str, entries: list[_VariableUsage], location: str
 ) -> str:
     first = entries[0]
-    first_type = _declaration_type_at_usage(first)
+    first_type = _location_type(first)
     for other in entries[1:]:
-        if _common_input_type(first_type, _declaration_type_at_usage(other)) is None:
+        if _common_input_type(first_type, _location_type(other)) is None:
             break
     else:
         msg = "variable type conflict requested for compatible usages"
@@ -624,21 +613,27 @@ def _synthesized_var(
     *,
     name: str,
     entries: list[_VariableUsage],
-    declaration_type: graphql.TypeNode,
-    explicit_value_type: graphql.TypeNode,
+    var_type: graphql.TypeNode,
     schema: graphql.GraphQLSchema,
 ) -> SynthesizedVar:
     node = graphql.VariableDefinitionNode(
         variable=graphql.VariableNode(name=graphql.NameNode(value=name)),
-        type=declaration_type,
+        type=var_type,
         default_value=None,
         directives=(),
     )
-    resolved_explicit_value_type = type_from_ast(schema, explicit_value_type)
+    resolved_explicit_value_type = type_from_ast(schema, var_type)
     if resolved_explicit_value_type is None:
         msg = f"cannot resolve synthesized fragment variable ${name}"
         raise AssertionError(msg)
-    if all(entry.has_location_default for entry in entries):
+    # A non-null position with a schema default is not omittable: its variable
+    # would have to be declared nullable, and graphql-core 3.3, like graphql-js
+    # 17, ignores the location default for a variable used inside a fragment.
+    # The spec does not; once https://github.com/graphql/graphql-js/issues/4864
+    # is fixed and ported to graphql-core, such a position can be omittable again.
+    if not isinstance(var_type, graphql.NonNullTypeNode) and all(
+        entry.has_location_default for entry in entries
+    ):
         return OmittableSynthesizedVar(
             node=node, explicit_value_type=resolved_explicit_value_type
         )
@@ -718,7 +713,7 @@ def _variable_owner_collisions(
         for name in names:
             owners[name].append(direct_name)
     template_var_names = {
-        var_def.variable.name.value for var_def in operation.variable_definitions
+        var_def.variable.name.value for var_def in operation.variable_definitions or ()
     }
     errors: list[str] = []
     for name, owner_names in sorted(owners.items()):
@@ -758,9 +753,8 @@ def _synthesize_var_defs(
     errors: list[str] = []
     defined: list[SynthesizedVar] = []
     for name in sorted(usages):
-        declaration_type = _variable_declaration_type(entries=usages[name])
-        explicit_value_type = _variable_explicit_value_type(entries=usages[name])
-        if declaration_type is None or explicit_value_type is None:
+        var_type = _variable_type(entries=usages[name])
+        if var_type is None:
             errors.append(
                 _variable_type_conflict_error(
                     name=name, entries=usages[name], location=location
@@ -771,8 +765,7 @@ def _synthesize_var_defs(
             _synthesized_var(
                 name=name,
                 entries=usages[name],
-                declaration_type=declaration_type,
-                explicit_value_type=explicit_value_type,
+                var_type=var_type,
                 schema=schema,
             )
         )
@@ -794,7 +787,7 @@ def _build_expanded_document(
                     operation=definition.operation,
                     name=definition.name,
                     variable_definitions=(
-                        *definition.variable_definitions,
+                        *(definition.variable_definitions or ()),
                         *fragment_var_defs,
                     ),
                     directives=definition.directives,
@@ -834,7 +827,7 @@ def _build_expanded_document(
         for fragment in sorted(closure, key=lambda fragment: fragment.name.value)
         if fragment.name.value not in by_name
     )
-    return graphql.DocumentNode(definitions=definitions)
+    return graphql.DocumentNode(definitions=tuple(definitions))
 
 
 def _fragment_definition_conflict_error(*, name: str, location: str) -> str:

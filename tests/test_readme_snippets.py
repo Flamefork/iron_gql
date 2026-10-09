@@ -106,7 +106,7 @@ from tests.generated.readme_fragment_slots import queries as readme_queries
 
 
 def _resolve_post(
-    _root: None, _info: GraphQLResolveInfo, *, id: str
+    _root: None, _info: GraphQLResolveInfo[object], *, id: str
 ) -> dict[str, object]:
     if id == "img":
         return {
@@ -127,7 +127,7 @@ def _resolve_post(
 
 
 def _resolve_thumbnail(
-    _root: dict[str, object], _info: GraphQLResolveInfo, *, width: int
+    _root: dict[str, object], _info: GraphQLResolveInfo[object], *, width: int
 ) -> str:
     return f"https://cdn.example/pic-{width}.png"
 

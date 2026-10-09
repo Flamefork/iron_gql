@@ -590,7 +590,7 @@ from tests.generated.interfaces_with_fragments.gql.api import User as WithFragme
 
 async def test_union_result_validation(httpserver: HTTPServer):
     def resolve_node(
-        _root: None, _info: GraphQLResolveInfo, *, id: str
+        _root: None, _info: GraphQLResolveInfo[object], *, id: str
     ) -> dict[str, object]:
         if id == "user-1":
             return {"__typename": "User", "id": id, "name": "Bob"}
@@ -601,7 +601,7 @@ async def test_union_result_validation(httpserver: HTTPServer):
             "permissions": ["portal"],
         }
 
-    def resolve_count(_root: None, _info: GraphQLResolveInfo) -> int:
+    def resolve_count(_root: None, _info: GraphQLResolveInfo[object]) -> int:
         return 3
 
     async with gql_server(
@@ -616,7 +616,7 @@ async def test_union_result_validation(httpserver: HTTPServer):
 
 async def test_union_with_interface_fragment(httpserver: HTTPServer):
     def resolve_actor(
-        _root: None, _info: GraphQLResolveInfo, *, id: str
+        _root: None, _info: GraphQLResolveInfo[object], *, id: str
     ) -> dict[str, object]:
         if id == "user-1":
             return {"__typename": "User", "id": id, "name": "Bob"}
@@ -650,7 +650,7 @@ async def test_union_with_interface_fragment(httpserver: HTTPServer):
 
 async def test_interface_without_fragments(httpserver: HTTPServer):
     def resolve_node(
-        _root: None, _info: GraphQLResolveInfo, *, id: str
+        _root: None, _info: GraphQLResolveInfo[object], *, id: str
     ) -> dict[str, str]:
         if id == "user-1":
             return {"__typename": "User", "id": id, "name": "Bob"}
@@ -668,7 +668,7 @@ async def test_interface_without_fragments(httpserver: HTTPServer):
 
 async def test_interface_with_fragments(httpserver: HTTPServer):
     def resolve_node(
-        _root: None, _info: GraphQLResolveInfo, *, id: str
+        _root: None, _info: GraphQLResolveInfo[object], *, id: str
     ) -> dict[str, str]:
         if id == "user-1":
             return {"__typename": "User", "id": id, "name": "Bob"}
@@ -701,7 +701,7 @@ async def test_interface_with_fragments(httpserver: HTTPServer):
 
 async def test_nested_interface(httpserver: HTTPServer):
     def resolve_node(
-        _root: None, _info: GraphQLResolveInfo, *, id: str
+        _root: None, _info: GraphQLResolveInfo[object], *, id: str
     ) -> dict[str, object]:
         return {
             "__typename": "User",
@@ -722,7 +722,7 @@ async def test_nested_interface(httpserver: HTTPServer):
 
 async def test_interface_hierarchy(httpserver: HTTPServer):
     def resolve_node(
-        _root: None, _info: GraphQLResolveInfo, *, id: str
+        _root: None, _info: GraphQLResolveInfo[object], *, id: str
     ) -> dict[str, str]:
         if id == "user-1":
             return {
@@ -758,7 +758,7 @@ async def test_interface_hierarchy(httpserver: HTTPServer):
 
 async def test_interface_fragment_on_overlapping_interface(httpserver: HTTPServer):
     def resolve_node(
-        _root: None, _info: GraphQLResolveInfo, *, id: str
+        _root: None, _info: GraphQLResolveInfo[object], *, id: str
     ) -> dict[str, str]:
         if id == "user-1":
             return {"__typename": "User", "id": id, "name": "Bob"}
@@ -1250,7 +1250,7 @@ def test_union_fragment_typename_in_variants(test_project: ProjectBuilder):
 
 async def test_nullable_union_result_validation(httpserver: HTTPServer):
     def resolve_node(
-        _root: None, _info: GraphQLResolveInfo, *, id: str
+        _root: None, _info: GraphQLResolveInfo[object], *, id: str
     ) -> dict[str, object] | None:
         if id == "none":
             return None
@@ -1286,7 +1286,9 @@ async def test_nullable_union_result_validation(httpserver: HTTPServer):
 
 
 async def test_list_wrapped_union(httpserver: HTTPServer):
-    def resolve_nodes(_root: None, _info: GraphQLResolveInfo) -> list[dict[str, str]]:
+    def resolve_nodes(
+        _root: None, _info: GraphQLResolveInfo[object]
+    ) -> list[dict[str, str]]:
         return [
             {"__typename": "User", "id": "u-1", "name": "Bob"},
             {"__typename": "Post", "id": "p-1", "title": "GraphQL 101"},
@@ -1317,7 +1319,7 @@ async def test_list_wrapped_union(httpserver: HTTPServer):
 
 async def test_interface_with_named_fragment_type_condition(httpserver: HTTPServer):
     def resolve_node(
-        _root: None, _info: GraphQLResolveInfo, *, id: str
+        _root: None, _info: GraphQLResolveInfo[object], *, id: str
     ) -> dict[str, str]:
         if id == "user-1":
             return {"__typename": "User", "id": id, "name": "Bob"}
@@ -1348,7 +1350,7 @@ async def test_interface_with_named_fragment_type_condition(httpserver: HTTPServ
 
 async def test_interface_typename_in_named_fragment(httpserver: HTTPServer):
     def resolve_node(
-        _root: None, _info: GraphQLResolveInfo, *, id: str
+        _root: None, _info: GraphQLResolveInfo[object], *, id: str
     ) -> dict[str, str]:
         if id == "user-1":
             return {"__typename": "User", "id": id, "name": "Bob"}
@@ -1381,7 +1383,7 @@ async def test_interface_typename_in_named_fragment(httpserver: HTTPServer):
 async def test_interface_exhaustively_covered(httpserver: HTTPServer):
     calls = 0
 
-    def resolve_node(_root: None, _info: GraphQLResolveInfo) -> dict[str, str]:
+    def resolve_node(_root: None, _info: GraphQLResolveInfo[object]) -> dict[str, str]:
         nonlocal calls
         if calls == 0:
             calls += 1

@@ -6,6 +6,7 @@ from warnings import warn
 
 import graphql
 
+from iron_gql.codegen.accessors import coerce_input_field_literal
 from iron_gql.codegen.accessors import field_type
 from iron_gql.codegen.accessors import input_fields
 from iron_gql.codegen.ir import CollectedArtifact
@@ -148,10 +149,14 @@ def _collect_one_of_input_type(
 
 
 def _input_default_expr(gql_field: graphql.GraphQLInputField) -> str | None:
-    # graphql-core declares `default_value` as Any
-    default_value: object = gql_field.default_value  # pyright: ignore[reportAny]
-    if default_value != graphql.Undefined:
-        return repr(default_value)
+    default = gql_field.default
+    if default is not None:
+        if default.literal is None:
+            # Internal invariant: the schema comes from `build_ast_schema`,
+            # which keeps every default as the literal the SDL spells it with.
+            msg = f"input field default without a literal: {gql_field.ast_node}"
+            raise AssertionError(msg)
+        return repr(coerce_input_field_literal(gql_field, default.literal))
     if not isinstance(field_type(gql_field), graphql.GraphQLNonNull):
         return "None"
     return None

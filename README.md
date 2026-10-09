@@ -295,7 +295,7 @@ async def show_thumbnail(post_id: str, width: int) -> None:
         image = image_thumbnail.read(result.post.attachment)
 ```
 
-Обязательной fragment variable соответствует обязательный keyword в `with_args`. `None` всегда отправляет явный GraphQL `null`. Если у всех usage positions есть schema default, keyword можно пропустить: variable не попадёт в request, и применится schema default. Omission и `None` — разные состояния. Точная сигнатура `with_args` отвергает пропущенные обязательные и лишние keywords. Набор variables в application неизменяем. Applied class остаётся private; создавайте applications только через `with_args`.
+Обязательной fragment variable соответствует обязательный keyword в `with_args`. `None` всегда отправляет явный GraphQL `null`. Если все usage positions nullable и у каждой есть schema default, keyword можно пропустить: variable не попадёт в request, и применится schema default. Non-null position со schema default всё равно требует keyword: graphql-core 3.3, как и graphql-js 17, не учитывает default позиции для variable внутри fragment, и nullable-объявление отвергли бы и кодоген, и сервер. Omission и `None` — разные состояния. Точная сигнатура `with_args` отвергает пропущенные обязательные и лишние keywords. Набор variables в application неизменяем. Applied class остаётся private; создавайте applications только через `with_args`.
 
 Каждый `with_args` возвращает новую application. Applications одной factory могут содержать разные arguments, но читают одну и ту же проекцию. `read()` завершится ошибкой только для definition другой factory или другого fragment.
 

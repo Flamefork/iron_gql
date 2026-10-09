@@ -187,7 +187,7 @@ async def test_generate_and_execute_queries(httpserver: HTTPServer):
     state = {"user-1": "Graph"}
 
     def resolve_user(
-        _root: None, _info: GraphQLResolveInfo, *, id: str
+        _root: None, _info: GraphQLResolveInfo[object], *, id: str
     ) -> dict[str, str] | None:
         name = state.get(id)
         if name is None:
@@ -195,7 +195,7 @@ async def test_generate_and_execute_queries(httpserver: HTTPServer):
         return {"id": id, "name": name}
 
     def resolve_update_user(
-        _root: None, _info: GraphQLResolveInfo, *, input: dict[str, str]
+        _root: None, _info: GraphQLResolveInfo[object], *, input: dict[str, str]
     ) -> dict[str, str]:
         user_id = str(input["id"])
         state[user_id] = input["name"]
@@ -226,13 +226,17 @@ async def test_generate_and_execute_queries(httpserver: HTTPServer):
 async def test_list_allows_null_elements(httpserver: HTTPServer):
     call_count = 0
 
-    def resolve_numbers1(_root: None, _info: GraphQLResolveInfo) -> list[int | None]:
+    def resolve_numbers1(
+        _root: None, _info: GraphQLResolveInfo[object]
+    ) -> list[int | None]:
         nonlocal call_count
         if call_count == 0:
             return [1, None]  # valid: [Int]! allows null elements
         return [1, 2]
 
-    def resolve_numbers2(_root: None, _info: GraphQLResolveInfo) -> list[int | None]:
+    def resolve_numbers2(
+        _root: None, _info: GraphQLResolveInfo[object]
+    ) -> list[int | None]:
         nonlocal call_count
         call_count += 1
         if call_count == 1:
@@ -254,7 +258,7 @@ async def test_list_allows_null_elements(httpserver: HTTPServer):
 
 async def test_variable_defaults_optional(httpserver: HTTPServer):
     def resolve_posts(
-        _root: None, _info: GraphQLResolveInfo, *, limit: int = 5
+        _root: None, _info: GraphQLResolveInfo[object], *, limit: int = 5
     ) -> list[int]:
         return list(range(limit))
 
@@ -311,7 +315,7 @@ def test_prepare_variables_detects_file_uploads():
 
 
 async def test_close(httpserver: HTTPServer):
-    def resolve_ping(_root: None, _info: GraphQLResolveInfo) -> str:
+    def resolve_ping(_root: None, _info: GraphQLResolveInfo[object]) -> str:
         return "pong"
 
     async with gql_server(httpserver, "runtime", {"Query": {"ping": resolve_ping}}):
@@ -436,7 +440,7 @@ async def test_file_upload_multipart(httpserver: HTTPServer):
 
 async def test_custom_scalar_in_variables_and_response(httpserver: HTTPServer):
     def resolve_events(
-        _root: None, _info: GraphQLResolveInfo, *, since: str
+        _root: None, _info: GraphQLResolveInfo[object], *, since: str
     ) -> list[dict[str, str]]:
         return [{"name": "Launch", "startedAt": since}]
 
@@ -575,7 +579,7 @@ async def test_malformed_response_body(httpserver: HTTPServer):
 
 async def test_one_of_input_runtime(httpserver: HTTPServer):
     def resolve_search(
-        _root: None, _info: GraphQLResolveInfo, *, criteria: dict[str, str]
+        _root: None, _info: GraphQLResolveInfo[object], *, criteria: dict[str, str]
     ) -> str:
         if "name" in criteria:
             return f"found by name: {criteria['name']}"

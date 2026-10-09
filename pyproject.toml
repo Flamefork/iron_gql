@@ -23,7 +23,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-codegen = ["graphql-core>=3.2.6,<4"]
+codegen = ["graphql-core>=3.3.0,<3.4"]
 testing = ["uvicorn>=0.34"]
 
 [project.urls]

@@ -195,7 +195,7 @@ def test_each_form_resolves_a_colliding_slot_name():
 
 
 def _resolve_post(
-    _root: None, _info: GraphQLResolveInfo, *, id: str
+    _root: None, _info: GraphQLResolveInfo[object], *, id: str
 ) -> dict[str, object]:
     attachment = {"__typename": "ImageAttachment", "url": f"u-{id}"}
     return {"id": id, "attachment": attachment, "author": {"name": "a"}}

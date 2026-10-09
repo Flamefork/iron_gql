@@ -270,7 +270,7 @@ USER: dict[str, object] = {
 
 
 def _resolve_user(
-    _root: None, _info: GraphQLResolveInfo, **arguments: object
+    _root: None, _info: GraphQLResolveInfo[object], **arguments: object
 ) -> dict[str, object]:
     # One resolver for every row: which fields reach the response is the
     # directives' business, not the server's, so it always offers all of them

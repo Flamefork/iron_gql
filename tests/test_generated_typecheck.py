@@ -144,8 +144,8 @@ CHECK_SOURCES = {
 
         queries.image_parts.with_args(width=1)
         queries.image_parts.with_args(width=1, height=20)
-        queries.image_parts.with_args(width=1, pad=None)
-        queries.image_parts.with_args(width=1, slots=20)
+        queries.image_parts.with_args(width=1, height=20, pad=None)
+        queries.image_parts.with_args(width=1, height=20, slots=None)
         queries.image_parts.with_args(width=1, height=None)
     """,
     "check_on_type_constructor.py": """
@@ -560,10 +560,13 @@ def test_generated_and_scratch_typing_contracts(tmp_path: Path):
     ]
 
     errors = _errors(report, check_paths["check_defaulted_fragment_variables.py"])
-    assert len(errors) == 1, errors
-    assert errors[0].range.start.line == 7, errors
-    assert "None" in errors[0].message
-    assert "int" in errors[0].message
+    assert [(error.range.start.line, error.rule) for error in errors] == [
+        (3, "reportCallIssue"),
+        (7, "reportArgumentType"),
+    ], errors
+    assert "height" in errors[0].message
+    assert "None" in errors[1].message
+    assert "int" in errors[1].message
 
     errors = _errors(report, check_paths["check_on_type_constructor.py"])
     assert len(errors) == 1, errors

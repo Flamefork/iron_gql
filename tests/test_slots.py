@@ -1681,7 +1681,7 @@ def test_slot_subtree_ignores_foreign_fields_at_every_depth():
 
 def _resolve_post(attachment: dict[str, object] | None):
     def resolve(
-        _root: None, _info: GraphQLResolveInfo, *, id: str
+        _root: None, _info: GraphQLResolveInfo[object], *, id: str
     ) -> dict[str, object]:
         return {"id": id, "attachment": attachment}
 
@@ -1745,7 +1745,7 @@ LINK_PAYLOAD: dict[str, object] = {
 
 
 def _resolve_attachment_by_id(
-    _root: None, _info: GraphQLResolveInfo, *, id: str
+    _root: None, _info: GraphQLResolveInfo[object], *, id: str
 ) -> dict[str, object]:
     return {"id": id, "attachment": {"img": IMAGE_PAYLOAD, "link": LINK_PAYLOAD}[id]}
 
@@ -1807,7 +1807,9 @@ MULTI_ROWS: list[dict[str, object]] = [
 ]
 
 
-def _resolve_rows(_root: None, _info: GraphQLResolveInfo) -> list[dict[str, object]]:
+def _resolve_rows(
+    _root: None, _info: GraphQLResolveInfo[object]
+) -> list[dict[str, object]]:
     return MULTI_ROWS
 
 
