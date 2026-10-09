@@ -1293,7 +1293,7 @@ def _collect_operation_vars(
             type_info=collector.collect_type(variable.gql_type),
             default_expr=(
                 repr(variable.default_value)
-                if variable.default_value != graphql.Undefined
+                if variable.default_value is not graphql.Undefined
                 else None
             ),
         )

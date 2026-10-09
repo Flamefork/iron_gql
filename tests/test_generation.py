@@ -1201,6 +1201,50 @@ async def test_defaulted_directive_variable_stays_conditional(
         assert off.user.name is None  # pyright: ignore[reportAny]
 
 
+async def test_null_defaulted_variable_is_omittable(
+    test_project: ProjectBuilder, httpserver: HTTPServer
+):
+    # graphql-core 3.3 makes `Undefined == None` true, so an explicit `= null`
+    # is told apart from "no default" only by identity.
+    def resolve_users(
+        _root: None, _info: GraphQLResolveInfo[object], *, ids: list[str] | None
+    ) -> list[dict[str, str]]:
+        assert ids is None
+        return [{"id": "all"}]
+
+    async with test_project.server(
+        httpserver,
+        schema="""
+        type Query {
+            users(ids: [ID!]): [User!]!
+        }
+
+        type User {
+            id: ID!
+        }
+        """,
+        queries='''
+        from sample_app.gql.api import api_gql
+
+        get_users = api_gql(
+            """
+            query GetUsers($ids: [ID!] = null) {
+                users(ids: $ids) {
+                    id
+                }
+            }
+            """
+        )
+        ''',
+        resolvers={"Query": {"users": resolve_users}},
+    ) as (_api_module, queries_module):
+        source = (test_project.root / "sample_app/gql/api.py").read_text()
+        assert "execute(self, *, ids: list[builtins.str] | None = None)" in source
+        # attributes of a dynamically imported module are Any
+        result = await queries_module.get_users.execute()  # pyright: ignore[reportAny]
+        assert [user.id for user in result.users] == ["all"]  # pyright: ignore[reportAny]
+
+
 def test_sync_and_async_modules_coexist(test_project: ProjectBuilder):
     test_project.prepare(
         schema="""
