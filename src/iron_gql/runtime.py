@@ -91,7 +91,7 @@ class GQLOperation:
 # and each of its bindings is a `GQLBoundOperation` of its own. It exists so the
 # generated `gql()`'s catch-all overload can name a type that covers a template,
 # instead of widening to `object` and stripping every `gql(some_variable)` in
-# the package of its typing.
+# the module of its typing.
 class GQLTemplate:
     pass
 

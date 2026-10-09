@@ -104,7 +104,7 @@ def _broken_app(*_args: object) -> Awaitable[None]:
 def test_generated_client_binding_has_fixed_name(
     test_project: ProjectBuilder,
 ):
-    test_project.gql_pkg = "sample_app.gql.reports"
+    test_project.gql_module = "sample_app.gql.reports"
     test_project.prepare(
         schema=_PING_SCHEMA,
         queries="""

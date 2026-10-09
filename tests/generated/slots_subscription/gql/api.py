@@ -147,7 +147,7 @@ class WatchAttachment(runtime.GQLTemplate):
     def bind[TModelAttachment: pydantic.BaseModel, TReadsAttachment](self, *, attachment: OnImageAttachment[TModelAttachment, TReadsAttachment]) -> WatchAttachmentBound[WatchAttachmentResult[OnImageAttachment[TModelAttachment, TReadsAttachment] | TReadsAttachment]]: ...
     def bind(self, *, attachment: slots.GQLBindableFragment[pydantic.BaseModel, Any] | Sequence[slots.GQLBindableFragment[pydantic.BaseModel, Any]] = ()) -> runtime.GQLBoundOperation:
         if slots.binding_key({'attachment': attachment}) not in self._binding_specs:
-            raise LookupError("unknown bind combination for WatchAttachment; single-fragment and empty combinations are generated from the schema, so this is a tuple combination no call site writes literally - write it, then regenerate the package. A call whose template is an expression the scan cannot follow is never read either: those are listed, with the reason, in the debug run's ignored_binds.json")
+            raise LookupError("unknown bind combination for WatchAttachment; single-fragment and empty combinations are generated from the schema, so this is a tuple combination no call site writes literally - write it, then regenerate the module. A call whose template is an expression the scan cannot follow is never read either: those are listed, with the reason, in the debug run's ignored_binds.json")
         return WatchAttachmentBound[WatchAttachmentResult].bound__(
             self._binding_specs[slots.binding_key({'attachment': attachment})], {'attachment': slots.as_bindable_fragments(attachment)},
         )
@@ -172,6 +172,6 @@ def api_gql(stmt: str) -> runtime.GQLOperation | slots.GQLFragment[pydantic.Base
         msg = "unknown GraphQL statement passed to api_gql; "
         msg += "the generator only discovers bare-name calls with a "
         msg += "single string literal - check the call site, then "
-        msg += "regenerate the package"
+        msg += "regenerate the module"
         raise LookupError(msg)
     return _statement_factories[stmt]()

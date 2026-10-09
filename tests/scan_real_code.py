@@ -1,14 +1,14 @@
 import sysconfig
 from pathlib import Path
 
-from iron_gql.codegen.discovery import discover_package
+from iron_gql.codegen.discovery import discover_module
 from iron_gql.codegen.discovery import walk_scanned_tree
 
 SITE_PACKAGES = Path(sysconfig.get_paths()["purelib"])
 
 
 def assert_real_code_package(package: Path) -> None:
-    found = discover_package(package, "api_gql", skip_path=package / "unused.py")
+    found = discover_module(package, "api_gql", skip_path=package / "unused.py")
     if found.binds:
         msg = f"{package.name}: discovery ошибочно нашёл GraphQL binding"
         raise AssertionError(msg)

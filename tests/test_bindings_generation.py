@@ -177,7 +177,7 @@ async def test_a_bind_written_entirely_inside_a_function_runs(
 
 def test_generated_source_strips_slot_and_renders_binding(test_project: ProjectBuilder):
     test_project.prepare(schema=SCHEMA, queries=QUERIES)
-    assert test_project.generate() is True
+    test_project.generate()
     generated = (test_project.root / "sample_app/gql/api.py").read_text()
     # `@slot` legitimately survives elsewhere in the file: the raw template
     # text is still the literal key `api_gql(...)`/`.bind(...)` resolve through
@@ -525,7 +525,7 @@ def test_bind_spellings_resolve_to_distinct_runtime_combinations():
 # One slot over a union, three fragments: two spread-compatible with it and
 # one on a type the slot can never hold. `Album` is reachable from
 # `ImageAttachment` so the third fragment is legal GraphQL and still outside
-# every slot of the package.
+# every slot of the module.
 ENUMERATION_SCHEMA = """
 type Query {
     post(id: ID!): Post
@@ -611,7 +611,7 @@ def test_every_compatible_pair_is_generated_without_a_call_site():
     assert "'AlbumSummary'" not in _binding_specs_block(source)
     # ...and no overload accepts it either: `OnAlbum` is not among the bases
     # the slot's signature names, which is what rejects an incompatible
-    # fragment now that every fragment of the package is typed (its class
+    # fragment now that every fragment of the module is typed (its class
     # still derives from `OnAlbum`, which is why this asks the signatures
     # rather than the whole module).
     signatures = [line for line in source.splitlines() if "def bind" in line]
@@ -764,7 +764,7 @@ def test_a_template_one_slot_under_the_limit_still_generates(
     # pin: five slots are 3**5 = 243 texts, and those the generator does
     # write. Without this a limit of 1 would pass the test above.
     test_project.prepare(schema=_many_slot_schema(5), queries=_many_slot_queries(5))
-    assert test_project.generate() is True
+    test_project.generate()
     generated = (test_project.root / "sample_app/gql/api.py").read_text()
     assert _binding_specs_block(generated, "Many").count("# See:") == 243
 
@@ -880,7 +880,7 @@ def test_every_remedy_the_conditional_diagnosis_names_generates(
     test_project.prepare(
         schema=CONDITIONAL_SCHEMA, queries=_conditional_queries(outer_body)
     )
-    assert test_project.generate() is True
+    test_project.generate()
 
 
 def test_two_fragment_variables_mapping_to_one_python_name_are_rejected(
@@ -993,7 +993,7 @@ def test_a_fragment_variable_named_args_is_accepted(test_project: ProjectBuilder
         )
         """,
     )
-    assert test_project.generate() is True
+    test_project.generate()
 
 
 def test_a_fragments_own_variable_at_two_conflicting_types_is_rejected(
@@ -1209,7 +1209,7 @@ def test_a_literal_tuple_bind_types_a_factory_by_its_applied_class(
         bound = get_attachment.bind(attachment=(image_url, image_thumbnail))
         """,
     )
-    assert test_project.generate() is True
+    test_project.generate()
     generated = (test_project.root / "sample_app/gql/api.py").read_text()
     constraints = "(_ImageThumbnailApplied, ImageUrl)"
     assert f"TFillAttachment1: {constraints}" in generated
@@ -1550,11 +1550,11 @@ def _slot_name_queries(slot: str, *, binds: str) -> str:
 
 
 # Every name `bind()`'s namespace already holds, with what holds it. The
-# receiver is written by the renderer for every method; the package-spelled
+# receiver is written by the renderer for every method; the module-spelled
 # names are read from where they are declared rather than copied -- a copy
 # would keep passing for names the claim list no longer holds, and stay silent
 # about the ones it grows. The two classes are this corpus's own, since the
-# renderer names them after the template rather than after the package.
+# renderer names them after the template rather than after the module.
 CLAIMED_BIND_NAMES = (
     ("self", "the method receiver"),
     *bind_body_fixed_names(),
@@ -1766,7 +1766,7 @@ def test_fragment_reached_by_both_the_template_and_the_binding_composes(
 ):
     # The brick shape the README recommends: a template spreads `Common` by
     # name, and a bound fragment's own closure reaches the same `Common`.
-    # Both sides pull the definition from one package-wide namespace, so the
+    # Both sides pull the definition from one module-wide namespace, so the
     # shared name is the same definition -- appending the closure blindly put
     # two copies into the expanded document and graphql-core rejected it as
     # "there can be only one fragment named 'Common'", pointing at the
@@ -1988,7 +1988,7 @@ def test_static_factory_spread_without_a_compatible_slot_is_allowed(
         """,
     )
 
-    assert test_project.generate() is True
+    test_project.generate()
 
 
 def test_static_factory_spread_conflicts_with_a_compatible_transitive_owner(
@@ -2147,7 +2147,7 @@ def test_on_type_bases_come_only_from_actual_fragment_conditions(
         """,
     )
 
-    assert test_project.generate() is True
+    test_project.generate()
     generated = (test_project.root / "sample_app/gql/api.py").read_text()
     assert "class OnUser(slots.GQLBindableFragment" in generated
     assert "class OnImage(slots.GQLBindableFragment" not in generated

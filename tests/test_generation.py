@@ -1,5 +1,6 @@
 import importlib
 import json
+import os
 from typing import cast
 
 import pytest
@@ -8,9 +9,10 @@ from pydantic import alias_generators
 from pytest_httpserver import HTTPServer
 
 from iron_gql import runtime
+from iron_gql.codegen import GenerationMode
 from iron_gql.codegen import GraphQLGenerationError
 from iron_gql.codegen import UnknownGQLTypeWarning
-from iron_gql.codegen import generate_gql_package
+from iron_gql.codegen import render_gql_module
 from tests.conftest import ProjectBuilder
 from tests.conftest import generated_package
 from tests.conftest import gql_server
@@ -131,17 +133,16 @@ ping = api_gql(
 
     test_project.activate_workspace(workspace)
 
-    changed = generate_gql_package(
+    render_gql_module(
         mode="async",
         schema_path=schema_path,
         src_path=workspace,
-        package_full_name="sample_app.gql.api",
+        module_full_name="sample_app.gql.api",
         base_url_import="sample_app.settings:GRAPHQL_URL",
         scalars={"ID": "builtins:str"},
         to_camel_fn_full_name="pydantic.alias_generators:to_camel",
         to_snake_fn=alias_generators.to_snake,
-    )
-    assert changed is True
+    ).write()
 
     test_project.clear_import_state()
     api_module = importlib.import_module("sample_app.gql.api")
@@ -263,8 +264,7 @@ def test_input_type_dependency_ordering(test_project: ProjectBuilder):
         """,
     )
 
-    changed = test_project.generate()
-    assert changed is True
+    test_project.generate()
 
     api = test_project.import_api()
     # attributes of a dynamically imported module are Any
@@ -303,8 +303,7 @@ def test_self_referential_input_type(test_project: ProjectBuilder):
         """,
     )
 
-    changed = test_project.generate()
-    assert changed is True
+    test_project.generate()
 
     api = test_project.import_api()
     # attributes of a dynamically imported module are Any
@@ -354,8 +353,7 @@ def test_input_enums_and_defaults(test_project: ProjectBuilder):
         """,
     )
 
-    changed = test_project.generate()
-    assert changed is True
+    test_project.generate()
 
     api = test_project.import_api()
     # attributes of a dynamically imported module are Any
@@ -407,8 +405,7 @@ def test_unknown_scalar_warning(test_project: ProjectBuilder):
     )
 
     with pytest.warns(UnknownGQLTypeWarning, match="Unknown scalar type: CustomScalar"):
-        changed = test_project.generate()
-    assert changed is True
+        test_project.generate()
 
     api = test_project.import_api()
     # attributes of a dynamically imported module are Any
@@ -431,11 +428,11 @@ def test_debug_artifacts_generation(test_project: ProjectBuilder):
     )
 
     debug_dir = test_project.root / "debug_out"
-    generate_gql_package(
+    render_gql_module(
         mode="async",
         schema_path=test_project.root / "schema.graphql",
         src_path=test_project.root,
-        package_full_name="sample_app.gql.api",
+        module_full_name="sample_app.gql.api",
         base_url_import="sample_app.settings:GRAPHQL_URL",
         debug_path=debug_dir,
     )
@@ -450,7 +447,7 @@ def test_debug_artifacts_generation(test_project: ProjectBuilder):
 def test_debug_artifacts_are_written_for_an_invalid_query(
     test_project: ProjectBuilder,
 ):
-    # A debug run is most useful on a package that does not compile, so the
+    # A debug run is most useful on a module that does not compile, so the
     # dump must survive one. `$id`'s type does not exist in the schema, which
     # makes the document invalid *and* makes resolving its variable
     # declarations raise -- reading them for every raw statement used to kill
@@ -469,11 +466,11 @@ def test_debug_artifacts_are_written_for_an_invalid_query(
 
     debug_dir = test_project.root / "debug_out"
     with pytest.raises(GraphQLGenerationError, match="NoSuchType"):
-        generate_gql_package(
+        render_gql_module(
             mode="async",
             schema_path=test_project.root / "schema.graphql",
             src_path=test_project.root,
-            package_full_name="sample_app.gql.api",
+            module_full_name="sample_app.gql.api",
             base_url_import="sample_app.settings:GRAPHQL_URL",
             debug_path=debug_dir,
         )
@@ -513,7 +510,7 @@ def test_introspection_query(test_project: ProjectBuilder):
         )
         """,
     )
-    assert test_project.generate() is True
+    test_project.generate()
 
 
 def test_default_scalars_and_nested_list_input(test_project: ProjectBuilder):
@@ -541,15 +538,15 @@ def test_default_scalars_and_nested_list_input(test_project: ProjectBuilder):
     )
 
     # helper to test scalars=None path involved in default args
-    # generate_gql_package has scalars=None default.
-    generate_gql_package(
+    # render_gql_module has scalars=None default.
+    render_gql_module(
         mode="async",
         schema_path=test_project.root / "schema.graphql",
         src_path=test_project.root,
-        package_full_name="sample_app.gql.api",
+        module_full_name="sample_app.gql.api",
         base_url_import="sample_app.settings:GRAPHQL_URL",
         # scalars argument omitted to test default None -> {}
-    )
+    ).write()
 
     api = test_project.import_api()
     variables, files = runtime.serialize_variables({
@@ -643,8 +640,60 @@ def test_regeneration_is_idempotent(test_project: ProjectBuilder):
         """,
     )
 
-    assert test_project.generate() is True
-    assert test_project.generate() is False
+    test_project.generate()
+    assert test_project.render().diff() == ""
+
+
+@pytest.mark.parametrize("mode", ["async", "sync"])
+def test_render_writes_nothing_until_write(
+    test_project: ProjectBuilder, mode: GenerationMode
+):
+    test_project.prepare(
+        schema="""
+            type Query {
+                ping: String
+            }
+        """,
+        queries="""
+        from sample_app.gql.api import api_gql
+        q = api_gql("query Ping { ping }")
+        """,
+    )
+
+    rendered = test_project.render(mode=mode)
+
+    assert not rendered.path.exists()
+    assert rendered.diff().startswith(f"--- /dev/null\n+++ {rendered.path}\n")
+    assert not rendered.path.exists()
+
+    rendered.write()
+    assert rendered.path.read_bytes() == rendered.text.encode()
+    test_project.import_api()
+
+
+def test_render_leaves_stale_module_untouched(test_project: ProjectBuilder):
+    test_project.prepare(
+        schema="""
+            type Query {
+                ping: String
+            }
+        """,
+        queries="""
+        from sample_app.gql.api import api_gql
+        q = api_gql("query Ping { ping }")
+        """,
+    )
+    rendered = test_project.render()
+    rendered.write()
+    stale = "# stale\n" + rendered.text
+    rendered.path.write_text(stale, encoding="utf-8")
+    os.utime(rendered.path, ns=(1_000_000_000, 1_000_000_000))
+
+    diff = test_project.render().diff()
+
+    assert "\n-# stale\n" in diff
+    assert rendered.path.read_text(encoding="utf-8") == stale
+    assert rendered.path.stat().st_mtime_ns == 1_000_000_000
 
 
 def test_no_queries_generates_module(test_project: ProjectBuilder):
@@ -660,7 +709,7 @@ def test_no_queries_generates_module(test_project: ProjectBuilder):
         """,
     )
 
-    assert test_project.generate() is True
+    test_project.generate()
     api = test_project.import_api()
     namespace = cast("dict[str, object]", vars(api))
     assert isinstance(namespace["_client"], runtime.AsyncGQLClient)
@@ -699,7 +748,7 @@ def test_duplicate_identical_query_deduplication(test_project: ProjectBuilder):
         """,
     )
 
-    assert test_project.generate() is True
+    test_project.generate()
 
 
 def test_duplicate_query_with_different_spelling_resolves_both(
@@ -979,7 +1028,7 @@ def test_unparseable_file_stops_generation_before_the_package_is_rewritten(
 ):
     # A file the interpreter cannot parse may declare statements or binds of
     # its own -- nothing short of parsing it can tell. Skipping it would
-    # rewrite the committed package with everything it owns silently removed,
+    # rewrite the committed module with everything it owns silently removed,
     # so the run stops instead, naming the file, and the previous generated
     # module is left untouched on disk.
     test_project.prepare(
@@ -1000,7 +1049,7 @@ def test_unparseable_file_stops_generation_before_the_package_is_rewritten(
         )
         """,
     )
-    assert test_project.generate() is True
+    test_project.generate()
     before = (test_project.root / "sample_app/gql/api.py").read_text()
 
     broken = test_project.root / "sample_app" / "broken.py"
@@ -1150,7 +1199,7 @@ async def test_defaulted_directive_variable_stays_conditional(
         assert off.user.name is None  # pyright: ignore[reportAny]
 
 
-def test_sync_and_async_packages_coexist(test_project: ProjectBuilder):
+def test_sync_and_async_modules_coexist(test_project: ProjectBuilder):
     test_project.prepare(
         schema="""
         type Query {
@@ -1180,11 +1229,8 @@ def test_sync_and_async_packages_coexist(test_project: ProjectBuilder):
         ''',
     )
 
-    assert test_project.generate() is True
-    assert (
-        test_project.generate(package_full_name="sample_app.gql.api_sync", mode="sync")
-        is True
-    )
+    test_project.generate()
+    test_project.generate(module_full_name="sample_app.gql.api_sync", mode="sync")
 
     async_source = (test_project.root / "sample_app/gql/api.py").read_text()
     sync_source = (test_project.root / "sample_app/gql/api_sync.py").read_text()

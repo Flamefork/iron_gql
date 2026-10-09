@@ -27,7 +27,8 @@ from werkzeug import Request
 from werkzeug import Response
 
 from iron_gql.codegen import GenerationMode
-from iron_gql.codegen import generate_gql_package
+from iron_gql.codegen import RenderedModule
+from iron_gql.codegen import render_gql_module
 from iron_gql.codegen.accessors import object_fields
 from iron_gql.runtime import ASGIApp
 from iron_gql.runtime import ASGIReceive
@@ -169,7 +170,7 @@ def readme_fenced_blocks() -> list[str]:
 
 
 # What a fixture's schema gets unless it asks for more. A scalar mapping is
-# rendered as an unconditional import into the package that receives it, so a
+# rendered as an unconditional import into the module that receives it, so a
 # mapping every fixture carries is a line in every committed module -- the
 # schemas that need `Upload` pass it themselves (see `WIRE_SHAPE_SCHEMA`).
 DEFAULT_SCALARS: Mapping[str, str] = {"ID": "builtins:str"}
@@ -199,24 +200,24 @@ def generated_package(
     write_text(root / "__init__.py", "")
     write_text(root / "settings.py", 'GRAPHQL_URL = "http://testserver/graphql/"\n')
     write_text(root / "queries.py", queries)
-    generate_gql_package(
+    render_gql_module(
         mode=mode,
         schema_path=root / "schema.graphql",
         src_path=root,
-        package_full_name="gql.api",
+        module_full_name="gql.api",
         base_url_import=f"tests.generated.{name}.settings:GRAPHQL_URL",
         scalars=dict(scalars),
         to_camel_fn_full_name="pydantic.alias_generators:to_camel",
         to_snake_fn=alias_generators.to_snake,
-    )
+    ).write()
     write_text(root / "gql" / "__init__.py", "")
     _check_generated(_generated_api_module(name), root / "schema.graphql")
 
 
 def _check_generated(module: ModuleType, schema_path: Path) -> None:
-    # The post-conditions every generated package answers. Here rather than in
-    # a test of their own so no package can be generated without them: the
-    # packages a check is applied to by hand are the packages someone thought
+    # The post-conditions every generated module answers. Here rather than in
+    # a test of their own so no module can be generated without them: the
+    # modules a check is applied to by hand are the modules someone thought
     # of, and the gaps are the ones nobody did.
     assert_module_is_self_contained(module)
     assert_method_namespaces_are_closed(module)
@@ -315,7 +316,7 @@ class ProjectBuilder:
     root: Path
     _monkeypatch: pytest.MonkeyPatch = field(repr=False)
     package: str = "sample_app"
-    gql_pkg: str = "sample_app.gql.api"
+    gql_module: str = "sample_app.gql.api"
 
     def write_file(self, path: Path, content: str) -> None:
         write_text(path, content)
@@ -344,28 +345,44 @@ class ProjectBuilder:
         )
         self.write_file(self.root / f"{self.package}/queries.py", queries)
 
-    def generate(
+    def render(
         self,
         to_camel_fn_full_name: str = "pydantic.alias_generators:to_camel",
         base_url_import: str | None = None,
-        package_full_name: str | None = None,
+        module_full_name: str | None = None,
         mode: GenerationMode = "async",
         to_snake_fn: Callable[[str], str] = alias_generators.to_snake,
-    ) -> bool:
-        return generate_gql_package(
+    ) -> RenderedModule:
+        return render_gql_module(
             mode=mode,
             schema_path=self.root / "schema.graphql",
             src_path=self.root,
-            package_full_name=package_full_name or self.gql_pkg,
+            module_full_name=module_full_name or self.gql_module,
             base_url_import=base_url_import or f"{self.package}.settings:GRAPHQL_URL",
             scalars={"ID": "builtins:str"},
             to_camel_fn_full_name=to_camel_fn_full_name,
             to_snake_fn=to_snake_fn,
         )
 
+    def generate(
+        self,
+        to_camel_fn_full_name: str = "pydantic.alias_generators:to_camel",
+        base_url_import: str | None = None,
+        module_full_name: str | None = None,
+        mode: GenerationMode = "async",
+        to_snake_fn: Callable[[str], str] = alias_generators.to_snake,
+    ) -> None:
+        self.render(
+            to_camel_fn_full_name=to_camel_fn_full_name,
+            base_url_import=base_url_import,
+            module_full_name=module_full_name,
+            mode=mode,
+            to_snake_fn=to_snake_fn,
+        ).write()
+
     def import_api(self) -> ModuleType:
         self.clear_import_state()
-        return importlib.import_module(self.gql_pkg)
+        return importlib.import_module(self.gql_module)
 
     def activate_workspace(self, path: Path) -> None:
         self._monkeypatch.chdir(path)
@@ -373,10 +390,9 @@ class ProjectBuilder:
         self._monkeypatch.syspath_prepend(str(path))  # pyright: ignore[reportUnknownMemberType]
 
     def generate_and_import(self) -> tuple[ModuleType, ModuleType]:
-        changed = self.generate()
-        assert changed is True  # noqa: S101
+        self.generate()
         self.clear_import_state()
-        api_module = importlib.import_module(self.gql_pkg)
+        api_module = importlib.import_module(self.gql_module)
         queries_module = importlib.import_module(f"{self.package}.queries")
         _check_generated(api_module, self.root / "schema.graphql")
         return api_module, queries_module

@@ -40,11 +40,11 @@ from iron_gql.codegen.ir import CollectedFactoryFragment
 from iron_gql.codegen.ir import CollectedField
 from iron_gql.codegen.ir import CollectedFragment
 from iron_gql.codegen.ir import CollectedModel
+from iron_gql.codegen.ir import CollectedModuleIR
 from iron_gql.codegen.ir import CollectedOmittableFragmentArg
 from iron_gql.codegen.ir import CollectedOnTypeBase
 from iron_gql.codegen.ir import CollectedOperation
 from iron_gql.codegen.ir import CollectedOperationVar
-from iron_gql.codegen.ir import CollectedPackageIR
 from iron_gql.codegen.ir import CollectedPlainFragment
 from iron_gql.codegen.ir import CollectedReadableFragment
 from iron_gql.codegen.ir import CollectedRequiredFragmentArg
@@ -99,7 +99,7 @@ class CollectionContext:
 def fragment_model_name(fragment_name: str) -> str:
     # Named after the fragment and kept out of the rename pass: a caller writes
     # this type in helper signatures, so it must not shift when unrelated
-    # operations join the package.
+    # operations join the module.
     return f"{capitalize_first(fragment_name)}Data"
 
 
@@ -151,7 +151,7 @@ def _reject_conditionally_merged_slot(
 
 
 @dataclass(kw_only=True)
-class PackageCollector:
+class ModuleCollector:
     scalars: dict[str, ImportRef]
     to_snake_fn: StrTransform
     schema: graphql.GraphQLSchema
@@ -708,9 +708,9 @@ def _dedup_statements[T: _NamedStatement](
 
 
 @dataclass(kw_only=True, frozen=True)
-class _PreparedPackage:
+class _PreparedModule:
     # Deduplicated and partitioned once, up front: everything downstream in
-    # `collect_package_ir` reads from here instead of re-deriving it.
+    # `collect_module_ir` reads from here instead of re-deriving it.
     operation_queries: list[Operation]
     template_queries: list[Template]
     fragment_statements: list[FragmentStatement]
@@ -728,11 +728,11 @@ class _PreparedPackage:
     fragment_by_stmt: dict[Statement, FragmentStatement]
 
 
-def _prepare_package(
+def _prepare_module(
     operations: list[Operation],
     templates: list[Template],
     discovered_fragments: list[FragmentStatement],
-) -> _PreparedPackage:
+) -> _PreparedModule:
     # Built off the discovered lists, before dedup collapses equal-text
     # statements: a bind names the raw `Statement` discovery saw, so only the
     # pre-dedup identity resolves it. Named apart from the deduplicated lists
@@ -749,7 +749,7 @@ def _prepare_package(
     canonical_fragments, fragment_locations, fragment_spellings = _dedup_statements(
         discovered_fragments, "fragments"
     )
-    return _PreparedPackage(
+    return _PreparedModule(
         operation_queries=[q for q in queries if isinstance(q, Operation)],
         template_queries=[q for q in queries if isinstance(q, Template)],
         fragment_statements=canonical_fragments,
@@ -763,7 +763,7 @@ def _prepare_package(
 
 
 def _collect_result_artifacts(
-    collector: PackageCollector,
+    collector: ModuleCollector,
     operation_queries: list[Operation],
     template_queries: list[Template],
     fragment_statements: list[FragmentStatement],
@@ -819,7 +819,7 @@ def _literal_combinations(
     # Keyed by the combination, so two call sites spelling one combination
     # (`bind(a=x)` and `bind(a=x, b=[])`) meet on one entry carrying both
     # lines. `binds` already arrives in `(file, lineno)` order --
-    # `discover_package` sorts it there, at the one place binds enter the
+    # `discover_module` sorts it there, at the one place binds enter the
     # pipeline -- so both the keys and each entry's locations inherit one
     # deterministic order without re-sorting.
     literal: dict[Combination, tuple[str, ...]] = {}
@@ -848,7 +848,7 @@ def _literal_combinations(
 def _validate_bind_keyword_checks(
     *,
     checks: Sequence[BindKeywordCheck],
-    prepared: _PreparedPackage,
+    prepared: _PreparedModule,
     templates: list[CollectedTemplate],
 ) -> None:
     templates_by_name = {template.name: template for template in templates}
@@ -872,7 +872,7 @@ def _validate_bind_keyword_checks(
 def _enumerate_and_expand(
     *,
     schema: graphql.GraphQLSchema,
-    prepared: _PreparedPackage,
+    prepared: _PreparedModule,
     collected_templates: list[CollectedTemplate],
     fragment_defs: dict[str, graphql.FragmentDefinitionNode],
     binds: list[BindDecl],
@@ -929,7 +929,7 @@ def _expand_combinations(
     }
     expanded_combinations: list[_ExpandedCombination] = []
     # Accumulated across every combination, like parser.py's validate_bind_*
-    # family: a user whose package produces several broken pairs sees every
+    # family: a user whose module produces several broken pairs sees every
     # diagnosis in one regeneration instead of fixing them one at a time.
     errors: list[str] = []
     for combination in combinations:
@@ -1020,7 +1020,7 @@ def _combination_locations(
 
 
 def _collect_input_artifacts_with_binds(
-    collector: PackageCollector,
+    collector: ModuleCollector,
     queries: Sequence[Query],
     expanded_combinations: list[_ExpandedCombination],
     *,
@@ -1029,7 +1029,7 @@ def _collect_input_artifacts_with_binds(
     # A binding's synthesized fragment variables can introduce an input type
     # no query declares on its own -- and so can a factory fragment's own
     # variables, independent of whether any combination ever reaches it: a
-    # factory compatible with no slot in the package still renders a
+    # factory compatible with no slot in the module still renders a
     # `with_args`, and an input-object-typed parameter there needs its class
     # defined somewhere. `fragment_gql_vars` is every factory's own variables
     # (`collect._collect_fragments`), which is always a superset of what any
@@ -1050,7 +1050,7 @@ def _collect_input_artifacts_with_binds(
     # variable names on its own -- reached through no input object and through
     # no query variable -- would never be collected here. It is collected once
     # more when the bindings themselves are built, but that happens after the
-    # package's enum list is taken, and the module then names a type it never
+    # module's enum list is taken, and the module then names a type it never
     # declares.
     #
     # Only the enums, not the whole type: `collect_type` also diagnoses -- an
@@ -1064,7 +1064,7 @@ def _collect_input_artifacts_with_binds(
     return artifacts
 
 
-def collect_package_ir(
+def collect_module_ir(
     *,
     schema: graphql.GraphQLSchema,
     operations: list[Operation],
@@ -1075,11 +1075,9 @@ def collect_package_ir(
     discovered_texts: tuple[str, ...],
     scalars: dict[str, ImportRef],
     to_snake_fn: StrTransform,
-) -> CollectedPackageIR:
-    prepared = _prepare_package(operations, templates, fragment_statements)
-    collector = PackageCollector(
-        schema=schema, scalars=scalars, to_snake_fn=to_snake_fn
-    )
+) -> CollectedModuleIR:
+    prepared = _prepare_module(operations, templates, fragment_statements)
+    collector = ModuleCollector(schema=schema, scalars=scalars, to_snake_fn=to_snake_fn)
     # `fragment_closure` внутри `_collect_fragments` использует полный набор
     # slot types ещё до построения template IR.
     slot_type_names = frozenset(
@@ -1109,7 +1107,7 @@ def collect_package_ir(
         schema=schema,
         slot_type_names=slot_type_names,
     )
-    # The package's fragment namespace, which is both what a slot's
+    # The module's fragment namespace, which is both what a slot's
     # compatibility is measured against and what the enumeration draws its
     # combinations from.
     fragment_defs = {
@@ -1160,7 +1158,7 @@ def collect_package_ir(
         collected_fragment_by_name={f.fragment_name: f for f in fragments},
     )
 
-    return CollectedPackageIR(
+    return CollectedModuleIR(
         result_artifacts=result_artifacts,
         input_artifacts=input_artifacts,
         operations=collected_operations,
@@ -1178,7 +1176,7 @@ def collect_package_ir(
     )
 
 
-def parametrize_slot_paths(ir: CollectedPackageIR) -> CollectedPackageIR:
+def parametrize_slot_paths(ir: CollectedModuleIR) -> CollectedModuleIR:
     # Один generic по slots набор result models на template вместо копии на
     # каждый binding. Readable fragments передаются как type argument result,
     # поэтому generic-код сохраняет форму result и может читать slot через
@@ -1290,7 +1288,7 @@ def _open_model_names(
 
 
 def _collect_operation_vars(
-    collector: PackageCollector, gql_vars: list[GQLVar]
+    collector: ModuleCollector, gql_vars: list[GQLVar]
 ) -> tuple[CollectedOperationVar, ...]:
     return tuple(
         CollectedOperationVar(
@@ -1319,7 +1317,7 @@ def _collect_on_type_bases(
 
 
 def _collect_fragments(
-    collector: PackageCollector,
+    collector: ModuleCollector,
     statements: list[FragmentStatement],
     locations: dict[str, list[str]],
     spellings: dict[str, list[str]],
@@ -1342,7 +1340,7 @@ def _collect_fragments(
     }
     fragments: list[CollectedFragment] = []
     # Собственные variables каждой factory возвращаются отдельно, чтобы
-    # `collect_package_ir` включил их input-типы в closure артефактов. Это
+    # `collect_module_ir` включил их input-типы в closure артефактов. Это
     # требуется и для factory, несовместимой ни с одним slot: она не попадает
     # ни в одну combination, но её `with_args` всё равно должен ссылаться на
     # определённые в модуле типы.
@@ -1436,7 +1434,7 @@ def _collect_fragments(
 
 
 def _collect_operations(
-    collector: PackageCollector,
+    collector: ModuleCollector,
     queries: list[Operation],
     locations: dict[str, list[str]],
     spellings: dict[str, list[str]],
@@ -1460,7 +1458,7 @@ def _slot_node_types(
     # One template's node models grouped by the slot each one belongs to, in
     # walk order. `slot_name` on the model is the canonical record of that
     # belonging -- this only re-keys it, over the artifacts of a single walk,
-    # because a slot's name is unique per template and not per package.
+    # because a slot's name is unique per template and not per module.
     #
     # A response key identifies a slot for the whole operation -- one `bind()`
     # keyword, one node-type union -- while the generated node model is per
@@ -1475,7 +1473,7 @@ def _slot_node_types(
 
 
 def _template_slot(
-    collector: PackageCollector,
+    collector: ModuleCollector,
     slot: QuerySlot,
     node_types: dict[str, tuple[str, ...]],
     fragment_defs: dict[str, graphql.FragmentDefinitionNode],
@@ -1513,7 +1511,7 @@ def _statically_excluded_slot_errors(
     # any model carrying the slot's name, once the walk is over, is the fact
     # itself. That is also what lets `CollectedTemplateSlot.node_types` be
     # non-empty by construction. Gathered across every template first, so one
-    # regeneration names every excluded slot in the package.
+    # regeneration names every excluded slot in the module.
     return [
         _excluded_slot_error(slot.name, query)
         for query in queries
@@ -1561,7 +1559,7 @@ def _slot_name_collision_error(
 
 
 def _collect_templates(
-    collector: PackageCollector,
+    collector: ModuleCollector,
     queries: list[Template],
     locations: dict[str, list[str]],
     spellings: dict[str, list[str]],

@@ -335,7 +335,7 @@ class Overloaded(runtime.GQLTemplate):
     def bind[TModelCls: pydantic.BaseModel, TReadsCls, TModelBind: pydantic.BaseModel, TReadsBind, TModelPydantic: pydantic.BaseModel, TReadsPydantic](self, *, cls: OnLinkAttachment[TModelCls, TReadsCls], bind: OnLinkAttachment[TModelBind, TReadsBind], pydantic: OnLinkAttachment[TModelPydantic, TReadsPydantic]) -> OverloadedBound[OverloadedResult[OnLinkAttachment[TModelCls, TReadsCls] | TReadsCls, OnLinkAttachment[TModelBind, TReadsBind] | TReadsBind, OnLinkAttachment[TModelPydantic, TReadsPydantic] | TReadsPydantic]]: ...
     def bind(self, *, cls: slots.GQLBindableFragment[pydantic.BaseModel, Any] | Sequence[slots.GQLBindableFragment[pydantic.BaseModel, Any]] = (), bind: slots.GQLBindableFragment[pydantic.BaseModel, Any] | Sequence[slots.GQLBindableFragment[pydantic.BaseModel, Any]] = (), pydantic: slots.GQLBindableFragment[pydantic.BaseModel, Any] | Sequence[slots.GQLBindableFragment[pydantic.BaseModel, Any]] = ()) -> runtime.GQLBoundOperation:
         if slots.binding_key({'cls': cls, 'bind': bind, 'pydantic': pydantic}) not in self._binding_specs:
-            raise LookupError("unknown bind combination for Overloaded; single-fragment and empty combinations are generated from the schema, so this is a tuple combination no call site writes literally - write it, then regenerate the package. A call whose template is an expression the scan cannot follow is never read either: those are listed, with the reason, in the debug run's ignored_binds.json")
+            raise LookupError("unknown bind combination for Overloaded; single-fragment and empty combinations are generated from the schema, so this is a tuple combination no call site writes literally - write it, then regenerate the module. A call whose template is an expression the scan cannot follow is never read either: those are listed, with the reason, in the debug run's ignored_binds.json")
         return OverloadedBound[OverloadedResult].bound__(
             self._binding_specs[slots.binding_key({'cls': cls, 'bind': bind, 'pydantic': pydantic})], {'cls': slots.as_bindable_fragments(cls), 'bind': slots.as_bindable_fragments(bind), 'pydantic': slots.as_bindable_fragments(pydantic)},
         )
@@ -349,7 +349,7 @@ class Inline(runtime.GQLTemplate):
 
     def bind(self, *, cls: Sequence[Never] = ()) -> InlineBound[InlineResult[Never]]:
         if slots.binding_key({'cls': cls}) not in self._binding_specs:
-            raise LookupError("unknown bind combination for Inline; single-fragment and empty combinations are generated from the schema, so this is a tuple combination no call site writes literally - write it, then regenerate the package. A call whose template is an expression the scan cannot follow is never read either: those are listed, with the reason, in the debug run's ignored_binds.json")
+            raise LookupError("unknown bind combination for Inline; single-fragment and empty combinations are generated from the schema, so this is a tuple combination no call site writes literally - write it, then regenerate the module. A call whose template is an expression the scan cannot follow is never read either: those are listed, with the reason, in the debug run's ignored_binds.json")
         return InlineBound[InlineResult].bound__(
             self._binding_specs[slots.binding_key({'cls': cls})], {'cls': slots.as_bindable_fragments(cls)},
         )
@@ -380,6 +380,6 @@ def api_gql(stmt: str) -> runtime.GQLOperation | slots.GQLFragment[pydantic.Base
         msg = "unknown GraphQL statement passed to api_gql; "
         msg += "the generator only discovers bare-name calls with a "
         msg += "single string literal - check the call site, then "
-        msg += "regenerate the package"
+        msg += "regenerate the module"
         raise LookupError(msg)
     return _statement_factories[stmt]()

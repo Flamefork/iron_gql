@@ -401,7 +401,7 @@ generated_package(
     )
 
     bound = get_attachment.bind(attachment=image_parts)
-    # `foreign_parts` is a typed definition like every fragment of a package
+    # `foreign_parts` is a typed definition like every fragment of a module
     # with a template, and its own combination is enumerated whether or not
     # anybody writes it -- so it is foreign to `bound`'s closure while still
     # being a real definition, which is what "outside this binding's closure"
@@ -911,7 +911,7 @@ type Post {
 union Attachment = ImageAttachment | LinkAttachment
 
 # `size` carries the one type a fragment variable can introduce that no other
-# position in the package mentions: an enum reaches the module only through
+# position in the module mentions: an enum reaches the module only through
 # this binding's synthesized variable, so a collection order that reads
 # fragment variables after the enums are already listed emits `size: Size`
 # with no `Size` to go with it. Optional, so the variable stays a free rider

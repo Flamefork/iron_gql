@@ -228,7 +228,7 @@ class GetBoard(runtime.GQLTemplate):
     def bind[TModelBoard: pydantic.BaseModel, TReadsBoard](self, *, board: OnBoard[TModelBoard, TReadsBoard]) -> GetBoardBound[GetBoardResult[OnBoard[TModelBoard, TReadsBoard] | TReadsBoard]]: ...
     def bind(self, *, board: slots.GQLBindableFragment[pydantic.BaseModel, Any] | Sequence[slots.GQLBindableFragment[pydantic.BaseModel, Any]] = ()) -> runtime.GQLBoundOperation:
         if slots.binding_key({'board': board}) not in self._binding_specs:
-            raise LookupError("unknown bind combination for GetBoard; single-fragment and empty combinations are generated from the schema, so this is a tuple combination no call site writes literally - write it, then regenerate the package. A call whose template is an expression the scan cannot follow is never read either: those are listed, with the reason, in the debug run's ignored_binds.json")
+            raise LookupError("unknown bind combination for GetBoard; single-fragment and empty combinations are generated from the schema, so this is a tuple combination no call site writes literally - write it, then regenerate the module. A call whose template is an expression the scan cannot follow is never read either: those are listed, with the reason, in the debug run's ignored_binds.json")
         return GetBoardBound[GetBoardResult].bound__(
             self._binding_specs[slots.binding_key({'board': board})], {'board': slots.as_bindable_fragments(board)},
         )
@@ -248,7 +248,7 @@ class PingBoard(runtime.GQLTemplate):
     def bind[TModelBoard: pydantic.BaseModel, TReadsBoard](self, *, board: OnBoard[TModelBoard, TReadsBoard]) -> PingBoardBound[PingBoardResult[OnBoard[TModelBoard, TReadsBoard] | TReadsBoard]]: ...
     def bind(self, *, board: slots.GQLBindableFragment[pydantic.BaseModel, Any] | Sequence[slots.GQLBindableFragment[pydantic.BaseModel, Any]] = ()) -> runtime.GQLBoundOperation:
         if slots.binding_key({'board': board}) not in self._binding_specs:
-            raise LookupError("unknown bind combination for PingBoard; single-fragment and empty combinations are generated from the schema, so this is a tuple combination no call site writes literally - write it, then regenerate the package. A call whose template is an expression the scan cannot follow is never read either: those are listed, with the reason, in the debug run's ignored_binds.json")
+            raise LookupError("unknown bind combination for PingBoard; single-fragment and empty combinations are generated from the schema, so this is a tuple combination no call site writes literally - write it, then regenerate the module. A call whose template is an expression the scan cannot follow is never read either: those are listed, with the reason, in the debug run's ignored_binds.json")
         return PingBoardBound[PingBoardResult].bound__(
             self._binding_specs[slots.binding_key({'board': board})], {'board': slots.as_bindable_fragments(board)},
         )
@@ -268,7 +268,7 @@ class PingMain(runtime.GQLTemplate):
     def bind[TModelMain: pydantic.BaseModel, TReadsMain](self, *, main: OnBoard[TModelMain, TReadsMain]) -> PingMainBound[PingMainResult[OnBoard[TModelMain, TReadsMain] | TReadsMain]]: ...
     def bind(self, *, main: slots.GQLBindableFragment[pydantic.BaseModel, Any] | Sequence[slots.GQLBindableFragment[pydantic.BaseModel, Any]] = ()) -> runtime.GQLBoundOperation:
         if slots.binding_key({'main': main}) not in self._binding_specs:
-            raise LookupError("unknown bind combination for PingMain; single-fragment and empty combinations are generated from the schema, so this is a tuple combination no call site writes literally - write it, then regenerate the package. A call whose template is an expression the scan cannot follow is never read either: those are listed, with the reason, in the debug run's ignored_binds.json")
+            raise LookupError("unknown bind combination for PingMain; single-fragment and empty combinations are generated from the schema, so this is a tuple combination no call site writes literally - write it, then regenerate the module. A call whose template is an expression the scan cannot follow is never read either: those are listed, with the reason, in the debug run's ignored_binds.json")
         return PingMainBound[PingMainResult].bound__(
             self._binding_specs[slots.binding_key({'main': main})], {'main': slots.as_bindable_fragments(main)},
         )
@@ -288,7 +288,7 @@ class MergedBoard(runtime.GQLTemplate):
     def bind[TModelMerged: pydantic.BaseModel, TReadsMerged](self, *, merged: OnBoard[TModelMerged, TReadsMerged]) -> MergedBoardBound[MergedBoardResult[OnBoard[TModelMerged, TReadsMerged] | TReadsMerged]]: ...
     def bind(self, *, merged: slots.GQLBindableFragment[pydantic.BaseModel, Any] | Sequence[slots.GQLBindableFragment[pydantic.BaseModel, Any]] = ()) -> runtime.GQLBoundOperation:
         if slots.binding_key({'merged': merged}) not in self._binding_specs:
-            raise LookupError("unknown bind combination for MergedBoard; single-fragment and empty combinations are generated from the schema, so this is a tuple combination no call site writes literally - write it, then regenerate the package. A call whose template is an expression the scan cannot follow is never read either: those are listed, with the reason, in the debug run's ignored_binds.json")
+            raise LookupError("unknown bind combination for MergedBoard; single-fragment and empty combinations are generated from the schema, so this is a tuple combination no call site writes literally - write it, then regenerate the module. A call whose template is an expression the scan cannot follow is never read either: those are listed, with the reason, in the debug run's ignored_binds.json")
         return MergedBoardBound[MergedBoardResult].bound__(
             self._binding_specs[slots.binding_key({'merged': merged})], {'merged': slots.as_bindable_fragments(merged)},
         )
@@ -322,6 +322,6 @@ def api_gql(stmt: str) -> runtime.GQLOperation | slots.GQLFragment[pydantic.Base
         msg = "unknown GraphQL statement passed to api_gql; "
         msg += "the generator only discovers bare-name calls with a "
         msg += "single string literal - check the call site, then "
-        msg += "regenerate the package"
+        msg += "regenerate the module"
         raise LookupError(msg)
     return _statement_factories[stmt]()

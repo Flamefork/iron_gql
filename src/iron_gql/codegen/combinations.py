@@ -17,7 +17,7 @@ MAX_COMBINATIONS_PER_TEMPLATE = 256
 
 
 class CombinationLimitError(GraphQLGenerationError):
-    # Its own type so a caller can tell "this package asks for more texts than
+    # Its own type so a caller can tell "these statements ask for more texts than
     # a module should hold" from every other rejection of the GraphQL input,
     # which all share `GraphQLGenerationError`.
     pass

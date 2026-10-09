@@ -347,7 +347,7 @@ class CollectedOperation:
     class_name: str
     # The printed operation text: static, sent as-is by `execute` — a plain
     # operation never has a slot to expand at bind time (see
-    # `collect.collect_package_ir`: one with `@slot` is a template instead).
+    # `collect.collect_module_ir`: one with `@slot` is a template instead).
     exec_source: str
     variables: tuple[CollectedOperationVar, ...]
     is_subscription: bool
@@ -557,14 +557,14 @@ class CollectedBinding:
 
 
 @dataclass(kw_only=True, frozen=True)
-class CollectedPackageIR:
+class CollectedModuleIR:
     result_artifacts: list[CollectedArtifact]
     input_artifacts: list[CollectedArtifact]
     operations: list[CollectedOperation]
     fragments: list[CollectedFragment]
-    # One entry per composite type the package needs a base for -- see
+    # One entry per composite type the module needs a base for -- see
     # `CollectedOnTypeBase`. Rendered ahead of the fragment classes that
-    # derive from them (`render.render_package`).
+    # derive from them (`render.render_module`).
     on_type_bases: list[CollectedOnTypeBase]
     templates: list[CollectedTemplate]
     bindings: list[CollectedBinding]

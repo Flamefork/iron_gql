@@ -5,7 +5,7 @@ from example import ch06_slots
 from example import ch07_subscriptions
 from example import ch08_sync
 from example import fake_app
-from example.generate import generate_packages
+from example.generate import render_modules
 from example.gql import api
 from example.gql import api_sync
 from iron_gql.runtime import AsyncGQLClient
@@ -63,5 +63,5 @@ def test_sync_fetch_user(capsys: pytest.CaptureFixture[str]):
     assert "Alice (alice@example.com), role: ADMIN" in capsys.readouterr().out
 
 
-def test_generated_packages_are_current():
-    assert generate_packages() == [False, False]
+def test_generated_modules_are_current():
+    assert [rendered.diff() for rendered in render_modules()] == ["", ""]

@@ -79,7 +79,7 @@ generated_package(
         """
     )
 
-    # Both fragments are typed definitions because the package holds a template at all;
+    # Both fragments are typed definitions because the module holds a template at all;
     # these two binds are here for the bound operations the tests below read
     # through, not to make the definitions exist.
     with_user_fields = with_slot.bind(node=user_fields)
@@ -150,9 +150,9 @@ def test_closure_narrows_to_the_intersection_over_every_compatible_slot_type(
     test_project: ProjectBuilder,
 ):
     # `NodeParts` (on the `Attachment` interface) spreads `ImageBits` inside an
-    # `... on ImageAttachment` inline fragment -- reachable at the package's
+    # `... on ImageAttachment` inline fragment -- reachable at the module's
     # only slot in `test_fragment_class_declares_its_on_type_base_and_closure`
-    # above, where the closure comes out as the full union. Here the package
+    # above, where the closure comes out as the full union. Here the module
     # carries a *second* slot, of the disjoint type `LinkAttachment`: at that
     # slot `ImageBits` is reachable on paper (`NodeParts` is still
     # spread-compatible, through `Attachment`) but at no typename the slot can
@@ -205,9 +205,9 @@ def test_closure_narrows_to_the_intersection_over_every_compatible_slot_type(
         bound = get_image.bind(image_attachment=node_parts)
         """,
     )
-    assert test_project.generate() is True
+    test_project.generate()
     generated = (test_project.root / "sample_app/gql/api.py").read_text()
-    # `ImageBits` is a class of the package all the same -- the narrowing is
+    # `ImageBits` is a class of the module all the same -- the narrowing is
     # about what `NodeParts` may promise, not about which fragments exist --
     # so its absence from the closure below is a fact about that promise and
     # not about a fragment the generator happened to drop.
@@ -341,7 +341,7 @@ def test_duplicate_fragment_names_across_statements_are_rejected(
         )
 
         # The template is what makes the two fragments typed definitions: a
-        # package with no template compiles no fragment into one, so the name
+        # module with no template compiles no fragment into one, so the name
         # collision would never surface.
         """,
     )
@@ -475,7 +475,7 @@ def test_local_shadowing_resolves_spreads_local_first(
         )
         """,
     )
-    assert test_project.generate() is True
+    test_project.generate()
 
 
 def test_duplicate_fragment_with_different_spelling_returns_new_definitions(
@@ -652,7 +652,7 @@ def test_unknown_statement_is_rejected_instead_of_a_bare_operation():
     # A stale generated module fed a statement it does not know used to hand
     # back a bare GQLOperation whose first use failed far from the cause; the
     # lookup now names the actual problem.
-    with pytest.raises(LookupError, match="regenerate the package"):
+    with pytest.raises(LookupError, match="regenerate the module"):
         api.api_gql("query Unknown { viewer { id } }")
 
 
@@ -701,7 +701,7 @@ def test_bundle_statement_returns_the_untyped_catch_all(
     # keeps returning the untyped catch-all — its fragments are spread
     # statically by name, and the call sits at module level, so a raise here
     # would break the import of user code. The other case that stays untyped
-    # — a single fragment in a package with no template at all — is pinned by
+    # — a single fragment in a module with no template at all — is pinned by
     # test_package_without_operations_passes_fragments_through above.
     test_project.prepare(
         schema=SCHEMA,

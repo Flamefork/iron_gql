@@ -218,7 +218,7 @@ class GetEvents(runtime.GQLTemplate):
     def bind[TModelBoard: pydantic.BaseModel, TReadsBoard](self, *, board: OnBoard[TModelBoard, TReadsBoard]) -> GetEventsBound[GetEventsResult[OnBoard[TModelBoard, TReadsBoard] | TReadsBoard]]: ...
     def bind(self, *, board: slots.GQLBindableFragment[pydantic.BaseModel, Any] | Sequence[slots.GQLBindableFragment[pydantic.BaseModel, Any]] = ()) -> runtime.GQLBoundOperation:
         if slots.binding_key({'board': board}) not in self._binding_specs:
-            raise LookupError("unknown bind combination for GetEvents; single-fragment and empty combinations are generated from the schema, so this is a tuple combination no call site writes literally - write it, then regenerate the package. A call whose template is an expression the scan cannot follow is never read either: those are listed, with the reason, in the debug run's ignored_binds.json")
+            raise LookupError("unknown bind combination for GetEvents; single-fragment and empty combinations are generated from the schema, so this is a tuple combination no call site writes literally - write it, then regenerate the module. A call whose template is an expression the scan cannot follow is never read either: those are listed, with the reason, in the debug run's ignored_binds.json")
         return GetEventsBound[GetEventsResult].bound__(
             self._binding_specs[slots.binding_key({'board': board})], {'board': slots.as_bindable_fragments(board)},
         )
@@ -238,7 +238,7 @@ class GetCards(runtime.GQLTemplate):
     def bind[TModelCards: pydantic.BaseModel, TReadsCards](self, *, cards: OnCard[TModelCards, TReadsCards]) -> GetCardsBound[GetCardsResult[OnCard[TModelCards, TReadsCards] | TReadsCards]]: ...
     def bind(self, *, cards: slots.GQLBindableFragment[pydantic.BaseModel, Any] | Sequence[slots.GQLBindableFragment[pydantic.BaseModel, Any]] = ()) -> runtime.GQLBoundOperation:
         if slots.binding_key({'cards': cards}) not in self._binding_specs:
-            raise LookupError("unknown bind combination for GetCards; single-fragment and empty combinations are generated from the schema, so this is a tuple combination no call site writes literally - write it, then regenerate the package. A call whose template is an expression the scan cannot follow is never read either: those are listed, with the reason, in the debug run's ignored_binds.json")
+            raise LookupError("unknown bind combination for GetCards; single-fragment and empty combinations are generated from the schema, so this is a tuple combination no call site writes literally - write it, then regenerate the module. A call whose template is an expression the scan cannot follow is never read either: those are listed, with the reason, in the debug run's ignored_binds.json")
         return GetCardsBound[GetCardsResult].bound__(
             self._binding_specs[slots.binding_key({'cards': cards})], {'cards': slots.as_bindable_fragments(cards)},
         )
@@ -269,6 +269,6 @@ def api_gql(stmt: str) -> runtime.GQLOperation | slots.GQLFragment[pydantic.Base
         msg = "unknown GraphQL statement passed to api_gql; "
         msg += "the generator only discovers bare-name calls with a "
         msg += "single string literal - check the call site, then "
-        msg += "regenerate the package"
+        msg += "regenerate the module"
         raise LookupError(msg)
     return _statement_factories[stmt]()

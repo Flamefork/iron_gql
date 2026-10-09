@@ -7,7 +7,7 @@ axes were covered several times over.
 
 So the axes are crossed here instead: each kind of GraphQL type appears in
 each position a type can be written in, under each of the canonical wrappers,
-in one schema and one generated package.
+in one schema and one generated module.
 """
 
 from dataclasses import dataclass
@@ -44,9 +44,9 @@ WRAPS: tuple[tuple[str, str], ...] = (
 @dataclass(frozen=True, kw_only=True)
 class Cell:
     # A cell is named twice over: as the schema spells it and as the generated
-    # module does. The two have to differ -- the package's `to_camel` alias
+    # module does. The two have to differ -- the module's `to_camel` alias
     # generator is what carries a field between them -- so a corpus that used
-    # one name for both would be testing a package configured unlike any real
+    # one name for both would be testing a module configured unlike any real
     # one.
     name: str
     python: str

@@ -6,7 +6,7 @@ import graphql
 
 from iron_gql.codegen.accessors import type_info_type
 from iron_gql.codegen.ir import CollectedArtifact
-from iron_gql.codegen.ir import CollectedPackageIR
+from iron_gql.codegen.ir import CollectedModuleIR
 from iron_gql.codegen.ir import GraphQLGenerationError
 from iron_gql.codegen.ir import slot_roots
 from iron_gql.codegen.selection import has_conditional_directive
@@ -22,7 +22,7 @@ def extend_schema_with_slot(schema: graphql.GraphQLSchema) -> graphql.GraphQLSch
     # so it is declared only for the validation pass. A schema may already
     # declare it — accepted when the declaration means the same thing, rejected
     # with a diagnosis otherwise, instead of surfacing graphql-core's raw
-    # redefinition TypeError from a package that may not even use slots.
+    # redefinition TypeError from a module that may not even use slots.
     existing = schema.get_directive(SLOT_DIRECTIVE_NAME)
     if existing is None:
         return graphql.extend_schema(schema, graphql.parse(SLOT_DIRECTIVE_SDL))
@@ -190,13 +190,13 @@ def reachable_model_names(
     )
 
 
-def _slot_names_by_model(ir: CollectedPackageIR) -> dict[str, str]:
+def _slot_names_by_model(ir: CollectedModuleIR) -> dict[str, str]:
     return {
         model.name: slot_name for model, slot_name in slot_roots(ir.result_artifacts)
     }
 
 
-def validate_no_nested_slots(ir: CollectedPackageIR) -> list[str]:
+def validate_no_nested_slots(ir: CollectedModuleIR) -> list[str]:
     # Expressed over the collected models rather than the AST: collect has
     # already merged the field nodes of a response key, so a slot reached
     # through a merged key — `x @slot` on one node and `x { y @slot }` on

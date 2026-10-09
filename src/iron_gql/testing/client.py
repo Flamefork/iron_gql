@@ -12,7 +12,7 @@ from iron_gql.runtime import AsyncGQLClient
 from iron_gql.runtime import GQLClient
 
 
-# Binds `client` into a generated sync package for the duration of a test. The
+# Binds `client` into a generated sync module for the duration of a test. The
 # original client is restored and `client` is closed on the way out.
 @contextmanager
 def _sync_client_context(

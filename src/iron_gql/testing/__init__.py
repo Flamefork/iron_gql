@@ -1,4 +1,4 @@
-"""Test helpers for consumers of a generated package.
+"""Test helpers for consumers of a generated module.
 
 Split by dependency: what this module re-exports needs nothing beyond the
 iron_gql runtime, so a project that only swaps clients or scripts a

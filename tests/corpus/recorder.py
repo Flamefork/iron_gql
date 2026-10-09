@@ -1,6 +1,6 @@
 """The interpreter side of the discovery oracle.
 
-A stand-in for a generated package's `api_gql` that records what each
+A stand-in for a generated module's `api_gql` that records what each
 `.bind(...)` call site *actually* reads when the module runs. The scan reads
 the AST and answers the same question statically; `test_discovery_oracle`
 holds the two answers against each other.

@@ -72,7 +72,7 @@ generated_package(
     )
 
     # Finding F12: the renderer emits a distinct sync path for bindings (the
-    # branch's real-world consumer is a sync package), but nothing calls
+    # branch's real-world consumer is a sync module), but nothing calls
     # execute() on one -- this template/fragment/bind exercises exactly that.
     get_user_with_manager = api_gql(
         """
@@ -100,7 +100,7 @@ generated_package(
 from tests.generated.sync_package import queries as sync_queries
 
 
-def test_sync_package_runs_query_and_mutation(httpserver: HTTPServer):
+def test_sync_module_runs_query_and_mutation(httpserver: HTTPServer):
     state = {"user-1": "Graph"}
 
     def resolve_user(
@@ -161,7 +161,7 @@ def test_sync_binding_executes_and_reads_the_slot(httpserver: HTTPServer):
         assert manager.name == "Carol"
 
 
-def test_sync_package_raises_graphql_errors(httpserver: HTTPServer):
+def test_sync_module_raises_graphql_errors(httpserver: HTTPServer):
     def resolve_user(_root: None, _info: GraphQLResolveInfo, *, id: str) -> None:
         msg = f"no such user: {id}"
         raise RuntimeError(msg)
@@ -185,7 +185,7 @@ def _renamed_ws_app(payloads: list[dict[str, object]]) -> ASGIApp:
     return app
 
 
-def test_sync_package_streams_subscription():
+def test_sync_module_streams_subscription():
     app = _renamed_ws_app([
         {"userRenamed": {"id": "user-1", "name": "Bob"}},
         {"userRenamed": {"id": "user-1", "name": "Carol"}},

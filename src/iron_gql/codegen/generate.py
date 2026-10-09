@@ -1,10 +1,14 @@
+import dataclasses
+import difflib
+import re
+from dataclasses import dataclass
 from pathlib import Path
 
 from pydantic import alias_generators
 
-from iron_gql.codegen.collect import collect_package_ir
+from iron_gql.codegen.collect import collect_module_ir
 from iron_gql.codegen.collect import parametrize_slot_paths
-from iron_gql.codegen.discovery import discover_package
+from iron_gql.codegen.discovery import discover_module
 from iron_gql.codegen.ir import GraphQLGenerationError
 from iron_gql.codegen.ir import ImportRef
 from iron_gql.codegen.ir import StrTransform
@@ -15,46 +19,92 @@ from iron_gql.codegen.parser import parse_gql_queries
 from iron_gql.codegen.parser import write_ignored_binds
 from iron_gql.codegen.parser import write_skipped_dirs
 from iron_gql.codegen.render import GenerationMode
-from iron_gql.codegen.render import render_package
+from iron_gql.codegen.render import render_module
 from iron_gql.codegen.render import scaffold_claims
 from iron_gql.codegen.slots import validate_no_nested_slots
-from iron_gql.codegen.util import write_if_changed
 
 
-# Generates a typed GraphQL client from schema_path and the api_gql() calls
-# discovered under src_path: a module at package_full_name with Pydantic
-# models and typed operation classes. Returns True when the generated file
-# changed. A diagnosed rejection of the GraphQL input raises
-# GraphQLGenerationError; a malformed api_gql call site (anything but a single
-# string literal) raises TypeError before any GraphQL is read.
-def generate_gql_package(
+@dataclass(frozen=True)
+class RenderedModule:
+    path: Path
+    text: str = dataclasses.field(repr=False)
+
+    def write(self) -> None:
+        if self._disk_text() == self.text:
+            return
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.path.write_text(self.text, encoding="utf-8", newline="")
+
+    def diff(self) -> str:
+        disk_text = self._disk_text()
+        if disk_text == self.text:
+            return ""
+        if disk_text is None and not self.text:
+            # Neither side has a line to compare, yet write() creates the file.
+            return f"--- /dev/null\n+++ {self.path}\n"
+        lines = difflib.unified_diff(
+            [] if disk_text is None else _diff_lines(disk_text),
+            _diff_lines(self.text),
+            fromfile="/dev/null" if disk_text is None else str(self.path),
+            tofile=str(self.path),
+        )
+        # unified_diff emits a last line without its newline as is, so the next
+        # diff line is glued to it and the difference is invisible.
+        return "".join(
+            line if line.endswith("\n") else f"{line}\n\\ No newline at end of file\n"
+            for line in lines
+        )
+
+    def _disk_text(self) -> str | None:
+        # newline="" keeps CRLF as written: read_text would translate it and
+        # report a CRLF file as current.
+        try:
+            return self.path.read_text(encoding="utf-8", newline="")
+        except FileNotFoundError:
+            return None
+
+
+def _diff_lines(text: str) -> list[str]:
+    # str.splitlines also breaks at \r, \x0c, \u2028 and the like, which can stand
+    # inside a string literal of the module; only \n ends a line of the written file.
+    return re.findall(r"[^\n]*\n|[^\n]+\Z", text)
+
+
+# Renders a typed GraphQL client from schema_path and the api_gql() calls
+# discovered under src_path: a module at module_full_name with Pydantic models
+# and typed operation classes. Nothing is written but the debug_path dump;
+# write() puts the module in place and diff() compares it with the file. A
+# diagnosed rejection of the GraphQL input raises GraphQLGenerationError; a
+# malformed api_gql call site (anything but a single string literal) raises
+# TypeError before any GraphQL is read.
+def render_gql_module(
     *,
     mode: GenerationMode,
     schema_path: Path,
     src_path: Path,
-    package_full_name: str,
+    module_full_name: str,
     base_url_import: str,
     scalars: dict[str, str] | None = None,
     to_camel_fn_full_name: str = "pydantic.alias_generators:to_camel",
     to_snake_fn: StrTransform = alias_generators.to_snake,
     debug_path: Path | None = None,
-) -> bool:
+) -> RenderedModule:
     if scalars is None:
         scalars = {}
 
-    package_name = package_full_name.rsplit(".", maxsplit=1)[-1]
-    gql_fn_name = f"{package_name}_gql"
+    module_name = module_full_name.rsplit(".", maxsplit=1)[-1]
+    gql_fn_name = f"{module_name}_gql"
 
-    target_package_path = src_path / f"{package_full_name.replace('.', '/')}.py"
+    target_module_path = src_path / f"{module_full_name.replace('.', '/')}.py"
     base_url_ref = ImportRef.parse(base_url_import)
     scalar_refs = {name: ImportRef.parse(ref) for name, ref in scalars.items()}
     to_camel_ref = ImportRef.parse(to_camel_fn_full_name)
 
-    discovered = discover_package(src_path, gql_fn_name, skip_path=target_package_path)
+    discovered = discover_module(src_path, gql_fn_name, skip_path=target_module_path)
 
     if debug_path is not None:
         # Written before anything can reject the GraphQL: a bind that went
-        # missing is exactly what a debug run of a package that does not
+        # missing is exactly what a debug run of a module that does not
         # generate is looking for. A statement that went missing with the whole
         # directory it stood in is the same question one level up.
         write_ignored_binds(debug_path, discovered.ignored)
@@ -78,7 +128,7 @@ def generate_gql_package(
         to_camel_ref=to_camel_ref,
     )
     collected = apply_rename(
-        collect_package_ir(
+        collect_module_ir(
             schema=parse_res.schema,
             operations=parse_res.operations,
             templates=parse_res.templates,
@@ -111,7 +161,7 @@ def generate_gql_package(
     if ir_errors:
         raise GraphQLGenerationError(ir_errors)
 
-    new_content = render_package(
+    new_content = render_module(
         mode=mode,
         base_url_ref=base_url_ref,
         gql_fn_name=gql_fn_name,
@@ -119,4 +169,4 @@ def generate_gql_package(
         scalars=scalar_refs,
         to_camel_ref=to_camel_ref,
     )
-    return write_if_changed(target_package_path, new_content + "\n")
+    return RenderedModule(target_module_path, new_content + "\n")

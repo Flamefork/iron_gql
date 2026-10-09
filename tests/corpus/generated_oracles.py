@@ -1,10 +1,10 @@
-"""Total checks every generated package answers, whoever generated it.
+"""Total checks every generated module answers, whoever generated it.
 
 Written as post-conditions of the generation helpers rather than as tests of
-their own: a check that has to be *remembered* is applied to the packages
-someone thought of, and the gaps are exactly the packages nobody thought of.
+their own: a check that has to be *remembered* is applied to the modules
+someone thought of, and the gaps are exactly the modules nobody thought of.
 `basedpyright` was such a check -- called by hand from a handful of tests, so
-most committed packages were never type-checked at all.
+most committed modules were never type-checked at all.
 
 Every oracle is outside the generator: CPython resolving the module's own
 annotations, CPython's own symbol table answering what each generated method
@@ -152,7 +152,7 @@ def _generated_methods(module: ModuleType) -> list[tuple[str, symtable.Function]
     # class or method in a "type parameters" table of its own and hangs the
     # real one under it, so a walk of the top level alone sees only the
     # non-generic classes. That is how every bound base's `execute` -- the one
-    # body in the package that reads `cast` -- stayed outside this check while
+    # body in the module that reads `cast` -- stayed outside this check while
     # it read an unclaimed name.
     source = Path(str(module.__file__)).read_text(encoding="utf-8")
     top = symtable.symtable(source, str(module.__file__), "exec")
@@ -185,7 +185,7 @@ def assert_documents_are_valid(
     if _template_names(module) and not documents:
         # A silent zero is how this oracle went vacuous once already: it used
         # to read a per-combination `exec_source__` ClassVar, that ClassVar
-        # stopped being generated, and every package kept "passing" with
+        # stopped being generated, and every module kept "passing" with
         # nothing checked. A template always has at least the empty
         # combination, so "no documents" can only mean this walk has lost
         # track of where they are kept.

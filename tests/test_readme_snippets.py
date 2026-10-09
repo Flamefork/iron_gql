@@ -194,7 +194,7 @@ async def test_readme_with_args_supplies_the_fragment_variable(httpserver: HTTPS
 
 def _is_gql_or_bind_call(stmt: ast.stmt) -> bool:
     # A module-level assignment whose value is a call to `api_gql` or a
-    # `.bind(...)` call. Narrower than what `discover_package` accepts --
+    # `.bind(...)` call. Narrower than what `discover_module` accepts --
     # which is any scope and any expression -- because this fixture is a
     # `queries.py` built by concatenating README blocks, and only blocks that
     # stand alone at module level can be concatenated that way. README's

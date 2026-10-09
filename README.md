@@ -16,10 +16,10 @@ pip install iron-gql[testing]   # + uvicorn for the loopback test server
 ```
 
 ## Key Features
-- **Query discovery.** `generate_gql_package` scans your codebase for calls of the form `<package>_gql("""...""")`. It validates each statement and writes a module with typed helpers.
+- **Query discovery.** `render_gql_module` scans your codebase for calls of the form `<module>_gql("""...""")`. It validates each statement and writes a module with typed helpers.
 - **Typed inputs and results.** The generated Pydantic models match every selection set, enum, and input object that the discovered queries reference.
-- **Sync or async runtime.** Pick the mode per package with `mode="sync"` or `mode="async"`. The generated module targets `runtime.GQLClient` or `runtime.AsyncGQLClient`, both of which send requests through `httpx2`. One project can hold packages of both kinds.
-- **ASGI in-process calls.** `AsyncGQLClient` accepts an ASGI `target_app` and then calls the app in-process without using the network. The sync client has no such transport: the ASGI transport of `httpx2` is async-only, and WSGI cannot carry websockets. Test synchronous packages against a real server on a loopback port, which [`iron_gql.testing`](#testing) starts for you.
+- **Sync or async runtime.** Pick the mode per module with `mode="sync"` or `mode="async"`. The generated module targets `runtime.GQLClient` or `runtime.AsyncGQLClient`, both of which send requests through `httpx2`. One project can hold modules of both kinds.
+- **ASGI in-process calls.** `AsyncGQLClient` accepts an ASGI `target_app` and then calls the app in-process without using the network. The sync client has no such transport: the ASGI transport of `httpx2` is async-only, and WSGI cannot carry websockets. Test synchronous modules against a real server on a loopback port, which [`iron_gql.testing`](#testing) starts for you.
 - **Deterministic validation.** `graphql-core` (a codegen dependency) validates every statement against the schema. It rejects operations that share a name but have different bodies.
 
 ## Package Layout
@@ -45,42 +45,44 @@ pip install iron-gql[testing]   # + uvicorn for the loopback test server
        """
    )
    ```
-   The generator derives the helper name (`client_gql`) from the package path that you ask it to build.
+   The generator derives the helper name (`client_gql`) from the module path that you ask it to build.
 3. **Generate the client module.**
    ```python
    from pathlib import Path
 
-   from iron_gql.codegen import generate_gql_package
+   from iron_gql.codegen import render_gql_module
 
-   generate_gql_package(
+   render_gql_module(
        mode="async",
        schema_path=Path("schema.graphql"),
        src_path=Path("."),
-       package_full_name="myapp.gql.client",
+       module_full_name="myapp.gql.client",
        base_url_import="myapp.config:GRAPHQL_URL",
        scalars={"ID": "builtins:str"},
        to_camel_fn_full_name="myapp.inflection:to_camel",
        to_snake_fn=my_project_to_snake,
        debug_path=Path("iron_gql/debug/myapp.gql.client"),
-   )
+   ).write()
    ```
-   `mode` is required: pass `"async"` or `"sync"` for every package. Each package is self-contained, so one project can generate both.
+   `mode` is required: pass `"async"` or `"sync"` for every module. Each module is self-contained, so one project can generate both.
 
    `src_path` — корень импортов: имя модуля генератор получает из пути файла относительно него, поэтому корень должен быть тем, относительно чего написаны абсолютные импорты проекта (`Path(".")` для flat layout, `Path("src")` для src layout). Из-под этого корня скан не спускается в скрытый каталог (имя начинается с точки) и в корень виртуального окружения (каталог, содержащий `pyvenv.cfg`). Всё остальное обходится, как бы оно ни называлось: statements собираются и из каталога, чьё имя не может быть частью имени модуля, — скрипт запускают, а не импортируют.
 
-   The call writes `myapp/gql/client.py`. The module contains:
+   This writes `myapp/gql/client.py`. The module contains:
    - a client singleton for the chosen mode,
    - Pydantic result and input models,
    - a query class per operation with typed `execute` methods,
    - overloads for the helper function, so editors can infer return types.
-4. **Call your API.** An async package awaits `execute`:
+
+   To check that a committed module is current without writing it, call `diff()` instead of `write()`. It returns a unified diff from the file to the rendered module, or an empty string if the file is current.
+4. **Call your API.** An async module awaits `execute`:
    ```python
    async def fetch_user(user_id: str):
        query = get_user.with_headers({"Authorization": "Bearer token"})
        result = await query.execute(id=user_id)
        return result.user
    ```
-   A sync package calls it directly:
+   A sync module calls it directly:
    ```python
    def fetch_user(user_id: str):
        query = get_user.with_headers({"Authorization": "Bearer token"})
@@ -105,7 +107,7 @@ It maps **built-in scalars** automatically:
 You configure **custom scalars** with the `scalars` parameter, in `"module:type"` format:
 
 ```python
-generate_gql_package(
+render_gql_module(
     ...,
     scalars={
         "ID": "builtins:str",
@@ -315,7 +317,7 @@ Generation fails, naming the file and line, for:
 - a name such a bind reads that is bound more than once in the scope it resolves in — two assignments, two imports, or a mix; which of them it means is a question the scan will not guess at;
 - a slot value of such a bind that does not resolve to a discovered fragment statement. The template it hangs off is judged differently, because `.bind()` is an ordinary method name that sockets and widgets carry too: a base that resolves to nothing at all leaves the call alone, and only a base whose name the scanned tree does hold as a statement is an error — reported with that statement's own address, since a template written where no resolution reaches it (a class body, a star import) is ours all the same. A name something else *does* bind where the call stands is answered by that binding and left alone: a same-named statement elsewhere in the tree is a coincidence, and two generator runs over one tree produce it routinely;
 - a template whose final deduplicated set of schema-derived and literal combinations exceeds 256. The error reports the total and both contributions;
-- a source file the scan cannot parse that mentions the gql function or `bind` — it may hold statements or binds, and dropping it would rewrite the package without them. A file that names neither owns nothing the package could lose and is skipped, unless some bind's name resolution has to travel through it;
+- a source file the scan cannot parse that mentions the gql function or `bind` — it may hold statements or binds, and dropping it would rewrite the module without them. A file that names neither owns nothing the module could lose and is skipped, unless some bind's name resolution has to travel through it;
 - a fragment that is not spread-compatible with the slot — the same mismatch is also a type error at the `bind()` call site, so most callers see it in the editor before they even regenerate;
 - a generated name claimed twice by an actual `On{Type}` base, a factory, a private Applied class, a fragment, a model, or an enum. A fragment name can also collide with a type parameter in another slot's `bind()` overload. Rename the fragment or add an alias to the field that creates the model;
 - a fragment readable at a slot's root reached under `@skip`/`@include` — whether the directive sits on the spread or on an inline fragment around it — at any runtime type where that conditional path is the only way it reaches the root, since such a fragment is requested and validated on every response and so cannot be conditionally absent. Reaching it unconditionally as well — bound directly, or spread again without a directive — covers the types reached that way, and only the types left over are rejected. The same directive on a spread inside a nested field is fine;
@@ -358,15 +360,15 @@ The [`example/`](example/) directory reads as chapters. Each one adds what the o
 | [`ch05_scalars.py`](example/ch05_scalars.py) | a `DateTime` that arrives as `datetime`, an `Upload` sent as a `FileVar` |
 | [`ch06_slots.py`](example/ch06_slots.py) | a template, `bind`, `read`, and fragment variables through `with_args` |
 | [`ch07_subscriptions.py`](example/ch07_subscriptions.py) | a subscription stream |
-| [`ch08_sync.py`](example/ch08_sync.py) | the basics again, against a synchronous package |
+| [`ch08_sync.py`](example/ch08_sync.py) | the basics again, against a synchronous module |
 
-A real project picks one mode; the example shows both, and [`generate.py`](example/generate.py) writes both packages from the one schema.
+A real project picks one mode; the example shows both, and [`generate.py`](example/generate.py) writes both modules from the one schema.
 
 The chapters are written to be read and type-checked, not run: they point at a server that this repository does not ship. [`test_example.py`](example/test_example.py) is the exception. It runs chapters against [`fake_app.py`](example/fake_app.py) with the helpers from [Testing](#testing).
 
 ## Testing
 
-`iron_gql.testing` holds the helpers that a service needs to test its own use of a generated package.
+`iron_gql.testing` holds the helpers that a service needs to test its own use of a generated module.
 
 Which transport a test needs follows from the client:
 
@@ -375,7 +377,7 @@ Which transport a test needs follows from the client:
 | `AsyncGQLClient` | `target_app`, no socket | `target_app`, no socket |
 | `GQLClient` | server on a loopback port | server on a loopback port |
 
-`AsyncGQLClient` takes an ASGI `target_app` and calls it in process, websockets included, so an async package never needs a socket. `GQLClient` has no such transport: the ASGI transport of `httpx2` is async-only, and WSGI cannot carry websockets. A synchronous package is therefore tested against a real server, which `live_asgi_server` starts for you.
+`AsyncGQLClient` takes an ASGI `target_app` and calls it in process, websockets included, so an async module never needs a socket. `GQLClient` has no such transport: the ASGI transport of `httpx2` is async-only, and WSGI cannot carry websockets. A synchronous module is therefore tested against a real server, which `live_asgi_server` starts for you.
 
 Only `live_asgi_server` has a dependency of its own — `uvicorn`, from `pip install iron-gql[testing]`. Everything else here needs nothing beyond the runtime, so a project that only replaces clients installs plain `iron-gql`.
 
@@ -383,7 +385,7 @@ You supply the fake yourself. The library takes no position on how you answer a 
 
 ### Replace the client
 
-`use_client` binds your client into a generated package. Use it with `async with` for `AsyncGQLClient` and `with` for `GQLClient`. On exit it restores the previous client and closes the client that you passed in:
+`use_client` binds your client into a generated module. Use it with `async with` for `AsyncGQLClient` and `with` for `GQLClient`. On exit it restores the previous client and closes the client that you passed in:
 
 ```python
 from iron_gql.runtime import AsyncGQLClient
@@ -448,16 +450,7 @@ On the subscription: `next(data)`, `error(errors)`, `complete()`, and `send_mess
 
 Control flow stays in your fake, so state lives in ordinary Python around these calls — a connection counter, a drop on the N-th connect, a failure of the first few messages.
 
-### Keep the generated code current
-
-`generate_gql_package` returns `True` when it wrote a change. Committing generated modules and asserting the generator has nothing left to write catches a schema or a query that moved ahead of the committed code:
-
-```python
-def test_generated_package_is_current():
-    assert generate_gql_package(...) is False
-```
-
 ## Validation and Troubleshooting
 - Error messages show the file and the line of the statement that caused the error.
 - Operations that share a name must have identical bodies. To remove the conflict, rename the operations or merge them.
-- The generated helper raises `LookupError` for a statement that it does not know. After you add or edit a statement, regenerate the package.
+- The generated helper raises `LookupError` for a statement that it does not know. After you add or edit a statement, regenerate the module.

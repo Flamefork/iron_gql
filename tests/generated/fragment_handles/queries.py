@@ -42,7 +42,7 @@ with_slot = api_gql(
     """
 )
 
-# Both fragments are typed definitions because the package holds a template at all;
+# Both fragments are typed definitions because the module holds a template at all;
 # these two binds are here for the bound operations the tests below read
 # through, not to make the definitions exist.
 with_user_fields = with_slot.bind(node=user_fields)

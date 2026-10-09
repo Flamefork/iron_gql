@@ -87,7 +87,7 @@ class ScannedTree:
 
 
 @dataclass(kw_only=True, frozen=True)
-class DiscoveredPackage:
+class DiscoveredModule:
     statements: list[Statement]
     binds: list[BindDecl]
     bind_keyword_checks: list[BindKeywordCheck]
@@ -1594,7 +1594,7 @@ def _resolve_base(
         case _NotOurs() as not_ours:
             # The base names nothing the tree assigns a statement to, so this
             # `.bind()` is a third-party call to leave untouched. The reason
-            # travels with it into `DiscoveredPackage.ignored` rather than being
+            # travels with it into `DiscoveredModule.ignored` rather than being
             # dropped, so a test -- and a debug run -- can tell this outcome
             # from a bind that was ours and got lost.
             return _unreachable_here(graph, candidate, base_name, not_ours)
@@ -1807,9 +1807,9 @@ def walk_scanned_tree(src_path: Path) -> ScannedTree:
     )
 
 
-def discover_package(
+def discover_module(
     src_path: Path, gql_fn_name: str, *, skip_path: Path
-) -> DiscoveredPackage:
+) -> DiscoveredModule:
     # Every scanned file must be parsed regardless of content: a pure
     # re-export module (`from x import y as z`, no gql call and no `.bind(`
     # of its own) still has to be scanned for its imports so a bind chain can
@@ -1835,7 +1835,7 @@ def discover_package(
             if gql_fn_name in content or "bind" in content:
                 # It may well declare a statement or a bind of its own, and
                 # nothing short of parsing it can say which. Skipping one that
-                # does would rewrite the generated package with every
+                # does would rewrite the generated module with every
                 # operation, fragment and binding it owns silently removed.
                 #
                 # Both probes are the bare identifier on purpose: a call the
@@ -1844,10 +1844,10 @@ def discover_package(
                 # or comment the source puts around it, so no file that owns
                 # something can slip past. A file that merely says "binding" in
                 # a comment is caught too -- one false abort on a file that is
-                # already broken, against a whole package regenerated without
+                # already broken, against a whole module regenerated without
                 # the statements a real one holds.
                 raise SyntaxError(msg) from exc
-            # Names neither, so it owns nothing the package could lose. It is
+            # Names neither, so it owns nothing the module could lose. It is
             # still recorded rather than forgotten: a pure re-export module is
             # a link in a resolution chain even when it mentions no gql call,
             # and `_resolve_module` raises if some chain actually reaches it.
@@ -1882,7 +1882,7 @@ def discover_package(
     binds, keyword_checks, ignored = _resolve_binds(
         graph, candidates, gql_fn_name=gql_fn_name
     )
-    return DiscoveredPackage(
+    return DiscoveredModule(
         statements=[statement for scan in scans for statement in scan.statements],
         binds=_dedupe_binds(binds),
         bind_keyword_checks=keyword_checks,

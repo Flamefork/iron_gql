@@ -419,7 +419,7 @@ generated_package(
     )
 
     # `album_summary` is a fragment on Album, a type outside every slot's
-    # possible types in this package: it still gets a class and an `OnAlbum`
+    # possible types in this module: it still gets a class and an `OnAlbum`
     # base, and what makes it unbindable is that no slot's signature names
     # that base (test_fragment_handles.py's basedpyright test relies on it).
     list_posts_typed = list_posts.bind(
@@ -845,7 +845,7 @@ def test_slot_conditional_alongside_matching_conditional_selection_generates(
         )
         """,
     )
-    assert test_project.generate() is True
+    test_project.generate()
 
 
 def test_statically_excluded_slot_is_rejected(test_project: ProjectBuilder):
@@ -935,7 +935,7 @@ type Post {
 def test_parameterised_fragment_generates_without_slots(test_project: ProjectBuilder):
     # A named fragment taking its arguments from the operation that spreads it
     # is what static fragments have always been for, and nothing here can reach
-    # a slot: this package has none. The rule may not touch it.
+    # a slot: this module has none. The rule may not touch it.
     test_project.prepare(
         schema=PARAMETERISED_FRAGMENT_SCHEMA,
         queries="""
@@ -961,7 +961,7 @@ def test_parameterised_fragment_generates_without_slots(test_project: ProjectBui
         )
         """,
     )
-    assert test_project.generate() is True
+    test_project.generate()
 
 
 def test_fragment_conflicting_with_the_slot_selection_is_rejected(
@@ -1046,7 +1046,7 @@ def test_compatible_fragments_that_merge_cleanly_are_accepted(
         bound = get_attachment.bind(attachment=wrapper)
         """,
     )
-    assert test_project.generate() is True
+    test_project.generate()
 
 
 def test_nested_slot_in_a_merged_response_key_is_rejected(
@@ -1134,7 +1134,7 @@ def test_schema_type_named_after_the_scaffold_keeps_the_model_apart(
         )
         """,
     )
-    assert test_project.generate() is True
+    test_project.generate()
     generated = (test_project.root / "sample_app/gql/api.py").read_text()
     assert "class GQLModel(pydantic.BaseModel):" in generated
     assert "class GQLModel(GQLModel):" not in generated
@@ -1143,7 +1143,7 @@ def test_schema_type_named_after_the_scaffold_keeps_the_model_apart(
 def test_enum_named_after_an_unconditional_import_is_rejected(
     test_project: ProjectBuilder,
 ):
-    # `import pydantic` is emitted whatever the package's options are, and every
+    # `import pydantic` is emitted whatever the module's options are, and every
     # model refers to it. Reserving it through `to_camel_fn_full_name` would let
     # the claim vanish the moment that option points elsewhere, turning a
     # generation error into `AttributeError` at import of the generated module.
@@ -1298,7 +1298,7 @@ def test_input_named_like_a_slot_parameter_is_valid_outside_generic_models(
 ):
     # The input model is referenced by execute() on the bound base, while the
     # same-spelled slot parameter exists only inside generic result artifacts.
-    # They occupy different scopes, so the generated package must import.
+    # They occupy different scopes, so the generated module must import.
     test_project.prepare(
         schema=SLOT_PARAM_INPUT_SCHEMA,
         queries="""
@@ -1412,7 +1412,7 @@ def test_a_bound_fragment_selecting_an_enum_generates(test_project: ProjectBuild
     # two kinds of dependency that are not artifacts to recurse into: an enum,
     # which is a leaf, and a model already reached by another path. Narrowing
     # the nested-slot check to templates left both untested -- and without the
-    # enum half the walk raises KeyError for every package that selects an
+    # enum half the walk raises KeyError for every module that selects an
     # enum field inside a bound fragment.
     test_project.prepare(
         schema=ENUM_IN_SLOT_SCHEMA,
@@ -1440,7 +1440,7 @@ def test_a_bound_fragment_selecting_an_enum_generates(test_project: ProjectBuild
         bound = with_slot.bind(attachment=image_parts)
         """,
     )
-    assert test_project.generate() is True
+    test_project.generate()
     generated = (test_project.root / "sample_app/gql/api.py").read_text()
     assert "type Kind = Literal['PHOTO', 'VIDEO']" in generated
 
@@ -1482,7 +1482,7 @@ def test_two_templates_may_name_a_slot_alike(test_project: ProjectBuilder):
         two = second.bind(attachment=url)
         """,
     )
-    assert test_project.generate() is True
+    test_project.generate()
 
 
 def test_fragment_named_like_an_operation_is_rejected(test_project: ProjectBuilder):
@@ -1588,7 +1588,7 @@ def test_fragment_named_after_a_schema_type_keeps_the_model_apart(
         bound = get_attachment.bind(attachment=image_attachment)
         """,
     )
-    assert test_project.generate() is True
+    test_project.generate()
     generated = (test_project.root / "sample_app/gql/api.py").read_text()
     on_type_base = 'OnImageAttachment[ImageAttachmentData, "ImageAttachment"]'
     assert f"@final\nclass ImageAttachment({on_type_base}):" in generated
@@ -2228,7 +2228,7 @@ def test_slot_kwarg_is_snake_case_of_the_response_key(test_project: ProjectBuild
     # and the parameter the generator renders. A response key that is already
     # snake_case hides a disagreement between them, so this one is not -- and
     # the generated module is imported, which re-executes the very
-    # `q.bind(main_attachment=...)` call the package was generated from.
+    # `q.bind(main_attachment=...)` call the module was generated from.
     test_project.prepare(
         schema=SCHEMA,
         queries="""
@@ -2475,7 +2475,7 @@ def test_slot_directive_already_in_schema_is_accepted_when_identical(
         """
         + SLOT_OPERATION,
     )
-    assert test_project.generate() is True
+    test_project.generate()
 
 
 def test_slot_directive_already_in_schema_is_rejected_when_different(
@@ -2724,7 +2724,7 @@ def test_two_slots_collapsing_to_one_type_parameter_are_rejected(
     # above has nothing to say about them -- but one type parameter, because
     # the phantom's name drops the underscores. Left alone, the result model
     # would declare one parameter while every binding of it passes two
-    # arguments, and the generated package would fail to import.
+    # arguments, and the generated module would fail to import.
     test_project.prepare(
         schema=TWO_ATTACHMENT_SCHEMA,
         queries="""

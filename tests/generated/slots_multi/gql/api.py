@@ -374,7 +374,7 @@ class ListPosts(runtime.GQLTemplate):
     def bind[TFillAttachment1: (AlbumCover, LinkHref), TFillAttachment2: (AlbumCover, LinkHref), TModelPreview: pydantic.BaseModel, TReadsPreview, TModelOwner: pydantic.BaseModel, TReadsOwner](self, *, attachment: tuple[TFillAttachment1, TFillAttachment2], preview: OnImageAttachment[TModelPreview, TReadsPreview], owner: OnOwner[TModelOwner, TReadsOwner]) -> ListPostsBound[ListPostsResult[TFillAttachment1 | TFillAttachment2, OnImageAttachment[TModelPreview, TReadsPreview] | TReadsPreview, OnOwner[TModelOwner, TReadsOwner] | TReadsOwner]]: ...
     def bind(self, *, attachment: slots.GQLBindableFragment[pydantic.BaseModel, Any] | Sequence[slots.GQLBindableFragment[pydantic.BaseModel, Any]] = (), preview: slots.GQLBindableFragment[pydantic.BaseModel, Any] | Sequence[slots.GQLBindableFragment[pydantic.BaseModel, Any]] = (), owner: slots.GQLBindableFragment[pydantic.BaseModel, Any] | Sequence[slots.GQLBindableFragment[pydantic.BaseModel, Any]] = ()) -> runtime.GQLBoundOperation:
         if slots.binding_key({'attachment': attachment, 'preview': preview, 'owner': owner}) not in self._binding_specs:
-            raise LookupError("unknown bind combination for ListPosts; single-fragment and empty combinations are generated from the schema, so this is a tuple combination no call site writes literally - write it, then regenerate the package. A call whose template is an expression the scan cannot follow is never read either: those are listed, with the reason, in the debug run's ignored_binds.json")
+            raise LookupError("unknown bind combination for ListPosts; single-fragment and empty combinations are generated from the schema, so this is a tuple combination no call site writes literally - write it, then regenerate the module. A call whose template is an expression the scan cannot follow is never read either: those are listed, with the reason, in the debug run's ignored_binds.json")
         return ListPostsBound[ListPostsResult].bound__(
             self._binding_specs[slots.binding_key({'attachment': attachment, 'preview': preview, 'owner': owner})], {'attachment': slots.as_bindable_fragments(attachment), 'preview': slots.as_bindable_fragments(preview), 'owner': slots.as_bindable_fragments(owner)},
         )
@@ -411,6 +411,6 @@ def api_gql(stmt: str) -> runtime.GQLOperation | slots.GQLFragment[pydantic.Base
         msg = "unknown GraphQL statement passed to api_gql; "
         msg += "the generator only discovers bare-name calls with a "
         msg += "single string literal - check the call site, then "
-        msg += "regenerate the package"
+        msg += "regenerate the module"
         raise LookupError(msg)
     return _statement_factories[stmt]()

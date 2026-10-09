@@ -36,7 +36,7 @@ get_attachment = api_gql(
 )
 
 bound = get_attachment.bind(attachment=image_parts)
-# `foreign_parts` is a typed definition like every fragment of a package
+# `foreign_parts` is a typed definition like every fragment of a module
 # with a template, and its own combination is enumerated whether or not
 # anybody writes it -- so it is foreign to `bound`'s closure while still
 # being a real definition, which is what "outside this binding's closure"

@@ -19,7 +19,7 @@ from hypothesis import strategies as st
 
 from iron_gql.codegen.ir import CollectedField
 from iron_gql.codegen.ir import CollectedModel
-from iron_gql.codegen.ir import CollectedPackageIR
+from iron_gql.codegen.ir import CollectedModuleIR
 from iron_gql.codegen.ir import GraphQLGenerationError
 from iron_gql.codegen.ir import ListRef
 from iron_gql.codegen.ir import NamedRef
@@ -92,7 +92,7 @@ def test_two_shapes_are_never_named_alike(
         # Identical shapes are *meant* to converge -- that is what lets two
         # selections of one type share a class.
         return
-    ir = CollectedPackageIR(
+    ir = CollectedModuleIR(
         result_artifacts=[first, second],
         input_artifacts=[],
         operations=[],

@@ -45,7 +45,7 @@ class SlotModel[TOffered](OpenModel, slots.GQLSlotNode[TOffered]):
 
 # The phantom this scaffold's nodes carry: the erased fragment type, so a node
 # stands for a binding that offered whatever definition a test hands it. A
-# generated package pins its fragment types instead -- that is the
+# generated module pins its fragment types instead -- that is the
 # static half, covered by tests/test_slots_typing.py -- while the wiring
 # guards exercised here are what a type-erased path still runs into.
 type AnyFragment = slots.GQLFragment[pydantic.BaseModel, Any]

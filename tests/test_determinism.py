@@ -105,9 +105,5 @@ def test_regeneration_is_byte_stable(test_project: ProjectBuilder):
         """,
     )
 
-    assert test_project.generate() is True
-    first = (test_project.root / "sample_app/gql/api.py").read_text()
-
-    assert test_project.generate() is False
-    second = (test_project.root / "sample_app/gql/api.py").read_text()
-    assert first == second
+    test_project.generate()
+    assert test_project.render().diff() == ""

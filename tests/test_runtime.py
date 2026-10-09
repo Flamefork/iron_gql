@@ -27,7 +27,7 @@ PACKAGE = "runtime"
 # spelling the identical `query Ping { ping }` over the identical schema: what
 # the tests below vary is the *transport* -- a base url without a slash, a
 # redirect, a malformed body, a response with no data -- and none of that is a
-# property of the generated package at all. Pointing one package's client at a
+# property of the generated module at all. Pointing one module's client at a
 # different server is the whole difference, so one package it is.
 generated_package(
     PACKAGE,

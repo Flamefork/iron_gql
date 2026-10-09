@@ -221,7 +221,7 @@ class Slotted(runtime.GQLTemplate):
     def bind[TModelEcho: pydantic.BaseModel, TReadsEcho](self, *, echo: OnEcho[TModelEcho, TReadsEcho]) -> SlottedBound[SlottedResult[OnEcho[TModelEcho, TReadsEcho] | TReadsEcho]]: ...
     def bind(self, *, echo: slots.GQLBindableFragment[pydantic.BaseModel, Any] | Sequence[slots.GQLBindableFragment[pydantic.BaseModel, Any]] = ()) -> runtime.GQLBoundOperation:
         if slots.binding_key({'echo': echo}) not in self._binding_specs:
-            raise LookupError("unknown bind combination for Slotted; single-fragment and empty combinations are generated from the schema, so this is a tuple combination no call site writes literally - write it, then regenerate the package. A call whose template is an expression the scan cannot follow is never read either: those are listed, with the reason, in the debug run's ignored_binds.json")
+            raise LookupError("unknown bind combination for Slotted; single-fragment and empty combinations are generated from the schema, so this is a tuple combination no call site writes literally - write it, then regenerate the module. A call whose template is an expression the scan cannot follow is never read either: those are listed, with the reason, in the debug run's ignored_binds.json")
         return SlottedBound[SlottedResult].bound__(
             self._binding_specs[slots.binding_key({'echo': echo})], {'echo': slots.as_bindable_fragments(echo)},
         )
@@ -252,6 +252,6 @@ def api_gql(stmt: str) -> runtime.GQLOperation | slots.GQLFragment[pydantic.Base
         msg = "unknown GraphQL statement passed to api_gql; "
         msg += "the generator only discovers bare-name calls with a "
         msg += "single string literal - check the call site, then "
-        msg += "regenerate the package"
+        msg += "regenerate the module"
         raise LookupError(msg)
     return _statement_factories[stmt]()

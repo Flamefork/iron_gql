@@ -6,7 +6,7 @@ axes were covered many times over that way, and their crossings hardly at all
 -- an enum reachable only through a bound fragment's variable was a blank cell
 that no test addressed and the generator got wrong.
 
-The generation-time checks are the post-conditions every package answers now
+The generation-time checks are the post-conditions every module answers now
 (`tests/corpus/generated_oracles`); what this file adds is the runtime half:
 each cell's value goes to a real graphql-core server and comes back through
 the generated model, so pydantic's idea of the type and graphql-core's have to

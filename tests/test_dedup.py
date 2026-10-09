@@ -3,11 +3,11 @@ from pathlib import Path
 import graphql
 from pydantic import alias_generators
 
-from iron_gql.codegen.collect import collect_package_ir
+from iron_gql.codegen.collect import collect_module_ir
 from iron_gql.codegen.discovery import Statement
 from iron_gql.codegen.ir import CollectedArtifact
 from iron_gql.codegen.ir import CollectedModel
-from iron_gql.codegen.ir import CollectedPackageIR
+from iron_gql.codegen.ir import CollectedModuleIR
 from iron_gql.codegen.ir import CollectedUnionAlias
 from iron_gql.codegen.ir import ImportRef
 from iron_gql.codegen.naming import apply_rename
@@ -18,7 +18,7 @@ from iron_gql.codegen.parser import collect_fragments
 from iron_gql.codegen.parser import parse_documents
 
 
-def _build_ir(schema_sdl: str, query_sources: list[str]) -> CollectedPackageIR:
+def _build_ir(schema_sdl: str, query_sources: list[str]) -> CollectedModuleIR:
     schema = graphql.build_schema(schema_sdl)
     statements = [
         Statement(raw_text=text, file=Path(f"<test:{index}>"), lineno=1)
@@ -31,7 +31,7 @@ def _build_ir(schema_sdl: str, query_sources: list[str]) -> CollectedPackageIR:
     )
     assert errors == []
     return apply_rename(
-        collect_package_ir(
+        collect_module_ir(
             schema=schema,
             operations=operations,
             templates=templates,

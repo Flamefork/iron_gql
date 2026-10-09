@@ -14,7 +14,7 @@ from types import ModuleType
 from typing import cast
 
 from iron_gql.codegen.discovery import BindDecl
-from iron_gql.codegen.discovery import discover_package
+from iron_gql.codegen.discovery import discover_module
 from tests.corpus.recorder import ExecutedBind
 from tests.corpus.recorder import record_run
 
@@ -73,16 +73,18 @@ def _callable(owner: object, name: str) -> Callable[[], object]:
 
 def scan_answer(root: Path) -> Observed:
     try:
-        package = discover_package(root, "api_gql", skip_path=root / "unused.py")
+        discovered = discover_module(root, "api_gql", skip_path=root / "unused.py")
     except TypeError as exc:
         # The scan's own diagnosis for a call site it will not guess at.
         return Observed(binds={}, refusal=describe(exc))
     binds = {
         location: _as_executed(bind)
-        for bind in package.binds
+        for bind in discovered.binds
         for location in bind.locations
     }
-    ignored = "; ".join(f"{item.location}: {item.reason}" for item in package.ignored)
+    ignored = "; ".join(
+        f"{item.location}: {item.reason}" for item in discovered.ignored
+    )
     return Observed(binds=binds, refusal=ignored or None)
 
 

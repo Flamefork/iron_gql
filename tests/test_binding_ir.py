@@ -3,14 +3,14 @@ from pathlib import Path
 import pytest
 from pydantic import alias_generators
 
-from iron_gql.codegen.collect import collect_package_ir
+from iron_gql.codegen.collect import collect_module_ir
 from iron_gql.codegen.discovery import BindDecl
 from iron_gql.codegen.discovery import Statement
 from iron_gql.codegen.ir import CollectedBinding
 from iron_gql.codegen.ir import CollectedBindingSlot
 from iron_gql.codegen.ir import CollectedFactoryFragment
 from iron_gql.codegen.ir import CollectedModel
-from iron_gql.codegen.ir import CollectedPackageIR
+from iron_gql.codegen.ir import CollectedModuleIR
 from iron_gql.codegen.ir import CollectedRequiredFragmentArg
 from iron_gql.codegen.ir import GraphQLGenerationError
 from iron_gql.codegen.ir import ImportRef
@@ -22,8 +22,8 @@ from iron_gql.codegen.slots import validate_no_nested_slots
 from iron_gql.slots import CombinationKey
 
 
-def _binding(ir: CollectedPackageIR, key: CombinationKey) -> CollectedBinding:
-    # One combination out of the package's enumeration. Every template is
+def _binding(ir: CollectedModuleIR, key: CombinationKey) -> CollectedBinding:
+    # One combination out of the module's enumeration. Every template is
     # enumerated in full now (the empty combination, then one per compatible
     # fragment per slot), so a test after a particular pair has to name its
     # key rather than unpack the only binding there is.
@@ -90,7 +90,7 @@ PLAIN_OPERATION_TEXT = 'query Plain { post(id: "1") { id } }'
 SCALARS = {"ID": ImportRef.parse("builtins:str")}
 
 # A schema where the only path to an input object type is a bound fragment's
-# own (synthesized) variable -- no query in the package declares one itself.
+# own (synthesized) variable -- no query in the module declares one itself.
 INPUT_TYPE_SCHEMA = """
 type Query {
     post(id: ID!): Post
@@ -215,8 +215,8 @@ def _write_schema(tmp_path: Path) -> Path:
     return path
 
 
-def _collect(parse_res: ParseResult, binds: list[BindDecl]) -> CollectedPackageIR:
-    return collect_package_ir(
+def _collect(parse_res: ParseResult, binds: list[BindDecl]) -> CollectedModuleIR:
+    return collect_module_ir(
         schema=parse_res.schema,
         operations=parse_res.operations,
         templates=parse_res.templates,
@@ -316,7 +316,7 @@ def test_binding_collected_with_spread_model_names_and_arg_vars(tmp_path: Path):
     assert _definition_classes(binding_slot) == ("ImageParts",)
     assert _model_names(binding_slot) == ("ImagePartsData",)
 
-    # The fragment itself becomes a typed definition because the package holds a
+    # The fragment itself becomes a typed definition because the module holds a
     # template at all -- no `.bind()` naming it is required.
     [fragment] = ir.fragments
     assert fragment.fragment_name == "ImageParts"
@@ -588,8 +588,8 @@ def test_a_fragment_in_two_slots_gives_two_combination_keys(tmp_path: Path):
 
 def test_binding_variable_of_input_object_type_is_collected(tmp_path: Path):
     # `$filter`'s type (PhotoFilter) is reachable only through this bind's own
-    # synthesized variable -- no query in the package declares it directly --
-    # so this pins that `collect_package_ir` feeds bindings' variable types
+    # synthesized variable -- no query in the module declares it directly --
+    # so this pins that `collect_module_ir` feeds bindings' variable types
     # into the input-type closure, not just queries' own `variables`.
     schema_path = tmp_path / "schema.graphql"
     schema_path.write_text(INPUT_TYPE_SCHEMA, encoding="utf-8")
@@ -628,8 +628,8 @@ def test_binding_variable_of_input_object_type_is_collected(tmp_path: Path):
 
 def test_an_orphan_factorys_input_object_type_is_collected(tmp_path: Path):
     # `OrphanBits` is on `Comment`, spread-compatible with no slot in the
-    # package (`bindings.fragment_closure`'s own "compatible with no slot in
-    # the package" case) -- so no combination ever reaches it, and
+    # module (`bindings.fragment_closure`'s own "compatible with no slot in
+    # the module" case) -- so no combination ever reaches it, and
     # `_collect_input_artifacts_with_binds`'s combination-level walk alone
     # would never see `$filter`'s type. It is still a factory -- its own
     # closure uses a variable -- and still renders a
@@ -682,7 +682,7 @@ interface Node {
 
 def test_interface_with_no_implementing_type_is_diagnosed(tmp_path: Path):
     # A collector diagnosis, not an internal invariant: nothing before it
-    # rejects this package, and there is no object type whose payload the
+    # rejects this module, and there is no object type whose payload the
     # models could describe.
     schema_path = tmp_path / "schema.graphql"
     schema_path.write_text(NO_IMPLEMENTATION_SCHEMA, encoding="utf-8")
@@ -804,7 +804,7 @@ def test_multiple_broken_binds_are_reported_together(tmp_path: Path):
     # validate_bind_* family instead of stopping at the first broken bind.
     # Two independently broken binds, each failing inside `expand_binding`
     # for a different reason -- both diagnoses must come back from one
-    # `collect_package_ir` call.
+    # `collect_module_ir` call.
     schema_path = _write_schema(tmp_path)
     template_stmt = _stmt(TEMPLATE_TEXT, "template")
     fragment_stmt = _stmt(FRAGMENT_TEXT, "fragment")

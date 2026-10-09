@@ -2,7 +2,7 @@ import pytest
 
 from iron_gql.codegen.ir import CollectedField
 from iron_gql.codegen.ir import CollectedModel
-from iron_gql.codegen.ir import CollectedPackageIR
+from iron_gql.codegen.ir import CollectedModuleIR
 from iron_gql.codegen.ir import CollectedUnionAlias
 from iron_gql.codegen.ir import GraphQLGenerationError
 from iron_gql.codegen.ir import NamedRef
@@ -119,8 +119,8 @@ def test_different_graphql_types_are_independent():
     assert rename["Bar_1"] == "Bar"
 
 
-def _pkg(artifacts: list[CollectedModel | CollectedUnionAlias]) -> CollectedPackageIR:
-    return CollectedPackageIR(
+def _pkg(artifacts: list[CollectedModel | CollectedUnionAlias]) -> CollectedModuleIR:
+    return CollectedModuleIR(
         result_artifacts=list(artifacts),
         input_artifacts=[],
         operations=[],
@@ -265,7 +265,7 @@ def test_short_name_collapse_yields_to_a_slot_model_name(
         )
         """,
     )
-    assert test_project.generate() is True
+    test_project.generate()
     test_project.import_api()
 
 
@@ -301,7 +301,7 @@ def test_short_name_collapse_yields_to_an_on_type_base_name(
         q = api_gql("query QOnPost { onPost { id } }")
         """,
     )
-    assert test_project.generate() is True
+    test_project.generate()
     generated = (test_project.root / "sample_app/gql/api.py").read_text()
     assert "class OnPostWithId(" in generated
     assert "class OnPost(slots.GQLBindableFragment[TModel, TReads], ABC):" in generated
@@ -373,7 +373,7 @@ def test_private_applied_name_does_not_force_public_model_rename(
         q = api_gql("query QFooApplied { fooApplied { id } }")
         """,
     )
-    assert test_project.generate() is True
+    test_project.generate()
     generated = (test_project.root / "sample_app/gql/api.py").read_text()
     assert "class FooApplied(" in generated
     assert 'class _FooApplied(OnBar[FooData, "_FooApplied"]):' in generated
@@ -495,7 +495,7 @@ def test_private_applied_factory_name_does_not_collide_with_bind_type_param(
         bound = tmpl.bind(tag=(frag.with_args(x=1), other))
         """,
     )
-    assert test_project.generate() is True
+    test_project.generate()
     generated = (test_project.root / "sample_app/gql/api.py").read_text()
     assert "_TModelPostApplied" in generated
     assert "TModelPostApplied" in generated
@@ -554,7 +554,7 @@ def test_fragment_named_like_its_own_slots_bind_type_param_is_accepted(
         bound = tmpl.bind(post=(frag_post_a, frag_post_b))
         """,
     )
-    assert test_project.generate() is True
+    test_project.generate()
 
 
 TUPLE_FILL_SCHEMA = """
@@ -632,7 +632,7 @@ def test_fragment_named_past_the_tuples_own_arity_is_accepted(
     test_project.prepare(
         schema=TUPLE_FILL_SCHEMA, queries=_tuple_fill_queries("TFillAttachment3")
     )
-    assert test_project.generate() is True
+    test_project.generate()
 
 
 def test_tuple_overloads_of_different_arities_have_distinct_namespaces(
@@ -709,7 +709,7 @@ def test_a_slot_completing_the_templates_own_class_name_is_diagnosed(
     # function's parameters over its whole signature, so the annotation means
     # the type variable. Generation passed and the module it wrote failed to
     # type-check with `TypeVar ... is not subscriptable`, which is the
-    # contract `test_generated_typecheck` holds every package to.
+    # contract `test_generated_typecheck` holds every module to.
     #
     # A template named after a type-parameter prefix rather than a plain name
     # because that is what it takes for the two halves to meet: the parameters
@@ -789,5 +789,5 @@ def test_short_name_collapse_yields_to_a_pinned_fragment_model(
         q = api_gql("query Q { thing { data } }")
         """,
     )
-    assert test_project.generate() is True
+    test_project.generate()
     test_project.import_api()

@@ -479,7 +479,7 @@ def write_debug_artifacts(
     # failed validation may carry. So this dump covers the classified queries,
     # the ones whose declarations are known to resolve; the raw text and AST
     # above already carry every statement, valid or not, which is what a debug
-    # run of a *broken* package needs.
+    # run of a *broken* module needs.
     dump_json(
         debug_path / "out.json",
         [
@@ -517,7 +517,7 @@ def write_skipped_dirs(debug_path: Path, skipped: Sequence[SkippedDir]) -> None:
     # The directories the walk refused to enter, with the reason each was
     # refused. Here for the same reason `ignored_binds.json` is: a tree left
     # alone on purpose and a tree the scan lost both show up as statements that
-    # are not in the package, and only this file tells them apart.
+    # are not in the module, and only this file tells them apart.
     #
     # The path and the reason, and nothing about the contents: counting the
     # `.py` files under a refused directory to make the report richer is the

@@ -14,10 +14,10 @@ before the request left.
 
 So the names are a corpus, crossed with the two shapes `bind()` can be
 rendered in -- a set of `@overload` stubs over an erased implementation, or a
-single plain signature when nothing in the package can be spread into the
-template's slots at all: a package, committed like every other, whose slots
+single plain signature when nothing in the module can be spread into the
+template's slots at all: a module, committed like every other, whose slots
 are named after the renderer's own vocabulary. It is type-checked by
-`test_generated_typecheck` with the rest of them, and every generated package
+`test_generated_typecheck` with the rest of them, and every generated module
 -- this one included -- answers `assert_method_namespaces_are_closed`, which
 is what makes the *next* such name a failure rather than a corpus entry
 somebody has to think of.
@@ -112,7 +112,7 @@ generated_package(
         """
     )
 
-    # A slot of a type no fragment in the package is defined on: the empty
+    # A slot of a type no fragment in the module is defined on: the empty
     # call is the only one `bind()` accepts, so it is written as one plain
     # signature -- the same names, the other end of the axis.
     inline = api_gql(
@@ -159,7 +159,7 @@ def test_an_empty_bind_answers_alike_whatever_shape_the_template_has(
 
 
 def test_a_template_nothing_can_be_bound_into_renders_one_plain_signature():
-    # `Inline`'s slot is an `Author`, and no fragment in the package is
+    # `Inline`'s slot is an `Author`, and no fragment in the module is
     # defined on it: the empty call is the only combination, so there is one
     # signature -- and one signature is not an overload set. `@overload`
     # needs two, and a second stub standing for a call that can never happen

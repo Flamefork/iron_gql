@@ -10,11 +10,11 @@ from iron_gql.codegen.ir import CollectedField
 from iron_gql.codegen.ir import CollectedFragment
 from iron_gql.codegen.ir import CollectedFragmentArg
 from iron_gql.codegen.ir import CollectedModel
+from iron_gql.codegen.ir import CollectedModuleIR
 from iron_gql.codegen.ir import CollectedOmittableFragmentArg
 from iron_gql.codegen.ir import CollectedOnTypeBase
 from iron_gql.codegen.ir import CollectedOperation
 from iron_gql.codegen.ir import CollectedOperationVar
-from iron_gql.codegen.ir import CollectedPackageIR
 from iron_gql.codegen.ir import CollectedPlainFragment
 from iron_gql.codegen.ir import CollectedReadableFragment
 from iron_gql.codegen.ir import CollectedRequiredFragmentArg
@@ -54,11 +54,11 @@ BASE_CLASS_NAMES = (MODEL_BASE_NAME, OPEN_MODEL_BASE_NAME, SLOT_MODEL_BASE_NAME)
 STDLIB_MODULE_NAMES = ("datetime", "typing")
 # Imported unconditionally and referenced by every model, so it is reserved
 # unconditionally too — deriving the claim from `to_camel_ref` instead would
-# drop it as soon as a package points that option somewhere other than pydantic.
+# drop it as soon as a module points that option somewhere other than pydantic.
 THIRD_PARTY_MODULE_NAMES = ("pydantic",)
-# Both modes' names are reserved whichever mode a package is generated in: the
+# Both modes' names are reserved whichever mode a module is generated in: the
 # reserved set must not depend on the mode in force today, or switching a
-# package to the other mode would rebind a name that generated fine before.
+# module to the other mode would rebind a name that generated fine before.
 CONTEXTLIB_NAMES = ("AbstractAsyncContextManager", "AbstractContextManager")
 GENERATOR_NAMES = ("AsyncGenerator", "Generator")
 ABC_NAMES = (*GENERATOR_NAMES, "Callable", "Sequence")
@@ -86,7 +86,7 @@ IRON_GQL_NAMES = ("runtime", "slots")
 # shadows a module-level model or enum spelled the same. `execute`'s variable
 # annotations are rendered in that scope, so a schema with an `input TResult`
 # used as a template variable makes the base read `TResult` as its own
-# parameter while `bind()`'s own overloads read the model -- a package that
+# parameter while `bind()`'s own overloads read the model -- a module that
 # generates cleanly and then fails to type-check. Reserved rather than renamed
 # out of the way: every name a parameter could take is a name a schema can
 # spell, so only a claim closes the case.
@@ -168,9 +168,9 @@ def scaffold_claims(
     scalars: dict[str, ImportRef],
     to_camel_ref: ImportRef,
 ) -> dict[str, tuple[str, ...]]:
-    # Names only imported when a package uses slots or fragments are listed
+    # Names only imported when a module uses slots or fragments are listed
     # unconditionally: the reserved set must not depend on which optional
-    # features a package happens to use today, or adding a slot to it would
+    # features a module happens to use today, or adding a slot to it would
     # rebind a name that generated fine a commit earlier.
     #
     # Each binding keeps its origin so the collision rule can tell two
@@ -280,7 +280,7 @@ def render_imports(
 ) -> str:
     import_modules = [ref.module for ref in scalars.values()]
     scalar_imports = "\n".join(f"import {module}" for module in import_modules)
-    # Every fixed name is emitted whole, whichever features the package
+    # Every fixed name is emitted whole, whichever features the module
     # happens to use: the module suppresses unused imports, so an extra line
     # costs nothing, while a predicate that drifts from the emitter that
     # writes the name costs a NameError in generated code -- and
@@ -503,7 +503,7 @@ def render_gql_fn(
     # Catch-all расширяется только видами артефактов, которые есть в пакете;
     # без definitions и templates `gql(some_variable)` сохраняет узкий тип.
     # GQLOperation leads unconditionally: a passthrough statement returns one
-    # even in a package whose every typed statement is a fragment.
+    # even in a module whose every typed statement is a fragment.
     return_type = " | ".join(
         dict.fromkeys([
             "runtime.GQLOperation",
@@ -575,18 +575,18 @@ def render_gql_fn(
         f'        msg = "unknown GraphQL statement passed to {gql_fn_name}; "',
         '        msg += "the generator only discovers bare-name calls with a "',
         '        msg += "single string literal - check the call site, then "',
-        '        msg += "regenerate the package"',
+        '        msg += "regenerate the module"',
         "        raise LookupError(msg)",
         "    return _statement_factories[stmt]()",
     ])
     return f"{overloads}\n\n\n{factories}\n\n\n{implementation}"
 
 
-def render_package(
+def render_module(
     mode: GenerationMode,
     base_url_ref: ImportRef,
     gql_fn_name: str,
-    collected: CollectedPackageIR,
+    collected: CollectedModuleIR,
     scalars: dict[str, ImportRef],
     to_camel_ref: ImportRef,
 ) -> str:
@@ -1113,7 +1113,7 @@ def _literal_tuple_forms(bindings: list[CollectedBinding]) -> SlotTupleFills:
     # in some tuple of this slot is a fragment some position of that arity may
     # hold. A dict keyed by the constraint rather than a list plus a
     # membership test: the deduplication is then a property of the structure
-    # instead of a branch that only some packages ever take.
+    # instead of a branch that only some modules ever take.
     #
     # `bound_closure`, not the bare class name: a position solves to the
     # constraint it matched, and that constraint is what the phantom is
@@ -1220,7 +1220,7 @@ def _bind_lookup_error_line(template_class_name: str) -> str:
         f"unknown bind combination for {template_class_name}; single-fragment "
         "and empty combinations are generated from the schema, so this is a "
         "tuple combination no call site writes literally - write it, then "
-        "regenerate the package. A call whose template is an expression the "
+        "regenerate the module. A call whose template is an expression the "
         "scan cannot follow is never read either: those are listed, with the "
         "reason, in the debug run's ignored_binds.json"
     )
@@ -1291,7 +1291,7 @@ def _bind_impl_signature(template: CollectedTemplate) -> str:
 # these cannot take: it is a documented hook, and the identity function is a
 # legal one to pass.
 # Each list comes in two halves. The fixed half holds every name a body of
-# that kind reads whatever the schema is -- the imported modules, the package's
+# that kind reads whatever the schema is -- the imported modules, the module's
 # own dicts, a builtin -- so it can be computed for a rendered module with no
 # IR to hand, which is what `tests.corpus.generated_oracles` checks the
 # rendered bodies against. The other half names generated classes, and a class
@@ -1388,7 +1388,7 @@ def render_templates(
         ]
         signatures = bind_signatures(template, template_bindings)
         if len(signatures) == 1:
-            # Nothing in the package can be spread into any of this
+            # Nothing in the module can be spread into any of this
             # template's slots, so the only call `bind()` accepts is the empty
             # one -- and one signature is not an overload set. Written as the
             # implementation's own signature: `@overload` needs at least two

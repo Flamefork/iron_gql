@@ -57,7 +57,7 @@ list_posts = api_gql(
 )
 
 # `album_summary` is a fragment on Album, a type outside every slot's
-# possible types in this package: it still gets a class and an `OnAlbum`
+# possible types in this module: it still gets a class and an `OnAlbum`
 # base, and what makes it unbindable is that no slot's signature names
 # that base (test_fragment_handles.py's basedpyright test relies on it).
 list_posts_typed = list_posts.bind(

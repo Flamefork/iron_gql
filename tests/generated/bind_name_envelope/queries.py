@@ -36,7 +36,7 @@ overloaded = api_gql(
     """
 )
 
-# A slot of a type no fragment in the package is defined on: the empty
+# A slot of a type no fragment in the module is defined on: the empty
 # call is the only one `bind()` accepts, so it is written as one plain
 # signature -- the same names, the other end of the axis.
 inline = api_gql(

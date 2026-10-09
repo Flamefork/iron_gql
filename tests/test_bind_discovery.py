@@ -5,9 +5,9 @@ from pathlib import Path
 
 import pytest
 
-from iron_gql.codegen import generate_gql_package
-from iron_gql.codegen.discovery import DiscoveredPackage
-from iron_gql.codegen.discovery import discover_package
+from iron_gql.codegen import render_gql_module
+from iron_gql.codegen.discovery import DiscoveredModule
+from iron_gql.codegen.discovery import discover_module
 from tests.conftest import ProjectBuilder
 from tests.conftest import write_text
 from tests.corpus.recorder import forget_import_state
@@ -19,10 +19,10 @@ def _write(root: Path, rel: str, text: str) -> None:
     write_text(root / rel, text)
 
 
-def _discover(root: Path) -> DiscoveredPackage:
+def _discover(root: Path) -> DiscoveredModule:
     # Every test in this file scans one throwaway tree for the same call name,
-    # skipping the generated package that would otherwise be scanned as source.
-    return discover_package(root, "api_gql", skip_path=root / "gql.py")
+    # skipping the generated module that would otherwise be scanned as source.
+    return discover_module(root, "api_gql", skip_path=root / "gql.py")
 
 
 TEMPLATE = 'api_gql("query Q { f @slot { __typename } }")'
@@ -81,7 +81,7 @@ def test_a_bind_on_a_parameter_is_not_a_discovery_error(test_project: ProjectBui
             return _template.bind(attachment=details)
         """,
     )
-    assert test_project.generate() is True
+    test_project.generate()
 
 
 @pytest.mark.parametrize("empty", ["()", "[]"], ids=["tuple", "list"])
@@ -124,7 +124,7 @@ def test_an_empty_sibling_does_not_turn_a_generic_bind_into_discovery(
             return _template.bind(attachment=details, preview={empty})
         """,
     )
-    assert test_project.generate() is True
+    test_project.generate()
 
 
 # Nothing about a bind has to live at module level: a template, its fragments
@@ -142,9 +142,9 @@ def test_template_and_fragment_are_resolved_as_local_names(tmp_path: Path):
             "    return tmpl.bind(f=(frag,))\n"
         ),
     )
-    package = _discover(tmp_path)
-    assert len(package.binds) == 1
-    bind = package.binds[0]
+    discovered = _discover(tmp_path)
+    assert len(discovered.binds) == 1
+    bind = discovered.binds[0]
     assert bind.template.raw_text == "query Q { f @slot { __typename } }"
     assert [stmt.raw_text for _, stmts in bind.slot_args for stmt in stmts] == [
         "fragment F on T { x }"
@@ -167,9 +167,9 @@ def test_a_local_name_shadows_the_module_level_one(tmp_path: Path):
             "    return tmpl.bind(f=(frag,))\n"
         ),
     )
-    package = _discover(tmp_path)
-    assert len(package.binds) == 1
-    assert package.binds[0].template.raw_text == (
+    discovered = _discover(tmp_path)
+    assert len(discovered.binds) == 1
+    assert discovered.binds[0].template.raw_text == (
         "query Inner { f @slot { __typename } }"
     )
 
@@ -193,9 +193,9 @@ def test_a_local_non_gql_name_hides_the_module_level_template(tmp_path: Path):
             "    return tmpl.bind(f=(frag,))\n"
         ),
     )
-    package = _discover(tmp_path)
-    assert package.binds == []
-    [ignored] = package.ignored
+    discovered = _discover(tmp_path)
+    assert discovered.binds == []
+    [ignored] = discovered.ignored
     assert "an enclosing function or class body binds that name" in ignored.reason
 
 
@@ -225,14 +225,14 @@ def test_template_written_below_bind_is_diagnosed(
     tmp_path: Path, body: str, location: str
 ):
     _write(tmp_path, "app/mod.py", body)
-    package = _discover(tmp_path)
-    assert package.binds == []
-    [ignored] = package.ignored
+    discovered = _discover(tmp_path)
+    assert discovered.binds == []
+    [ignored] = discovered.ignored
     assert ignored.location == location
     assert "written below the call" in ignored.reason
 
 
-# Where that line has to hold in practice: two packages generated from one tree
+# Where that line has to hold in practice: two modules generated from one tree
 # (an async one and a sync one, as this repository's own example does) each scan
 # the other's statements as plain values, so `tmpl = api_sync_gql(...)` binds an
 # opaque name during the `api_gql` run. Reading "some scope of the tree assigns
@@ -263,9 +263,11 @@ def test_a_name_bound_by_another_runs_gql_call_stays_silent(tmp_path: Path):
         ("api_gql", "app/async_side.py", "app/sync_side.py"),
         ("api_sync_gql", "app/sync_side.py", "app/async_side.py"),
     ):
-        package = discover_package(tmp_path, gql_fn_name, skip_path=tmp_path / "gql.py")
-        assert [bind.location for bind in package.binds] == [f"{owner}:4"]
-        [ignored] = package.ignored
+        discovered = discover_module(
+            tmp_path, gql_fn_name, skip_path=tmp_path / "gql.py"
+        )
+        assert [bind.location for bind in discovered.binds] == [f"{owner}:4"]
+        [ignored] = discovered.ignored
         assert ignored.location == f"{other}:4"
 
 
@@ -356,8 +358,8 @@ def test_binding_form_scoping_agrees_with_the_interpreter(tmp_path: Path, binder
         + "    return tmpl.bind(f=(frag,))\n",
     )
     expected_binds = 1 if _module_level_is_visible(binder, tmp_path) else 0
-    package = _discover(tmp_path)
-    assert len(package.binds) == expected_binds
+    discovered = _discover(tmp_path)
+    assert len(discovered.binds) == expected_binds
 
 
 # The mirror of the case above: a target that binds no name of its own leaves
@@ -377,8 +379,8 @@ def test_an_attribute_or_subscript_target_binds_nothing(tmp_path: Path, binder: 
         + binder
         + "    return tmpl.bind(f=(frag,))\n",
     )
-    package = _discover(tmp_path)
-    assert len(package.binds) == 1
+    discovered = _discover(tmp_path)
+    assert len(discovered.binds) == 1
 
 
 @pytest.mark.parametrize("signature", _SIGNATURE_FORMS)
@@ -402,8 +404,8 @@ def test_signature_scoping_agrees_with_the_interpreter(tmp_path: Path, signature
         "app/mod.py",
         f"tmpl = {TEMPLATE}\nfrag = {FRAGMENT}\n{signature}\n{_BIND_RETURN}",
     )
-    package = _discover(tmp_path)
-    assert len(package.binds) == (1 if visible else 0)
+    discovered = _discover(tmp_path)
+    assert len(discovered.binds) == (1 if visible else 0)
 
 
 _CLASS_TYPE_PARAM_ORACLE = """\
@@ -433,11 +435,11 @@ def test_a_function_local_import_resolves_as_a_slot_argument(tmp_path: Path):
         "app/mod.py",
         f"tmpl = {TEMPLATE}\ndef make():\n{_LOCAL_FRAG_IMPORT}{_BIND_LOCAL_FRAG}",
     )
-    package = _discover(tmp_path)
-    assert len(package.binds) == 1
-    assert [s.raw_text for _, stmts in package.binds[0].slot_args for s in stmts] == [
-        "fragment F on T { x }"
-    ]
+    discovered = _discover(tmp_path)
+    assert len(discovered.binds) == 1
+    assert [
+        s.raw_text for _, stmts in discovered.binds[0].slot_args for s in stmts
+    ] == ["fragment F on T { x }"]
 
 
 def test_a_function_local_import_resolves_as_the_template(tmp_path: Path):
@@ -450,10 +452,10 @@ def test_a_function_local_import_resolves_as_the_template(tmp_path: Path):
         "app/mod.py",
         f"frag = {FRAGMENT}\ndef make():\n{_LOCAL_TMPL_IMPORT}{_BIND_RETURN}",
     )
-    package = _discover(tmp_path)
-    assert len(package.binds) == 1
-    assert package.binds[0].template.raw_text == "query Q { f @slot { __typename } }"
-    assert package.ignored == []
+    discovered = _discover(tmp_path)
+    assert len(discovered.binds) == 1
+    assert discovered.binds[0].template.raw_text == "query Q { f @slot { __typename } }"
+    assert discovered.ignored == []
 
 
 def test_a_module_level_name_rebound_after_an_import_is_a_hard_error(tmp_path: Path):
@@ -495,8 +497,8 @@ def test_a_class_type_parameter_hides_the_module_level_template(tmp_path: Path):
         "app/mod.py",
         f"tmpl = {TEMPLATE}\nfrag = {FRAGMENT}\nclass C[tmpl]:\n{_BIND_ATTRIBUTE}",
     )
-    package = _discover(tmp_path)
-    assert package.binds == []
+    discovered = _discover(tmp_path)
+    assert discovered.binds == []
 
 
 # A lambda's parameter sits outside the plain parameter list and has no body
@@ -511,8 +513,8 @@ def test_a_parameter_hides_the_module_level_template(tmp_path: Path, body: str):
         "app/mod.py",
         (f"tmpl = {TEMPLATE}\nfrag = {FRAGMENT}\n" + body),
     )
-    package = _discover(tmp_path)
-    assert package.binds == []
+    discovered = _discover(tmp_path)
+    assert discovered.binds == []
 
 
 # `nonlocal` hands the name back to the enclosing function, so resolution has
@@ -532,9 +534,9 @@ def test_nonlocal_declaration_resolves_in_the_enclosing_function(tmp_path: Path)
             "    return inner\n"
         ),
     )
-    package = _discover(tmp_path)
-    assert len(package.binds) == 1
-    assert package.binds[0].template.raw_text == "query Q { f @slot { __typename } }"
+    discovered = _discover(tmp_path)
+    assert len(discovered.binds) == 1
+    assert discovered.binds[0].template.raw_text == "query Q { f @slot { __typename } }"
 
 
 # Resolution reads a name where exactly one binding gives it its value. A
@@ -607,9 +609,11 @@ def test_two_different_fragments_in_one_slot_stay_legal(tmp_path: Path):
             "bound = tmpl.bind(f=(one, two))\n",
         ]),
     )
-    package = _discover(tmp_path)
-    assert len(package.binds) == 1
-    assert [s.raw_text for _, stmts in package.binds[0].slot_args for s in stmts] == [
+    discovered = _discover(tmp_path)
+    assert len(discovered.binds) == 1
+    assert [
+        s.raw_text for _, stmts in discovered.binds[0].slot_args for s in stmts
+    ] == [
         "fragment F on T { x }",
         "fragment G on T { y }",
     ]
@@ -640,9 +644,9 @@ def test_a_single_value_slot_is_resolved_beside_a_tuple_slot(tmp_path: Path):
             "bound = tmpl.bind(f=frag, g=(one, two))\n",
         ]),
     )
-    package = _discover(tmp_path)
-    assert len(package.binds) == 1
-    assert [key for key, _ in package.binds[0].slot_args] == ["f", "g"]
+    discovered = _discover(tmp_path)
+    assert len(discovered.binds) == 1
+    assert [key for key, _ in discovered.binds[0].slot_args] == ["f", "g"]
 
 
 def test_a_single_value_slot_beside_an_unresolvable_tuple_slot_is_a_hard_error(
@@ -695,7 +699,7 @@ def test_a_reassigned_module_level_name_is_a_hard_error(tmp_path: Path):
 
 
 # A template and its fragments can be written straight into the bind. This is
-# the same freedom every other statement in the package has: `api_gql(...)` is
+# the same freedom every other statement in the module has: `api_gql(...)` is
 # an expression, and naming it is the caller's choice, not a requirement.
 def test_inline_template_and_fragments_are_resolved(tmp_path: Path):
     _write(
@@ -708,17 +712,17 @@ def test_inline_template_and_fragments_are_resolved(tmp_path: Path):
             "    )\n"
         ),
     )
-    package = _discover(tmp_path)
-    assert len(package.binds) == 1
-    bind = package.binds[0]
+    discovered = _discover(tmp_path)
+    assert len(discovered.binds) == 1
+    bind = discovered.binds[0]
     assert bind.template.raw_text == "query Q { f @slot { __typename } }"
     assert [stmt.raw_text for _, stmts in bind.slot_args for stmt in stmts] == [
         "fragment F on T { x }",
         "fragment G on T { y }",
     ]
     # The inline statements are discovered like any others, so the template
-    # and both fragments reach the package on their own too.
-    assert len(package.statements) == 3
+    # and both fragments reach the module on their own too.
+    assert len(discovered.statements) == 3
 
 
 # A bind is read from the `.bind(...)` call itself, not from the statement it
@@ -733,9 +737,9 @@ def test_a_bind_chained_into_another_call_is_resolved(tmp_path: Path):
             "bound = tmpl.bind(f=(frag,)).with_args(width=1)\n"
         ),
     )
-    package = _discover(tmp_path)
-    assert len(package.binds) == 1
-    assert package.binds[0].template.raw_text == "query Q { f @slot { __typename } }"
+    discovered = _discover(tmp_path)
+    assert len(discovered.binds) == 1
+    assert discovered.binds[0].template.raw_text == "query Q { f @slot { __typename } }"
 
 
 # A slot's fragments may be named and inline in the same tuple: both spellings
@@ -750,9 +754,9 @@ def test_named_and_inline_fragments_mix_in_one_slot(tmp_path: Path):
             'bound = tmpl.bind(f=(frag, api_gql("fragment G on T { y }")))\n'
         ),
     )
-    package = _discover(tmp_path)
+    discovered = _discover(tmp_path)
     assert [
-        stmt.raw_text for _, stmts in package.binds[0].slot_args for stmt in stmts
+        stmt.raw_text for _, stmts in discovered.binds[0].slot_args for stmt in stmts
     ] == ["fragment F on T { x }", "fragment G on T { y }"]
 
 
@@ -782,10 +786,10 @@ def test_an_empty_list_still_spells_an_unfilled_slot(tmp_path: Path):
         "app/mod.py",
         (f"tmpl = {TEMPLATE}\nfrag = {FRAGMENT}\nbound = tmpl.bind(f=(frag,), g=[])\n"),
     )
-    package = _discover(tmp_path)
+    discovered = _discover(tmp_path)
     assert [
         (key, tuple(stmt.raw_text for stmt in stmts))
-        for key, stmts in package.binds[0].slot_args
+        for key, stmts in discovered.binds[0].slot_args
     ] == [("f", ("fragment F on T { x }",)), ("g", ())]
 
 
@@ -803,9 +807,9 @@ def test_a_with_args_application_resolves_to_its_own_fragment(tmp_path: Path):
             "bound = tmpl.bind(f=(frag.with_args(width=1),))\n"
         ),
     )
-    package = _discover(tmp_path)
+    discovered = _discover(tmp_path)
     assert [
-        stmt.raw_text for _, stmts in package.binds[0].slot_args for stmt in stmts
+        stmt.raw_text for _, stmts in discovered.binds[0].slot_args for stmt in stmts
     ] == ["fragment F on T { x }"]
 
 
@@ -823,9 +827,9 @@ def test_a_walrus_captured_application_resolves_to_its_own_fragment(tmp_path: Pa
             "bound = tmpl.bind(f=((applied := frag.with_args(width=1)),))\n"
         ),
     )
-    package = _discover(tmp_path)
+    discovered = _discover(tmp_path)
     assert [
-        stmt.raw_text for _, stmts in package.binds[0].slot_args for stmt in stmts
+        stmt.raw_text for _, stmts in discovered.binds[0].slot_args for stmt in stmts
     ] == ["fragment F on T { x }"]
 
 
@@ -843,9 +847,9 @@ def test_a_with_args_application_mixes_with_a_bare_name_in_a_tuple(tmp_path: Pat
             "bound = tmpl.bind(f=(frag.with_args(width=1), other))\n"
         ),
     )
-    package = _discover(tmp_path)
+    discovered = _discover(tmp_path)
     assert [
-        stmt.raw_text for _, stmts in package.binds[0].slot_args for stmt in stmts
+        stmt.raw_text for _, stmts in discovered.binds[0].slot_args for stmt in stmts
     ] == ["fragment F on T { x }", "fragment G on T { y }"]
 
 
@@ -875,9 +879,9 @@ def test_the_same_combination_written_twice_is_one_bind(tmp_path: Path):
             "    return tmpl.bind(f=(frag,))\n"
         ),
     )
-    package = _discover(tmp_path)
-    assert len(package.binds) == 1
-    assert package.binds[0].locations == ("app/a.py:3", "app/b.py:4")
+    discovered = _discover(tmp_path)
+    assert len(discovered.binds) == 1
+    assert discovered.binds[0].locations == ("app/a.py:3", "app/b.py:4")
 
 
 # `global` and `nonlocal` say the name is not this scope's, so resolution has
@@ -894,9 +898,9 @@ def test_global_declaration_resolves_at_module_level(tmp_path: Path):
             "    return tmpl.bind(f=(frag,))\n"
         ),
     )
-    package = _discover(tmp_path)
-    assert len(package.binds) == 1
-    assert package.binds[0].template.raw_text == "query Q { f @slot { __typename } }"
+    discovered = _discover(tmp_path)
+    assert len(discovered.binds) == 1
+    assert discovered.binds[0].template.raw_text == "query Q { f @slot { __typename } }"
 
 
 # The other half of the same rule, and the half that reading `global` as a
@@ -926,9 +930,9 @@ def test_a_name_a_function_rebinds_outward_is_left_alone(tmp_path: Path):
             "    return tmpl.bind(f=(frag,))\n"
         ),
     )
-    package = _discover(tmp_path)
-    assert package.binds == []
-    [ignored] = package.ignored
+    discovered = _discover(tmp_path)
+    assert discovered.binds == []
+    [ignored] = discovered.ignored
     assert "global or nonlocal declaration" in ignored.reason
 
 
@@ -947,9 +951,9 @@ def test_a_method_does_not_see_the_class_body_name(tmp_path: Path):
             "        return tmpl.bind(f=(frag,))\n"
         ),
     )
-    package = _discover(tmp_path)
-    assert len(package.binds) == 1
-    assert package.binds[0].template.raw_text == "query Q { f @slot { __typename } }"
+    discovered = _discover(tmp_path)
+    assert len(discovered.binds) == 1
+    assert discovered.binds[0].template.raw_text == "query Q { f @slot { __typename } }"
 
 
 # A parameter binds its name too: the bind is ours (its base resolves), so the
@@ -985,9 +989,9 @@ def test_bind_resolved_through_import_chain(tmp_path: Path):
             "bound = template.bind(f=(frag,))\n"
         ),
     )
-    package = _discover(tmp_path)
-    assert len(package.binds) == 1
-    bind = package.binds[0]
+    discovered = _discover(tmp_path)
+    assert len(discovered.binds) == 1
+    bind = discovered.binds[0]
     assert bind.locations == ("app/user.py:3",)
     assert bind.template.raw_text == "query Q { f @slot { __typename } }"
     assert [kwarg for kwarg, _ in bind.slot_args] == ["f"]
@@ -1007,8 +1011,8 @@ def test_bind_tuple_literal_of_names(tmp_path: Path):
             "bound = tmpl.bind(f=(a, b))\n"
         ),
     )
-    package = _discover(tmp_path)
-    names = [s.raw_text for s in package.binds[0].slot_args[0][1]]
+    discovered = _discover(tmp_path)
+    names = [s.raw_text for s in discovered.binds[0].slot_args[0][1]]
     assert names == ["fragment A on T { x }", "fragment B on T { y }"]
 
 
@@ -1139,19 +1143,19 @@ def test_unresolvable_or_unrelated_bind_is_ignored(tmp_path: Path, body: str):
         "app/mod.py",
         'from app.infra import tmpl\nfrag = api_gql("fragment F on T { x }")\n' + body,
     )
-    package = _discover(tmp_path)
-    assert package.binds == []
+    discovered = _discover(tmp_path)
+    assert discovered.binds == []
     # Ignored on purpose, not lost: the reason distinguishes the two, which an
     # empty `binds` on its own cannot.
-    [ignored] = package.ignored
+    [ignored] = discovered.ignored
     assert "cannot resolve" in ignored.reason
 
 
 def test_plain_statements_still_discovered(tmp_path: Path):
     _write(tmp_path, "app/mod.py", 'q = api_gql("query Q { f }")\n')
-    package = _discover(tmp_path)
-    assert [s.raw_text for s in package.statements] == ["query Q { f }"]
-    assert package.binds == []
+    discovered = _discover(tmp_path)
+    assert [s.raw_text for s in discovered.statements] == ["query Q { f }"]
+    assert discovered.binds == []
 
 
 # Base resolution failure (whatever the cause) is swallowed as "not ours",
@@ -1169,9 +1173,9 @@ def test_circular_import_chain_in_base_is_ignored(tmp_path: Path):
             "bound = tmpl.bind(f=(frag,))\n"
         ),
     )
-    package = _discover(tmp_path)
-    assert package.binds == []
-    [ignored] = package.ignored
+    discovered = _discover(tmp_path)
+    assert discovered.binds == []
+    [ignored] = discovered.ignored
     assert "circular import chain" in ignored.reason
 
 
@@ -1262,8 +1266,8 @@ def test_unrelated_nested_bind_call_is_ignored(tmp_path: Path):
             "    return unrelated.bind(x=1)\n"
         ),
     )
-    package = _discover(tmp_path)
-    assert package.binds == []
+    discovered = _discover(tmp_path)
+    assert discovered.binds == []
 
 
 # An annotated assignment binds its target exactly like a plain one, so a
@@ -1278,9 +1282,9 @@ def test_annotated_gql_assignment_is_resolved(tmp_path: Path):
             "bound = tmpl.bind(f=(frag,))\n"
         ),
     )
-    package = _discover(tmp_path)
-    assert len(package.binds) == 1
-    assert package.binds[0].template.raw_text == "query Q { f @slot { __typename } }"
+    discovered = _discover(tmp_path)
+    assert len(discovered.binds) == 1
+    assert discovered.binds[0].template.raw_text == "query Q { f @slot { __typename } }"
 
 
 # A bind is an expression like any other: what it is assigned to, or whether
@@ -1304,9 +1308,9 @@ def test_bind_is_resolved_wherever_it_is_written(tmp_path: Path, body: str):
         "app/mod.py",
         f"tmpl = {TEMPLATE}\nfrag = {FRAGMENT}\n" + body,
     )
-    package = _discover(tmp_path)
-    assert len(package.binds) == 1
-    assert package.binds[0].template.raw_text == "query Q { f @slot { __typename } }"
+    discovered = _discover(tmp_path)
+    assert len(discovered.binds) == 1
+    assert discovered.binds[0].template.raw_text == "query Q { f @slot { __typename } }"
 
 
 # A bare annotation with no value is a declaration, not an assignment: it
@@ -1317,13 +1321,13 @@ def test_bare_annotation_without_value_is_skipped(tmp_path: Path):
         "app/mod.py",
         ('bound: object\nq = api_gql("query Q { f }")\n'),
     )
-    package = _discover(tmp_path)
-    assert [s.raw_text for s in package.statements] == ["query Q { f }"]
-    assert package.binds == []
+    discovered = _discover(tmp_path)
+    assert [s.raw_text for s in discovered.statements] == ["query Q { f }"]
+    assert discovered.binds == []
 
 
 # A file the scan cannot parse aborts it whenever it could own something the
-# package would lose -- which is decided by whether it names the gql function
+# module would lose -- which is decided by whether it names the gql function
 # or `.bind(` at all, since nothing short of parsing tells more than that.
 def test_syntax_error_in_a_file_naming_the_gql_function_aborts_the_scan(
     tmp_path: Path,
@@ -1339,13 +1343,13 @@ def test_syntax_error_in_a_file_that_owns_nothing_does_not_abort_the_scan(
 ):
     # A tree may hold a snippet, a fixture, or a file written for another
     # interpreter. Naming neither the gql function nor `.bind(`, it can own no
-    # statement and no bind, so it has no say in whether this package
-    # generates -- aborting on it left the package unregenerable until an
+    # statement and no bind, so it has no say in whether this module
+    # generates -- aborting on it left the module unregenerable until an
     # unrelated file was fixed or moved out of the scanned tree.
     _write(tmp_path, "app/mod.py", 'q = api_gql("query Q { f }")\n')
     _write(tmp_path, "app/legacy.py", "print 'hello'\n")
-    package = _discover(tmp_path)
-    assert [s.raw_text for s in package.statements] == ["query Q { f }"]
+    discovered = _discover(tmp_path)
+    assert [s.raw_text for s in discovered.statements] == ["query Q { f }"]
 
 
 def test_a_resolution_reaching_an_unparsable_module_is_a_hard_error(tmp_path: Path):
@@ -1369,7 +1373,7 @@ def test_a_resolution_reaching_an_unparsable_module_is_a_hard_error(tmp_path: Pa
 def test_statements_of_an_unparsable_file_are_never_silently_dropped(tmp_path: Path):
     # The failure the abort exists for: the broken file carries the only
     # definition of `q`, and a scan that skipped it would report success with
-    # `q` gone from the generated package.
+    # `q` gone from the generated module.
     _write(tmp_path, "app/mod.py", 'other = api_gql("query Other { f }")\n')
     _write(tmp_path, "app/broken.py", 'q = api_gql("query Q { f }")\ndef broken(\n')
     with pytest.raises(SyntaxError, match=r"Failed to parse .*broken\.py"):
@@ -1406,8 +1410,8 @@ def test_binds_are_returned_in_file_then_lineno_order(tmp_path: Path):
             "b_bind = tmpl.bind(f=(frag_c,))\n"
         ),
     )
-    package = _discover(tmp_path)
-    assert [bind.location for bind in package.binds] == [
+    discovered = _discover(tmp_path)
+    assert [bind.location for bind in discovered.binds] == [
         "app/a.py:4",
         "app/a.py:5",
         "app/b.py:3",
@@ -1459,10 +1463,10 @@ def test_unrelated_attribute_chain_bind_is_ignored(
 ):
     _write(tmp_path, "app/mod.py", 'q = api_gql("query Q { f }")\n')
     _write(tmp_path, "app/server.py", body)
-    package = _discover(tmp_path)
-    assert [s.raw_text for s in package.statements] == ["query Q { f }"]
-    assert package.binds == []
-    [ignored] = package.ignored
+    discovered = _discover(tmp_path)
+    assert [s.raw_text for s in discovered.statements] == ["query Q { f }"]
+    assert discovered.binds == []
+    [ignored] = discovered.ignored
     assert reason in ignored.reason
 
 
@@ -1470,7 +1474,7 @@ def test_unrelated_attribute_chain_bind_is_ignored(
 # module *of the scanned tree* holds ordinary objects next to its templates,
 # and every one of them may carry a `.bind`. The name behind the dot decides,
 # so it has to be resolved before anything is said about the chain -- reading
-# ownership off the prefix stopped generation of the whole package over an
+# ownership off the prefix stopped generation of the whole module over an
 # ordinary object, and did it for a name the module does not even define.
 @pytest.mark.parametrize(
     "chain",
@@ -1493,10 +1497,10 @@ def test_a_non_statement_behind_a_scanned_module_chain_is_ignored(
     )
     _write(tmp_path, "app/mod.py", 'q = api_gql("query Q { f }")\n')
     _write(tmp_path, "app/server.py", chain)
-    package = _discover(tmp_path)
-    assert [s.raw_text for s in package.statements] == ["query Q { f }"]
-    assert package.binds == []
-    [ignored] = package.ignored
+    discovered = _discover(tmp_path)
+    assert [s.raw_text for s in discovered.statements] == ["query Q { f }"]
+    assert discovered.binds == []
+    [ignored] = discovered.ignored
     assert "cannot resolve" in ignored.reason
 
 
@@ -1516,9 +1520,9 @@ def test_a_locally_shadowed_module_name_is_not_the_module(tmp_path: Path, body: 
     _write(tmp_path, "app/__init__.py", "")
     _write(tmp_path, "app/ui.py", "registry = object()\n")
     _write(tmp_path, "app/server.py", body)
-    package = _discover(tmp_path)
-    assert package.binds == []
-    [ignored] = package.ignored
+    discovered = _discover(tmp_path)
+    assert discovered.binds == []
+    [ignored] = discovered.ignored
     assert "names no module of the scanned tree" in ignored.reason
 
 
@@ -1542,11 +1546,11 @@ def test_relative_import_at_the_scanned_root_resolves(tmp_path: Path):
             "bound = tmpl.bind(f=(frag,))\n"
         ),
     )
-    package = _discover(tmp_path)
-    assert len(package.binds) == 1
-    assert package.binds[0].template.raw_text == "query Q { f @slot { __typename } }"
+    discovered = _discover(tmp_path)
+    assert len(discovered.binds) == 1
+    assert discovered.binds[0].template.raw_text == "query Q { f @slot { __typename } }"
     assert [
-        stmt.raw_text for _, stmts in package.binds[0].slot_args for stmt in stmts
+        stmt.raw_text for _, stmts in discovered.binds[0].slot_args for stmt in stmts
     ] == ["fragment F on T { x }"]
 
 
@@ -1569,9 +1573,9 @@ def test_bind_resolved_through_relative_import_chain(tmp_path: Path):
             "bound = template.bind(f=(frag,))\n"
         ),
     )
-    package = _discover(tmp_path)
-    assert len(package.binds) == 1
-    assert package.binds[0].template.raw_text == "query Q { f @slot { __typename } }"
+    discovered = _discover(tmp_path)
+    assert len(discovered.binds) == 1
+    assert discovered.binds[0].template.raw_text == "query Q { f @slot { __typename } }"
 
 
 # The other relative-import form: `from . import x` (no submodule) resolves
@@ -1587,9 +1591,9 @@ def test_bind_resolved_through_bare_dot_import(tmp_path: Path):
             "bound = tmpl.bind(f=(frag,))\n"
         ),
     )
-    package = _discover(tmp_path)
-    assert len(package.binds) == 1
-    assert package.binds[0].template.raw_text == "query Q { f }"
+    discovered = _discover(tmp_path)
+    assert len(discovered.binds) == 1
+    assert discovered.binds[0].template.raw_text == "query Q { f }"
 
 
 # Round 2 cleanup: pin the "climbs above the scanned root" path rather than
@@ -1663,9 +1667,9 @@ def test_a_module_chain_through_a_root_relative_import_is_diagnosed(tmp_path: Pa
 )
 def test_a_walrus_carries_its_statement_into_the_name(tmp_path: Path, body: str):
     _write(tmp_path, "app/mod.py", f"frag = {FRAGMENT}\n" + body)
-    package = _discover(tmp_path)
-    assert len(package.binds) == 1
-    assert package.binds[0].template.raw_text == "query Q { f @slot { __typename } }"
+    discovered = _discover(tmp_path)
+    assert len(discovered.binds) == 1
+    assert discovered.binds[0].template.raw_text == "query Q { f @slot { __typename } }"
 
 
 # Two imports of one name are two imports, not two assignments -- and reading
@@ -1721,9 +1725,9 @@ def test_two_imports_of_a_name_the_tree_does_not_own_stay_silent(tmp_path: Path)
             "bound = conn.bind(('', 1))\n"
         ),
     )
-    package = _discover(tmp_path)
-    assert package.binds == []
-    [ignored] = package.ignored
+    discovered = _discover(tmp_path)
+    assert discovered.binds == []
+    [ignored] = discovered.ignored
     assert ignored.location == "app/shim.py:5"
 
 
@@ -1796,9 +1800,9 @@ def test_third_party_binds_stay_silent_beside_our_own(tmp_path: Path):
         "app/registry.py",
         "def register(target, opts):\n    target.bind(**opts)\n",
     )
-    package = _discover(tmp_path)
-    assert len(package.binds) == 1
-    assert [entry.location for entry in package.ignored] == [
+    discovered = _discover(tmp_path)
+    assert len(discovered.binds) == 1
+    assert [entry.location for entry in discovered.ignored] == [
         "app/net.py:3",
         "app/registry.py:2",
         "app/ui.py:2",
@@ -1832,10 +1836,10 @@ def test_every_bind_call_reaches_binds_or_ignored(tmp_path: Path):
             "    return tmpl.bind(f=(frag,))\n"
         ),
     )
-    package = _discover(tmp_path)
-    accounted = {location for bind in package.binds for location in bind.locations} | {
-        entry.location for entry in package.ignored
-    }
+    discovered = _discover(tmp_path)
+    accounted = {
+        location for bind in discovered.binds for location in bind.locations
+    } | {entry.location for entry in discovered.ignored}
     # Every `.bind(` written on the line its call starts on -- which is every
     # one of them above, so the text of the tree can say what the scan owes.
     written = {
@@ -1922,9 +1926,9 @@ def test_a_decorator_resolves_outside_the_definition_it_decorates(
         )
         + definition,
     )
-    package = _discover(tmp_path)
-    assert len(package.binds) == 1
-    assert package.binds[0].locations == ("app/mod.py:4",)
+    discovered = _discover(tmp_path)
+    assert len(discovered.binds) == 1
+    assert discovered.binds[0].locations == ("app/mod.py:4",)
 
 
 # `a = b = api_gql(...)` binds both names to that one statement, so a bind
@@ -1941,9 +1945,9 @@ def test_a_chained_assignment_carries_the_statement_into_every_name(tmp_path: Pa
             "two = second.bind(f=(frag,))\n"
         ),
     )
-    package = _discover(tmp_path)
-    assert len(package.binds) == 1
-    assert package.binds[0].locations == ("app/mod.py:3", "app/mod.py:4")
+    discovered = _discover(tmp_path)
+    assert len(discovered.binds) == 1
+    assert discovered.binds[0].locations == ("app/mod.py:3", "app/mod.py:4")
 
 
 # A class body does not hide its own names from itself -- only from the
@@ -1961,9 +1965,9 @@ def test_a_class_body_resolves_the_names_it_binds_itself(tmp_path: Path):
             "    bound = tmpl.bind(f=(frag,))\n"
         ),
     )
-    package = _discover(tmp_path)
-    assert len(package.binds) == 1
-    assert package.binds[0].template.raw_text == "query Q { f @slot { __typename } }"
+    discovered = _discover(tmp_path)
+    assert len(discovered.binds) == 1
+    assert discovered.binds[0].template.raw_text == "query Q { f @slot { __typename } }"
 
 
 # The climb that lands, next to the one above the root that does not: two dots
@@ -1983,19 +1987,19 @@ def test_a_two_level_relative_import_resolves(tmp_path: Path):
             "bound = tmpl.bind(f=(frag,))\n"
         ),
     )
-    package = _discover(tmp_path)
-    assert len(package.binds) == 1
-    assert package.binds[0].locations == ("pkg/sub/mod.py:3",)
-    assert [s.raw_text for _, stmts in package.binds[0].slot_args for s in stmts] == [
-        "fragment F on T { x }"
-    ]
+    discovered = _discover(tmp_path)
+    assert len(discovered.binds) == 1
+    assert discovered.binds[0].locations == ("pkg/sub/mod.py:3",)
+    assert [
+        s.raw_text for _, stmts in discovered.binds[0].slot_args for s in stmts
+    ] == ["fragment F on T { x }"]
 
 
 # Whether an unparsable file may own a bind is decided on the text alone, so the
 # question it answers has to be one the text can answer: an AST `.bind(...)`
 # spells the attribute `bind` literally, whatever the source puts around it.
 # Matching the punctuation instead let a file that owns a bind pass for one that
-# owns nothing -- and a scan that defers such a file regenerates the package
+# owns nothing -- and a scan that defers such a file regenerates the module
 # without whatever it holds.
 @pytest.mark.parametrize(
     "broken",
@@ -2035,11 +2039,11 @@ def test_ignored_binds_are_written_to_the_debug_directory(
         """,
     )
     debug_dir = test_project.root / "debug_out"
-    generate_gql_package(
+    render_gql_module(
         mode="async",
         schema_path=test_project.root / "schema.graphql",
         src_path=test_project.root,
-        package_full_name="sample_app.gql.api",
+        module_full_name="sample_app.gql.api",
         base_url_import="sample_app.settings:GRAPHQL_URL",
         debug_path=debug_dir,
     )

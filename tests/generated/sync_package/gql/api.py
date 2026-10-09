@@ -189,7 +189,7 @@ class GetUserWithManager(runtime.GQLTemplate):
     def bind[TModelManager: pydantic.BaseModel, TReadsManager](self, *, manager: OnUser[TModelManager, TReadsManager]) -> GetUserWithManagerBound[GetUserWithManagerResult[OnUser[TModelManager, TReadsManager] | TReadsManager]]: ...
     def bind(self, *, manager: slots.GQLBindableFragment[pydantic.BaseModel, Any] | Sequence[slots.GQLBindableFragment[pydantic.BaseModel, Any]] = ()) -> runtime.GQLBoundOperation:
         if slots.binding_key({'manager': manager}) not in self._binding_specs:
-            raise LookupError("unknown bind combination for GetUserWithManager; single-fragment and empty combinations are generated from the schema, so this is a tuple combination no call site writes literally - write it, then regenerate the package. A call whose template is an expression the scan cannot follow is never read either: those are listed, with the reason, in the debug run's ignored_binds.json")
+            raise LookupError("unknown bind combination for GetUserWithManager; single-fragment and empty combinations are generated from the schema, so this is a tuple combination no call site writes literally - write it, then regenerate the module. A call whose template is an expression the scan cannot follow is never read either: those are listed, with the reason, in the debug run's ignored_binds.json")
         return GetUserWithManagerBound[GetUserWithManagerResult].bound__(
             self._binding_specs[slots.binding_key({'manager': manager})], {'manager': slots.as_bindable_fragments(manager)},
         )
@@ -223,6 +223,6 @@ def api_gql(stmt: str) -> runtime.GQLOperation | slots.GQLFragment[pydantic.Base
         msg = "unknown GraphQL statement passed to api_gql; "
         msg += "the generator only discovers bare-name calls with a "
         msg += "single string literal - check the call site, then "
-        msg += "regenerate the package"
+        msg += "regenerate the module"
         raise LookupError(msg)
     return _statement_factories[stmt]()

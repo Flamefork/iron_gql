@@ -13,7 +13,7 @@ from iron_gql.codegen.ir import CollectedFactoryFragment
 from iron_gql.codegen.ir import CollectedField
 from iron_gql.codegen.ir import CollectedFragment
 from iron_gql.codegen.ir import CollectedModel
-from iron_gql.codegen.ir import CollectedPackageIR
+from iron_gql.codegen.ir import CollectedModuleIR
 from iron_gql.codegen.ir import CollectedTemplate
 from iron_gql.codegen.ir import CollectedUnionAlias
 from iron_gql.codegen.ir import GraphQLGenerationError
@@ -267,7 +267,7 @@ type ClaimKind = Literal[
 ]
 
 
-def _fixed_name_claims(ir: CollectedPackageIR) -> Iterator[tuple[str, ClaimKind, str]]:
+def _fixed_name_claims(ir: CollectedModuleIR) -> Iterator[tuple[str, ClaimKind, str]]:
     # (name, kind, what claims it) for every name the IR pins. The one
     # enumeration of those sources: `fixed_module_names` reserves them for the
     # rename pass and `_module_name_claims` reports collisions between them,
@@ -310,7 +310,7 @@ def _fixed_name_claims(ir: CollectedPackageIR) -> Iterator[tuple[str, ClaimKind,
     # соответствующего template, поэтому module-level Python name здесь нет.
 
 
-def fixed_module_names(ir: CollectedPackageIR) -> frozenset[str]:
+def fixed_module_names(ir: CollectedModuleIR) -> frozenset[str]:
     # IR закрепляет classes operations и fragments за именами, написанными
     # developer, поэтому их нельзя перемещать для разрешения collision. Model
     # перемещать можно. Эти names передаются rename pass как reserved, а ошибками
@@ -320,14 +320,14 @@ def fixed_module_names(ir: CollectedPackageIR) -> frozenset[str]:
     # A template's class name and its `{Name}Bound` base are equally
     # developer-named (the query name, the derived base). An on-type base's
     # name is fixed for a different reason: it names a GraphQL type, not
-    # anything a developer wrote in this package, but a fragment's own class
+    # anything a developer wrote for this module, but a fragment's own class
     # derives from it by that exact name, so it cannot move either.
     return frozenset(name for name, _kind, _origin in _fixed_name_claims(ir))
 
 
 def apply_rename(
-    ir: CollectedPackageIR, scaffold_names: frozenset[str]
-) -> CollectedPackageIR:
+    ir: CollectedModuleIR, scaffold_names: frozenset[str]
+) -> CollectedModuleIR:
     rename = build_rename_map(
         ir.result_artifacts,
         # Open models закреплены целиком: кроме стабильности public names,
@@ -388,7 +388,7 @@ def _is_usable_identifier(name: str) -> bool:
 
 
 def _module_name_claims(
-    ir: CollectedPackageIR, scaffold: Mapping[str, tuple[str, ...]]
+    ir: CollectedModuleIR, scaffold: Mapping[str, tuple[str, ...]]
 ) -> Iterator[tuple[str, ClaimKind, str]]:
     for name in sorted(scaffold):
         for origin in scaffold[name]:
@@ -401,7 +401,7 @@ def _module_name_claims(
 
 
 def validate_module_names(
-    ir: CollectedPackageIR, scaffold: Mapping[str, tuple[str, ...]]
+    ir: CollectedModuleIR, scaffold: Mapping[str, tuple[str, ...]]
 ) -> list[str]:
     # Classes operations, public fragment definitions, private applied classes,
     # models, templates, их `{Operation}Bound[...]` bases и module scaffold
@@ -425,7 +425,7 @@ def validate_module_names(
     return errors
 
 
-def _signature_claims(ir: CollectedPackageIR) -> Iterator[tuple[str, str, str]]:
+def _signature_claims(ir: CollectedModuleIR) -> Iterator[tuple[str, str, str]]:
     # (scope, parameter name, what claims it) for every method the generator
     # writes parameters onto. Each scope is one Python keyword namespace: the
     # method's own parameters, its receiver, and any name its rendered body
@@ -471,7 +471,7 @@ def _template_signature_claims(
     # implementation under its stubs, over a body that reads the names
     # below from an enclosing scope. The claim is unconditional, and has
     # to be: `bind()` is rendered either as a set of stubs over an erased
-    # implementation or -- when nothing in the package can be spread into
+    # implementation or -- when nothing in the module can be spread into
     # any of the template's slots -- as one plain signature, and both
     # write the same parameter names over the same body. Claiming them
     # for only one shape left the other's parameters free to shadow the
@@ -485,7 +485,7 @@ def _template_signature_claims(
     # underscores its slot may carry, so `details` and `_details` are two
     # keywords and one parameter. A model would then declare fewer
     # parameters than its bindings pass arguments, and the generated
-    # package would fail to import.
+    # module would fail to import.
     scope = f"the type parameters of template '{template.class_name}' at {at}"
     for slot in template.slots:
         yield scope, slot_param_name(slot.python_name), f"slot '{slot.name}'"
@@ -570,7 +570,7 @@ def _fragment_init_claims(
             yield applied_scope, name, origin
 
 
-def validate_signature_names(ir: CollectedPackageIR) -> list[str]:
+def validate_signature_names(ir: CollectedModuleIR) -> list[str]:
     # Every generated method takes its parameters in one Python namespace, and
     # names reach it through `to_snake_fn` — so two names that differ in
     # GraphQL can render the same parameter twice, and a name that is not a

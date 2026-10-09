@@ -888,7 +888,7 @@ def test_interface_typename_through_a_fragment_spread_twice(
         """,
     )
 
-    assert test_project.generate() is True
+    test_project.generate()
 
 
 def test_typename_inside_a_concrete_type_fragment_is_not_the_base_one(
@@ -1101,7 +1101,7 @@ def test_union_type_condition_inside_interface_selection_generates(
         """,
     )
 
-    assert test_project.generate() is True
+    test_project.generate()
 
 
 def test_invalid_interface_fragment_reports_error(test_project: ProjectBuilder):
@@ -1245,8 +1245,7 @@ def test_union_fragment_typename_in_variants(test_project: ProjectBuilder):
         """,
     )
 
-    changed = test_project.generate()
-    assert changed is True
+    test_project.generate()
 
 
 async def test_nullable_union_result_validation(httpserver: HTTPServer):

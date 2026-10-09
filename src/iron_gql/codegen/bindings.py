@@ -370,7 +370,7 @@ def fragment_closure(
         if spreads_into(schema, fragment.type_condition.name.value, slot_type)
     ]
     if not sets:
-        # Compatible with no slot in the package: it still gets a class and a
+        # Compatible with no slot in the module: it still gets a class and a
         # base, and its closure is itself -- nothing else can ever be read
         # through it.
         return frozenset({own})
@@ -818,7 +818,7 @@ def _build_expanded_document(
     #
     # Identity first: brick reuse means the template and the closure usually
     # arrive at the very same node, and printing both sides of that is the bulk
-    # of the AST printing a package with shared bricks does.
+    # of the AST printing a module with shared bricks does.
     by_name = collect_fragments_from_doc(filled)
     errors = [
         _fragment_definition_conflict_error(name=fragment.name.value, location=location)
@@ -948,7 +948,7 @@ def expand_binding(
         for fragments in spreads.values()
         for fragment in fragments
     }
-    # Direct fragments take precedence over the package namespace: they are the
+    # Direct fragments take precedence over the module namespace: they are the
     # exact objects the bind named, and are guaranteed present even if a
     # caller's `all_fragments` snapshot happens not to carry them. Both the
     # document closure and the per-slot readable set resolve names against this

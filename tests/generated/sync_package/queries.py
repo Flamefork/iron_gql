@@ -34,7 +34,7 @@ user_renamed = api_gql(
 )
 
 # Finding F12: the renderer emits a distinct sync path for bindings (the
-# branch's real-world consumer is a sync package), but nothing calls
+# branch's real-world consumer is a sync module), but nothing calls
 # execute() on one -- this template/fragment/bind exercises exactly that.
 get_user_with_manager = api_gql(
     """

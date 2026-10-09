@@ -3,9 +3,9 @@ from pathlib import Path
 
 import pytest
 
-from iron_gql.codegen import generate_gql_package
-from iron_gql.codegen.discovery import DiscoveredPackage
-from iron_gql.codegen.discovery import discover_package
+from iron_gql.codegen import render_gql_module
+from iron_gql.codegen.discovery import DiscoveredModule
+from iron_gql.codegen.discovery import discover_module
 from tests.conftest import ProjectBuilder
 from tests.conftest import write_text
 
@@ -14,19 +14,19 @@ def _write(root: Path, rel: str, text: str) -> None:
     write_text(root / rel, text)
 
 
-def _discover(root: Path) -> DiscoveredPackage:
-    return discover_package(root, "api_gql", skip_path=root / "gql.py")
+def _discover(root: Path) -> DiscoveredModule:
+    return discover_module(root, "api_gql", skip_path=root / "gql.py")
 
 
-def _texts(package: DiscoveredPackage) -> list[str]:
-    return [statement.raw_text for statement in package.statements]
+def _texts(discovered: DiscoveredModule) -> list[str]:
+    return [statement.raw_text for statement in discovered.statements]
 
 
 # A directory the walk refuses to enter is one that holds another tree: an
 # environment's installed packages, a tool's cache, a second checkout. What
 # follows pins both halves of that sentence -- what is refused, and what is
 # not, since a rule that refused a directory of the project's own source would
-# take its statements out of the generated package.
+# take its statements out of the generated module.
 
 
 def test_a_statement_inside_a_hidden_directory_is_not_collected(tmp_path: Path):
@@ -45,7 +45,7 @@ def test_an_unparsable_file_inside_a_hidden_directory_does_not_abort_the_scan(
     # Installed code is written for other interpreters and other Python
     # versions, and the abort on an unparsable file that names `bind` cannot
     # tell one of those from a broken file of ours. Refusing the directory is
-    # what keeps a dependency from deciding whether this package generates.
+    # what keeps a dependency from deciding whether this module generates.
     _write(tmp_path, "app/mod.py", 'q = api_gql("query Q { f }")\n')
     _write(tmp_path, ".venv/lib/site-packages/legacy.py", "# bind\ndef broken(\n")
     assert _texts(_discover(tmp_path)) == ["query Q { f }"]
@@ -62,9 +62,9 @@ def test_a_third_party_bind_inside_a_hidden_directory_is_not_diagnosed(
         tmp_path, "app/mod.py", 'tmpl = api_gql("query Q { f @slot { __typename } }")\n'
     )
     _write(tmp_path, ".venv/lib/site-packages/widgets.py", "tmpl.bind(f=(frag,))\n")
-    package = _discover(tmp_path)
-    assert package.binds == []
-    assert _texts(package) == ["query Q { f @slot { __typename } }"]
+    discovered = _discover(tmp_path)
+    assert discovered.binds == []
+    assert _texts(discovered) == ["query Q { f @slot { __typename } }"]
 
 
 def test_the_same_third_party_bind_outside_a_hidden_directory_is_diagnosed(
@@ -106,7 +106,7 @@ def test_a_statement_in_a_directory_no_import_could_name_is_still_collected(
 ):
     # `ops-scripts` is not a module path component, so nothing under it can be
     # imported -- but a script is run, not imported, and the statement it holds
-    # belongs in the package all the same.
+    # belongs in the module all the same.
     _write(tmp_path, "app/mod.py", 'q = api_gql("query Q { f }")\n')
     _write(tmp_path, "ops-scripts/report.py", 'r = api_gql("query R { f }")\n')
     assert _texts(_discover(tmp_path)) == ["query Q { f }", "query R { f }"]
@@ -135,8 +135,8 @@ def test_statements_are_returned_in_whole_tree_order(tmp_path: Path):
     _write(tmp_path, "b.py", 'b = api_gql("query B { f }")\n')
     _write(tmp_path, "app/a.py", 'a = api_gql("query A { f }")\n')
     _write(tmp_path, "app/sub/a.py", 'sub = api_gql("query Sub { f }")\n')
-    package = _discover(tmp_path)
-    assert [str(statement.file) for statement in package.statements] == [
+    discovered = _discover(tmp_path)
+    assert [str(statement.file) for statement in discovered.statements] == [
         "app/a.py",
         "app/sub/a.py",
         "b.py",
@@ -174,11 +174,11 @@ def test_skipped_directories_are_written_to_the_debug_directory(
     write_text(test_project.root / ".venv/lib/probe.py", "")
     write_text(test_project.root / "venv/pyvenv.cfg", "home = /usr/bin\n")
     debug_dir = test_project.root / "debug_out"
-    generate_gql_package(
+    render_gql_module(
         mode="async",
         schema_path=test_project.root / "schema.graphql",
         src_path=test_project.root,
-        package_full_name="sample_app.gql.api",
+        module_full_name="sample_app.gql.api",
         base_url_import="sample_app.settings:GRAPHQL_URL",
         debug_path=debug_dir,
     )
