@@ -37,6 +37,7 @@ from tests.generated.testing_sync_swap.settings import GRAPHQL_URL
 
 _client = runtime.GQLClient(
     base_url=GRAPHQL_URL,
+    subscription_protocol="graphql-sse",
 )
 
 

@@ -134,6 +134,7 @@ ping = api_gql(
     test_project.activate_workspace(workspace)
 
     render_gql_module(
+        subscription_protocol="graphql-sse",
         mode="async",
         schema_path=schema_path,
         src_path=workspace,
@@ -431,6 +432,7 @@ def test_debug_artifacts_generation(test_project: ProjectBuilder):
 
     debug_dir = test_project.root / "debug_out"
     render_gql_module(
+        subscription_protocol="graphql-sse",
         mode="async",
         schema_path=test_project.root / "schema.graphql",
         src_path=test_project.root,
@@ -469,6 +471,7 @@ def test_debug_artifacts_are_written_for_an_invalid_query(
     debug_dir = test_project.root / "debug_out"
     with pytest.raises(GraphQLGenerationError, match="NoSuchType"):
         render_gql_module(
+            subscription_protocol="graphql-sse",
             mode="async",
             schema_path=test_project.root / "schema.graphql",
             src_path=test_project.root,
@@ -542,6 +545,7 @@ def test_default_scalars_and_nested_list_input(test_project: ProjectBuilder):
     # helper to test scalars=None path involved in default args
     # render_gql_module has scalars=None default.
     render_gql_module(
+        subscription_protocol="graphql-sse",
         mode="async",
         schema_path=test_project.root / "schema.graphql",
         src_path=test_project.root,

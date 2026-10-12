@@ -49,7 +49,9 @@ def test_sync_query_sends_variables_and_headers(httpserver: HTTPServer):
 
     httpserver.expect_request("/graphql/", method="POST").respond_with_handler(handler)
     client = GQLClient(
-        base_url=httpserver.url_for("/graphql/"), headers={"X-Default": "on"}
+        subscription_protocol="graphql-sse",
+        base_url=httpserver.url_for("/graphql/"),
+        headers={"X-Default": "on"},
     )
     try:
         result = client.query(
@@ -73,7 +75,9 @@ def test_sync_query_raises_graphql_errors(httpserver: HTTPServer):
     httpserver.expect_request("/graphql/", method="POST").respond_with_handler(
         lambda _request: _json_response({"errors": [{"message": "boom"}]})
     )
-    client = GQLClient(base_url=httpserver.url_for("/graphql/"))
+    client = GQLClient(
+        subscription_protocol="graphql-sse", base_url=httpserver.url_for("/graphql/")
+    )
     try:
         with pytest.raises(GraphQLResponseError, match="boom"):
             client.query(_UserResult, _GET_USER, variables={"id": "1"}, headers={})
@@ -85,7 +89,9 @@ def test_sync_query_rejects_redirect(httpserver: HTTPServer):
     httpserver.expect_request("/graphql/", method="POST").respond_with_response(
         Response(status=302, headers={"Location": "https://elsewhere/graphql"})
     )
-    client = GQLClient(base_url=httpserver.url_for("/graphql/"))
+    client = GQLClient(
+        subscription_protocol="graphql-sse", base_url=httpserver.url_for("/graphql/")
+    )
     try:
         with pytest.raises(httpx2.HTTPStatusError, match="https://elsewhere/graphql"):
             client.query(_UserResult, _GET_USER, variables={"id": "1"}, headers={})
@@ -105,7 +111,9 @@ def test_sync_query_uploads_files(httpserver: HTTPServer):
         return _json_response({"data": {"uploadFile": "ok"}})
 
     httpserver.expect_request("/graphql/", method="POST").respond_with_handler(handler)
-    client = GQLClient(base_url=httpserver.url_for("/graphql/"))
+    client = GQLClient(
+        subscription_protocol="graphql-sse", base_url=httpserver.url_for("/graphql/")
+    )
     try:
         result = client.query(
             _UploadResult,

@@ -22,6 +22,7 @@ from iron_gql.codegen.render import GenerationMode
 from iron_gql.codegen.render import render_module
 from iron_gql.codegen.render import scaffold_claims
 from iron_gql.codegen.slots import validate_no_nested_slots
+from iron_gql.runtime import SubscriptionProtocol
 
 
 @dataclass(frozen=True)
@@ -84,6 +85,7 @@ def render_gql_module(
     src_path: Path,
     module_full_name: str,
     base_url_import: str,
+    subscription_protocol: SubscriptionProtocol,
     scalars: dict[str, str] | None = None,
     to_camel_fn_full_name: str = "pydantic.alias_generators:to_camel",
     to_snake_fn: StrTransform = alias_generators.to_snake,
@@ -164,6 +166,7 @@ def render_gql_module(
     new_content = render_module(
         mode=mode,
         base_url_ref=base_url_ref,
+        subscription_protocol=subscription_protocol,
         gql_fn_name=gql_fn_name,
         collected=collected,
         scalars=scalar_refs,

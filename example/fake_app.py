@@ -7,7 +7,6 @@ import pydantic
 from iron_gql.runtime import ASGIReceive
 from iron_gql.runtime import ASGIScope
 from iron_gql.runtime import ASGISend
-from iron_gql.testing import accept_graphql_ws
 
 POSTS = [{"id": "10", "title": "Typed clients"}]
 
@@ -61,6 +60,7 @@ def _resolve_post(
 ROOT = {"user": _resolve_user, "post": _resolve_post}
 
 _BODY = pydantic.TypeAdapter(bytes)
+_HEADERS = pydantic.TypeAdapter(list[tuple[bytes, bytes]])
 
 
 class GraphQLRequest(pydantic.BaseModel):
@@ -78,32 +78,52 @@ async def _read_body(receive: ASGIReceive) -> bytes:
     return body
 
 
-async def app(scope: ASGIScope, receive: ASGIReceive, send: ASGISend) -> None:
-    if scope["type"] == "http":
-        request = GraphQLRequest.model_validate_json(await _read_body(receive))
-        result = graphql.graphql_sync(  # pyright: ignore[reportUnknownMemberType] -- graphql-core types `middleware` via unparameterized Tuple/List
-            SCHEMA, request.query, root_value=ROOT, variable_values=request.variables
-        )
-        await send({
-            "type": "http.response.start",
-            "status": 200,
-            "headers": [(b"content-type", b"application/json")],
-        })
-        await send({
-            "type": "http.response.body",
-            "body": json.dumps(result.formatted).encode(),
-        })
-        return
+def _accepts_event_stream(scope: ASGIScope) -> bool:
+    headers = dict(_HEADERS.validate_python(scope["headers"]))
+    return b"text/event-stream" in headers.get(b"accept", b"")
 
-    connection = await accept_graphql_ws(scope, receive, send)
-    subscription = await connection.ack()
-    await subscription.next({
+
+# Chapter 7's subscription answers as an event stream: one `next`, then the
+# `complete` that tells the client the operation is over.
+async def _stream_post_added(send: ASGISend) -> None:
+    post_added = {
         "postAdded": {
             "id": "11",
             "title": "Slots, explained",
             "body": "...",
             "author": {"name": ALICE["name"]},
         }
+    }
+    await send({
+        "type": "http.response.start",
+        "status": 200,
+        "headers": [(b"content-type", b"text/event-stream")],
     })
-    await subscription.complete()
-    await connection.drain()
+    await send({
+        "type": "http.response.body",
+        "body": f"event: next\ndata: {json.dumps({'data': post_added})}\n\n".encode(),
+        "more_body": True,
+    })
+    await send({
+        "type": "http.response.body",
+        "body": b"event: complete\ndata: \n\n",
+    })
+
+
+async def app(scope: ASGIScope, receive: ASGIReceive, send: ASGISend) -> None:
+    request = GraphQLRequest.model_validate_json(await _read_body(receive))
+    if _accepts_event_stream(scope):
+        await _stream_post_added(send)
+        return
+    result = graphql.graphql_sync(  # pyright: ignore[reportUnknownMemberType] -- graphql-core types `middleware` via unparameterized Tuple/List
+        SCHEMA, request.query, root_value=ROOT, variable_values=request.variables
+    )
+    await send({
+        "type": "http.response.start",
+        "status": 200,
+        "headers": [(b"content-type", b"application/json")],
+    })
+    await send({
+        "type": "http.response.body",
+        "body": json.dumps(result.formatted).encode(),
+    })

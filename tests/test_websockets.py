@@ -157,7 +157,11 @@ async def test_subscribe_asgi():
         {"type": "complete"},
     ])
 
-    client = AsyncGQLClient(base_url="http://testserver/graphql", target_app=app)
+    client = AsyncGQLClient(
+        subscription_protocol="graphql-transport-ws",
+        base_url="http://testserver/graphql",
+        target_app=app,
+    )
     try:
         async with client.subscribe(
             _CounterResult, "subscription { counter }", variables={}, headers={}
@@ -176,7 +180,11 @@ async def test_subscribe_error():
         await subscription.error([{"message": "boom"}])
         await connection.drain()
 
-    client = AsyncGQLClient(base_url="http://testserver/graphql", target_app=app)
+    client = AsyncGQLClient(
+        subscription_protocol="graphql-transport-ws",
+        base_url="http://testserver/graphql",
+        target_app=app,
+    )
     try:
         results: list[int] = []
 
@@ -203,7 +211,11 @@ async def test_subscribe_next_with_errors():
         },
     ])
 
-    client = AsyncGQLClient(base_url="http://testserver/graphql", target_app=app)
+    client = AsyncGQLClient(
+        subscription_protocol="graphql-transport-ws",
+        base_url="http://testserver/graphql",
+        target_app=app,
+    )
     try:
 
         async def consume():
@@ -248,6 +260,7 @@ async def test_subscribe_codegen_asgi():
         "websockets_codegen",
         "http://testserver/graphql",
         target_app=app,
+        subscription_protocol="graphql-transport-ws",
     ):
         async with codegen_queries.events.execute(channel="test") as stream:
             results = [(item.events.id, item.events.message) async for item in stream]
@@ -266,7 +279,11 @@ async def test_subscribe_connection_rejected():
         ack=False,
     )
 
-    client = AsyncGQLClient(base_url="http://testserver/graphql", target_app=app)
+    client = AsyncGQLClient(
+        subscription_protocol="graphql-transport-ws",
+        base_url="http://testserver/graphql",
+        target_app=app,
+    )
     try:
 
         async def consume():
@@ -287,7 +304,11 @@ async def test_subscribe_no_data_in_next():
         {"type": "next", "payload": {"data": None}},
     ])
 
-    client = AsyncGQLClient(base_url="http://testserver/graphql", target_app=app)
+    client = AsyncGQLClient(
+        subscription_protocol="graphql-transport-ws",
+        base_url="http://testserver/graphql",
+        target_app=app,
+    )
     try:
 
         async def consume():
@@ -308,7 +329,11 @@ async def test_subscribe_unexpected_message_type():
         {"type": "unknown_type"},
     ])
 
-    client = AsyncGQLClient(base_url="http://testserver/graphql", target_app=app)
+    client = AsyncGQLClient(
+        subscription_protocol="graphql-transport-ws",
+        base_url="http://testserver/graphql",
+        target_app=app,
+    )
     try:
 
         async def consume():
@@ -334,6 +359,7 @@ async def test_subscribe_with_headers_propagation():
     )
 
     client = AsyncGQLClient(
+        subscription_protocol="graphql-transport-ws",
         base_url="http://testserver/graphql",
         target_app=app,
         headers={"X-Base": "base-value"},
@@ -366,7 +392,11 @@ async def test_subscribe_ping_pong():
         captured=captured,
     )
 
-    client = AsyncGQLClient(base_url="http://testserver/graphql", target_app=app)
+    client = AsyncGQLClient(
+        subscription_protocol="graphql-transport-ws",
+        base_url="http://testserver/graphql",
+        target_app=app,
+    )
     try:
         async with client.subscribe(
             _CounterResult, "subscription { counter }", variables={}, headers={}
@@ -389,7 +419,11 @@ async def test_subscribe_ping_before_connection_ack():
         captured=captured,
     )
 
-    client = AsyncGQLClient(base_url="http://testserver/graphql", target_app=app)
+    client = AsyncGQLClient(
+        subscription_protocol="graphql-transport-ws",
+        base_url="http://testserver/graphql",
+        target_app=app,
+    )
     try:
         async with client.subscribe(
             _CounterResult, "subscription { counter }", variables={}, headers={}
@@ -406,6 +440,7 @@ async def test_subscribe_with_headers_override_case_insensitive():
     app = _make_ws_app([{"type": "complete"}], captured=captured)
 
     client = AsyncGQLClient(
+        subscription_protocol="graphql-transport-ws",
         base_url="http://testserver/graphql",
         target_app=app,
         headers={"Authorization": "Bearer base-token"},
@@ -454,7 +489,11 @@ async def test_subscribe_carries_http_cookies():
         await subscription.complete()
         await connection.drain()
 
-    client = AsyncGQLClient(base_url="http://testserver/graphql", target_app=app)
+    client = AsyncGQLClient(
+        subscription_protocol="graphql-transport-ws",
+        base_url="http://testserver/graphql",
+        target_app=app,
+    )
     try:
         result = await client.query(
             _PingResult, "query { ping }", variables={}, headers={}
@@ -477,7 +516,11 @@ async def test_subscribe_disconnect_before_connection_ack():
         connection = await accept_graphql_ws(scope, receive, send)
         await connection.close(4401, "Unauthorized")
 
-    client = AsyncGQLClient(base_url="http://testserver/graphql", target_app=app)
+    client = AsyncGQLClient(
+        subscription_protocol="graphql-transport-ws",
+        base_url="http://testserver/graphql",
+        target_app=app,
+    )
     try:
 
         async def consume():
@@ -502,7 +545,11 @@ async def test_subscribe_connection_ack_timeout(monkeypatch: pytest.MonkeyPatch)
         await accept_graphql_ws(scope, receive, send)
         await asyncio.sleep(0.1)
 
-    client = AsyncGQLClient(base_url="http://testserver/graphql", target_app=app)
+    client = AsyncGQLClient(
+        subscription_protocol="graphql-transport-ws",
+        base_url="http://testserver/graphql",
+        target_app=app,
+    )
     try:
 
         async def consume():
@@ -525,6 +572,7 @@ async def test_subscribe_url_scheme_https_to_wss():
     app = _make_ws_app([{"type": "complete"}], captured=captured)
 
     client = AsyncGQLClient(
+        subscription_protocol="graphql-transport-ws",
         base_url="https://testserver/graphql?redirect=http://callback",
         target_app=app,
     )
@@ -544,7 +592,11 @@ async def test_subscribe_malformed_message_no_type():
         {"payload": "no type field here"},
     ])
 
-    client = AsyncGQLClient(base_url="http://testserver/graphql", target_app=app)
+    client = AsyncGQLClient(
+        subscription_protocol="graphql-transport-ws",
+        base_url="http://testserver/graphql",
+        target_app=app,
+    )
     try:
 
         async def consume():
@@ -566,7 +618,11 @@ async def test_subscribe_no_variables_key_when_none():
     captured = _Captured()
     app = _make_ws_app([{"type": "complete"}], captured=captured)
 
-    client = AsyncGQLClient(base_url="http://testserver/graphql", target_app=app)
+    client = AsyncGQLClient(
+        subscription_protocol="graphql-transport-ws",
+        base_url="http://testserver/graphql",
+        target_app=app,
+    )
     try:
         async with client.subscribe(
             _CounterResult, "subscription { counter }", variables={}, headers={}
@@ -586,7 +642,11 @@ async def test_subscribe_error_without_payload():
         {"type": "error"},
     ])
 
-    client = AsyncGQLClient(base_url="http://testserver/graphql", target_app=app)
+    client = AsyncGQLClient(
+        subscription_protocol="graphql-transport-ws",
+        base_url="http://testserver/graphql",
+        target_app=app,
+    )
     try:
 
         async def consume():
@@ -610,7 +670,11 @@ async def test_subscribe_pong_during_messages():
         {"type": "complete"},
     ])
 
-    client = AsyncGQLClient(base_url="http://testserver/graphql", target_app=app)
+    client = AsyncGQLClient(
+        subscription_protocol="graphql-transport-ws",
+        base_url="http://testserver/graphql",
+        target_app=app,
+    )
     try:
         async with client.subscribe(
             _CounterResult, "subscription { counter }", variables={}, headers={}
@@ -632,7 +696,11 @@ async def test_subscribe_pong_before_connection_ack():
         captured=captured,
     )
 
-    client = AsyncGQLClient(base_url="http://testserver/graphql", target_app=app)
+    client = AsyncGQLClient(
+        subscription_protocol="graphql-transport-ws",
+        base_url="http://testserver/graphql",
+        target_app=app,
+    )
     try:
         async with client.subscribe(
             _CounterResult, "subscription { counter }", variables={}, headers={}
@@ -648,7 +716,11 @@ async def test_subscribe_next_without_payload_key():
         {"type": "next"},
     ])
 
-    client = AsyncGQLClient(base_url="http://testserver/graphql", target_app=app)
+    client = AsyncGQLClient(
+        subscription_protocol="graphql-transport-ws",
+        base_url="http://testserver/graphql",
+        target_app=app,
+    )
     try:
 
         async def consume():
@@ -671,7 +743,11 @@ async def test_subscribe_pre_ack_messages_exhaustion():
         pre_ack_messages=[pong] * 17,
     )
 
-    client = AsyncGQLClient(base_url="http://testserver/graphql", target_app=app)
+    client = AsyncGQLClient(
+        subscription_protocol="graphql-transport-ws",
+        base_url="http://testserver/graphql",
+        target_app=app,
+    )
     try:
 
         async def consume():
@@ -690,7 +766,11 @@ async def test_subscribe_pre_ack_messages_exhaustion():
 
 
 async def test_subscribe_unsupported_url_scheme():
-    client = AsyncGQLClient(base_url="ftp://testserver/graphql", target_app=None)
+    client = AsyncGQLClient(
+        subscription_protocol="graphql-transport-ws",
+        base_url="ftp://testserver/graphql",
+        target_app=None,
+    )
     try:
 
         async def consume():
@@ -719,7 +799,11 @@ async def test_subscribe_next_with_data_and_errors():
         },
     ])
 
-    client = AsyncGQLClient(base_url="http://testserver/graphql", target_app=app)
+    client = AsyncGQLClient(
+        subscription_protocol="graphql-transport-ws",
+        base_url="http://testserver/graphql",
+        target_app=app,
+    )
     try:
 
         async def consume():
@@ -744,7 +828,11 @@ async def test_subscribe_normal_closure_during_messages():
         close_code=1000,
     )
 
-    client = AsyncGQLClient(base_url="http://testserver/graphql", target_app=app)
+    client = AsyncGQLClient(
+        subscription_protocol="graphql-transport-ws",
+        base_url="http://testserver/graphql",
+        target_app=app,
+    )
     try:
         async with client.subscribe(
             _CounterResult, "subscription { counter }", variables={}, headers={}
@@ -764,7 +852,11 @@ async def test_subscribe_abnormal_disconnect_during_messages():
         close_reason="Internal Error",
     )
 
-    client = AsyncGQLClient(base_url="http://testserver/graphql", target_app=app)
+    client = AsyncGQLClient(
+        subscription_protocol="graphql-transport-ws",
+        base_url="http://testserver/graphql",
+        target_app=app,
+    )
     try:
         results: list[int] = []
 
@@ -790,7 +882,11 @@ async def test_subscribe_disconnect_before_ack_with_reason():
         connection = await accept_graphql_ws(scope, receive, send)
         await connection.close(4401, "Unauthorized")
 
-    client = AsyncGQLClient(base_url="http://testserver/graphql", target_app=app)
+    client = AsyncGQLClient(
+        subscription_protocol="graphql-transport-ws",
+        base_url="http://testserver/graphql",
+        target_app=app,
+    )
     try:
 
         async def consume():
@@ -811,7 +907,11 @@ async def test_subscribe_disconnect_before_ack_with_reason():
 
 async def test_subscribe_invalid_json_during_messages():
     app = _make_ws_raw_app(post_subscribe_texts=("not valid json{{{",))
-    client = AsyncGQLClient(base_url="http://testserver/graphql", target_app=app)
+    client = AsyncGQLClient(
+        subscription_protocol="graphql-transport-ws",
+        base_url="http://testserver/graphql",
+        target_app=app,
+    )
     try:
 
         async def consume():
@@ -829,7 +929,11 @@ async def test_subscribe_invalid_json_during_messages():
 
 async def test_subscribe_invalid_json_during_handshake():
     app = _make_ws_raw_app(pre_ack_texts=("<<<broken>>>",), ack=False)
-    client = AsyncGQLClient(base_url="http://testserver/graphql", target_app=app)
+    client = AsyncGQLClient(
+        subscription_protocol="graphql-transport-ws",
+        base_url="http://testserver/graphql",
+        target_app=app,
+    )
     try:
 
         async def consume():
@@ -854,7 +958,11 @@ async def test_subscribe_validation_error():
         {"type": "next", "payload": {"data": {"counter": "not_an_int"}}},
     ])
 
-    client = AsyncGQLClient(base_url="http://testserver/graphql", target_app=app)
+    client = AsyncGQLClient(
+        subscription_protocol="graphql-transport-ws",
+        base_url="http://testserver/graphql",
+        target_app=app,
+    )
     try:
 
         async def consume():
@@ -882,7 +990,11 @@ def test_sync_subscribe_streams_messages():
         captured=captured,
     )
     with live_asgi_server(app) as base_url:
-        client = GQLClient(base_url=base_url, headers={"X-Default": "on"})
+        client = GQLClient(
+            subscription_protocol="graphql-transport-ws",
+            base_url=base_url,
+            headers={"X-Default": "on"},
+        )
         try:
             with client.subscribe(
                 _CounterResult,
@@ -908,7 +1020,9 @@ def test_sync_subscribe_answers_ping():
         captured=captured,
     )
     with live_asgi_server(app) as base_url:
-        client = GQLClient(base_url=base_url)
+        client = GQLClient(
+            subscription_protocol="graphql-transport-ws", base_url=base_url
+        )
         try:
             with client.subscribe(
                 _CounterResult, "subscription { counter }", variables={}, headers={}
@@ -923,7 +1037,9 @@ def test_sync_subscribe_answers_ping():
 def test_sync_subscribe_raises_on_abnormal_close():
     app = _make_ws_disconnect_app([], 4400, "bad request")
     with live_asgi_server(app) as base_url:
-        client = GQLClient(base_url=base_url)
+        client = GQLClient(
+            subscription_protocol="graphql-transport-ws", base_url=base_url
+        )
         try:
             with (
                 pytest.raises(GraphQLResponseError, match="bad request"),
@@ -940,7 +1056,10 @@ def test_sync_subscribe_raises_on_abnormal_close():
 
 
 def test_sync_subscribe_rejects_file_variables():
-    client = GQLClient(base_url="http://127.0.0.1:1/graphql")
+    client = GQLClient(
+        subscription_protocol="graphql-transport-ws",
+        base_url="http://127.0.0.1:1/graphql",
+    )
     try:
         with (
             pytest.raises(TypeError, match="File uploads are not supported"),
@@ -985,7 +1104,9 @@ def _make_ws_raw_app(
 
 def _sync_subscribe_error(app: ASGIApp, match: str) -> None:
     with live_asgi_server(app) as base_url:
-        client = GQLClient(base_url=base_url)
+        client = GQLClient(
+            subscription_protocol="graphql-transport-ws", base_url=base_url
+        )
         try:
             with (
                 pytest.raises(GraphQLResponseError, match=match),
@@ -1009,7 +1130,9 @@ def test_sync_subscribe_answers_ping_before_connection_ack():
         captured=captured,
     )
     with live_asgi_server(app) as base_url:
-        client = GQLClient(base_url=base_url)
+        client = GQLClient(
+            subscription_protocol="graphql-transport-ws", base_url=base_url
+        )
         try:
             with client.subscribe(
                 _CounterResult, "subscription { counter }", variables={}, headers={}
@@ -1024,7 +1147,9 @@ def test_sync_subscribe_answers_ping_before_connection_ack():
 def test_sync_subscribe_ignores_pong_before_connection_ack():
     app = _make_ws_app([{"type": "complete"}], pre_ack_messages=[{"type": "pong"}])
     with live_asgi_server(app) as base_url:
-        client = GQLClient(base_url=base_url)
+        client = GQLClient(
+            subscription_protocol="graphql-transport-ws", base_url=base_url
+        )
         try:
             with client.subscribe(
                 _CounterResult, "subscription { counter }", variables={}, headers={}
@@ -1041,7 +1166,9 @@ def test_sync_subscribe_ignores_pong_during_messages():
         {"type": "complete"},
     ])
     with live_asgi_server(app) as base_url:
-        client = GQLClient(base_url=base_url)
+        client = GQLClient(
+            subscription_protocol="graphql-transport-ws", base_url=base_url
+        )
         try:
             with client.subscribe(
                 _CounterResult, "subscription { counter }", variables={}, headers={}
@@ -1056,7 +1183,9 @@ def test_sync_subscribe_stops_on_normal_closure():
         [{"type": "next", "payload": {"data": {"counter": 5}}}], 1000
     )
     with live_asgi_server(app) as base_url:
-        client = GQLClient(base_url=base_url)
+        client = GQLClient(
+            subscription_protocol="graphql-transport-ws", base_url=base_url
+        )
         try:
             with client.subscribe(
                 _CounterResult, "subscription { counter }", variables={}, headers={}
@@ -1103,3 +1232,77 @@ def test_sync_subscribe_invalid_json_during_messages():
 def test_sync_subscribe_malformed_message_during_messages():
     app = _make_ws_raw_app(post_subscribe_texts=(json.dumps(42),))
     _sync_subscribe_error(app, "Malformed protocol message")
+
+
+async def _async_subscribe_error(app: ASGIApp, match: str) -> None:
+    client = AsyncGQLClient(
+        subscription_protocol="graphql-transport-ws",
+        base_url="http://testserver/graphql",
+        target_app=app,
+    )
+
+    async def consume() -> None:
+        async with client.subscribe(
+            _CounterResult, "subscription { counter }", variables={}, headers={}
+        ) as stream:
+            async for _ in stream:
+                pass
+
+    try:
+        with pytest.raises(GraphQLResponseError, match=match):
+            await consume()
+    finally:
+        await client.close()
+
+
+async def test_subscribe_malformed_message_during_handshake():
+    app = _make_ws_raw_app(pre_ack_texts=(json.dumps("plain string"),), ack=False)
+    await _async_subscribe_error(app, "Malformed protocol message during handshake")
+
+
+async def test_subscribe_malformed_message_during_messages():
+    app = _make_ws_raw_app(post_subscribe_texts=(json.dumps(42),))
+    await _async_subscribe_error(app, "Malformed protocol message")
+
+
+async def test_subscribe_malformed_next_payload():
+    app = _make_ws_raw_app(
+        post_subscribe_texts=(
+            json.dumps({"id": "1", "type": "next", "payload": {"data": "not a map"}}),
+        )
+    )
+    await _async_subscribe_error(app, "Malformed next payload")
+
+
+async def test_subscribe_malformed_error_payload():
+    app = _make_ws_raw_app(
+        post_subscribe_texts=(
+            json.dumps({"id": "1", "type": "error", "payload": {"message": "x"}}),
+        )
+    )
+    await _async_subscribe_error(app, "Malformed error payload")
+
+
+async def test_subscribe_abnormal_disconnect_without_reason():
+    # Without a reason the message ends at the code: no dangling separator.
+    app = _make_ws_disconnect_app([], close_code=1011)
+    await _async_subscribe_error(app, r"WebSocket disconnected with code 1011$")
+
+
+async def test_subscribe_url_scheme_ws_is_kept():
+    captured = _Captured()
+    app = _make_ws_app([{"type": "complete"}], captured=captured)
+
+    client = AsyncGQLClient(
+        subscription_protocol="graphql-transport-ws",
+        base_url="ws://testserver/graphql",
+        target_app=app,
+    )
+    try:
+        async with client.subscribe(
+            _CounterResult, "subscription { counter }", variables={}, headers={}
+        ) as stream:
+            assert [item async for item in stream] == []
+        assert captured.subscribe is not None
+    finally:
+        await client.close()

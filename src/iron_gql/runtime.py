@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import IO
 from typing import Any
+from typing import Literal
 from typing import Self
 from typing import TypeIs
 from typing import cast
@@ -23,12 +24,16 @@ from httpx2.websockets import AsyncWebSocketClient
 from httpx2.websockets import WebSocketClient
 
 from iron_gql.errors import GraphQLResponseError
+from iron_gql.response import raise_for_status
+from iron_gql.response import response_body
 from iron_gql.slots import OMITTED
 from iron_gql.slots import FragmentDefinitionType
 from iron_gql.slots import GQLBindableFragment
 from iron_gql.slots import GQLFragment
 from iron_gql.slots import SlotReader
 from iron_gql.slots import SlotReaders
+from iron_gql.sse import async_graphql_sse_subscribe
+from iron_gql.sse import graphql_sse_subscribe
 from iron_gql.websockets import async_graphql_ws_subscribe
 from iron_gql.websockets import graphql_ws_subscribe
 from iron_gql.websockets import ws_url
@@ -66,12 +71,6 @@ class FileVar:
         self.f = f
         self.filename = filename
         self.content_type = content_type
-
-
-class _ResponseBody(pydantic.BaseModel):
-    model_config = pydantic.ConfigDict(extra="ignore")
-    data: dict[str, Any] | None = None
-    errors: list[dict[str, Any]] | None = None
 
 
 @dataclass(frozen=True, slots=True, kw_only=True, repr=False, eq=False)
@@ -321,29 +320,42 @@ def _parse_query_response[T: pydantic.BaseModel](
     result_type: type[T],
     slot_readers: SlotReaders | None,
 ) -> T:
-    if httpx2.codes.is_redirect(response.status_code):
-        # httpx2 `Headers.get` is typed as Any
-        location: str = response.headers.get("Location", "")  # pyright: ignore[reportAny]
-        message = f"Unexpected 3xx response ({response.status_code})"
-        if location:
-            message = f"{message} to {location}"
-        raise httpx2.HTTPStatusError(
-            message, request=response.request, response=response
-        )
-    response.raise_for_status()
-    try:
-        body = _ResponseBody.model_validate(response.json())
-    except pydantic.ValidationError as exc:
-        raise GraphQLResponseError([
-            {"message": f"Malformed response body: {exc}"}
-        ]) from exc
-
-    if body.errors:
-        raise GraphQLResponseError(body.errors)
+    raise_for_status(response)
+    body = response_body(response)
     if body.data is None:
         raise GraphQLResponseError([{"message": "No data in response"}])
 
     return result_type.model_validate(body.data, context=slot_readers)
+
+
+# How `subscribe` reaches the server. Named by the caller, because the two
+# are not interchangeable: a server speaks one of them.
+type SubscriptionProtocol = Literal["graphql-sse", "graphql-transport-ws"]
+
+_SSE_NEEDS_A_SOCKET = (
+    "graphql-sse subscriptions need a live server: the ASGI transport of httpx2 "
+    "holds the response body until the app returns. Serve the app with "
+    "iron_gql.testing.server.async_live_asgi_server and pass its URL instead "
+    "of target_app"
+)
+
+
+def _subscription_payload(query: str, variables: dict[str, Any]) -> dict[str, Any]:
+    payload, files = _build_payload(query, variables)
+    if files:
+        msg = "File uploads are not supported in subscriptions"
+        raise TypeError(msg)
+    return payload
+
+
+# An SSE stream reads under `subscription_idle_timeout`, not `query_timeout`:
+# a quiet stream is healthy for as long as the server's heartbeat says so.
+# httpx2 has one read timeout for the response headers and the body alike, so
+# the wait for the headers falls under it too.
+def _subscription_timeouts(
+    query_timeout: int, subscription_idle_timeout: float | None
+) -> httpx2.Timeout:
+    return httpx2.Timeout(query_timeout, read=subscription_idle_timeout)
 
 
 class AsyncGQLClient:
@@ -351,11 +363,17 @@ class AsyncGQLClient:
         self,
         *,
         base_url: str,
+        subscription_protocol: SubscriptionProtocol,
         target_app: ASGIApp | None = None,
         headers: dict[str, str] | None = None,
         query_timeout: int = DEFAULT_QUERY_TIMEOUT,
+        subscription_idle_timeout: float | None = None,
     ):
         self._endpoint_url = httpx2.URL(base_url)
+        self._subscription_protocol: SubscriptionProtocol = subscription_protocol
+        self._subscription_timeouts = _subscription_timeouts(
+            query_timeout, subscription_idle_timeout
+        )
         self._target_app = target_app
         transport = httpx2.ASGITransport(app=target_app) if target_app else None
         self._client = httpx2.AsyncClient(
@@ -395,10 +413,35 @@ class AsyncGQLClient:
         headers: dict[str, str],
         slot_readers: SlotReaders | None = None,
     ) -> AsyncGenerator[AsyncGenerator[T]]:
-        serialized_vars, files = serialize_variables(variables)
-        if files:
-            msg = "File uploads are not supported in subscriptions"
-            raise TypeError(msg)
+        payload = _subscription_payload(query, variables)
+        match self._subscription_protocol:
+            case "graphql-sse":
+                if self._target_app is not None:
+                    raise ValueError(_SSE_NEEDS_A_SOCKET)
+                async with async_graphql_sse_subscribe(
+                    self._client,
+                    self._endpoint_url,
+                    payload,
+                    headers=headers,
+                    timeouts=self._subscription_timeouts,
+                    result_type=result_type,
+                    slot_readers=slot_readers,
+                ) as stream:
+                    yield stream
+            case "graphql-transport-ws":
+                async with self._ws_subscribe(
+                    result_type, payload, headers, slot_readers
+                ) as stream:
+                    yield stream
+
+    @asynccontextmanager
+    async def _ws_subscribe[T: pydantic.BaseModel](
+        self,
+        result_type: type[T],
+        payload: dict[str, Any],
+        headers: dict[str, str],
+        slot_readers: SlotReaders | None,
+    ) -> AsyncGenerator[AsyncGenerator[T]]:
         transport = (
             ASGIWebSocketTransport(self._target_app) if self._target_app else None
         )
@@ -417,7 +460,7 @@ class AsyncGQLClient:
                     url, subprotocols=["graphql-transport-ws"]
                 ) as ws,
                 async_graphql_ws_subscribe(
-                    ws, result_type, query, serialized_vars, slot_readers
+                    ws, result_type, payload, slot_readers
                 ) as stream,
             ):
                 yield stream
@@ -438,10 +481,16 @@ class GQLClient:
         self,
         *,
         base_url: str,
+        subscription_protocol: SubscriptionProtocol,
         headers: dict[str, str] | None = None,
         query_timeout: int = DEFAULT_QUERY_TIMEOUT,
+        subscription_idle_timeout: float | None = None,
     ):
         self._endpoint_url = httpx2.URL(base_url)
+        self._subscription_protocol: SubscriptionProtocol = subscription_protocol
+        self._subscription_timeouts = _subscription_timeouts(
+            query_timeout, subscription_idle_timeout
+        )
         self._client = httpx2.Client(headers=headers or {}, timeout=query_timeout)
 
     def query[T: pydantic.BaseModel](
@@ -475,23 +524,34 @@ class GQLClient:
         headers: dict[str, str],
         slot_readers: SlotReaders | None = None,
     ) -> Generator[Generator[T]]:
-        serialized_vars, files = serialize_variables(variables)
-        if files:
-            msg = "File uploads are not supported in subscriptions"
-            raise TypeError(msg)
-        url = str(ws_url(self._endpoint_url))
-        # The sync session reuses the query client, so its default headers and
-        # cookies already apply; the async client has to rebuild them because
-        # its websocket transport differs from its HTTP one.
-        with (
-            WebSocketClient(self._client).connect(
-                url, subprotocols=["graphql-transport-ws"], headers=headers
-            ) as ws,
-            graphql_ws_subscribe(
-                ws, result_type, query, serialized_vars, slot_readers
-            ) as stream,
-        ):
-            yield stream
+        payload = _subscription_payload(query, variables)
+        match self._subscription_protocol:
+            case "graphql-sse":
+                with graphql_sse_subscribe(
+                    self._client,
+                    self._endpoint_url,
+                    payload,
+                    headers=headers,
+                    timeouts=self._subscription_timeouts,
+                    result_type=result_type,
+                    slot_readers=slot_readers,
+                ) as stream:
+                    yield stream
+            case "graphql-transport-ws":
+                url = str(ws_url(self._endpoint_url))
+                # The sync session reuses the query client, so its default
+                # headers and cookies already apply; the async client has to
+                # rebuild them because its websocket transport differs from
+                # its HTTP one.
+                with (
+                    WebSocketClient(self._client).connect(
+                        url, subprotocols=["graphql-transport-ws"], headers=headers
+                    ) as ws,
+                    graphql_ws_subscribe(
+                        ws, result_type, payload, slot_readers
+                    ) as stream,
+                ):
+                    yield stream
 
     def close(self) -> None:
         self._client.close()

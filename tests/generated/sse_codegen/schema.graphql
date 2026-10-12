@@ -1,0 +1,12 @@
+type Query {
+    _dummy: String
+}
+
+type Subscription {
+    events(channel: String!): Event!
+}
+
+type Event {
+    id: ID!
+    message: String!
+}

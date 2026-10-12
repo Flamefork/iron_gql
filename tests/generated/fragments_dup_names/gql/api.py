@@ -37,6 +37,7 @@ from tests.generated.fragments_dup_names.settings import GRAPHQL_URL
 
 _client = runtime.AsyncGQLClient(
     base_url=GRAPHQL_URL,
+    subscription_protocol="graphql-sse",
 )
 
 

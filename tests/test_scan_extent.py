@@ -175,6 +175,7 @@ def test_skipped_directories_are_written_to_the_debug_directory(
     write_text(test_project.root / "venv/pyvenv.cfg", "home = /usr/bin\n")
     debug_dir = test_project.root / "debug_out"
     render_gql_module(
+        subscription_protocol="graphql-sse",
         mode="async",
         schema_path=test_project.root / "schema.graphql",
         src_path=test_project.root,

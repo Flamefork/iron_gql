@@ -19,14 +19,15 @@ pip install iron-gql[testing]   # + uvicorn for the loopback test server
 - **Query discovery.** `render_gql_module` scans your codebase for calls of the form `<module>_gql("""...""")`. It validates each statement and writes a module with typed helpers.
 - **Typed inputs and results.** The generated Pydantic models match every selection set, enum, and input object that the discovered queries reference.
 - **Sync or async runtime.** Pick the mode per module with `mode="sync"` or `mode="async"`. The generated module targets `runtime.GQLClient` or `runtime.AsyncGQLClient`, both of which send requests through `httpx2`. One project can hold modules of both kinds.
-- **ASGI in-process calls.** `AsyncGQLClient` accepts an ASGI `target_app` and then calls the app in-process without using the network. The sync client has no such transport: the ASGI transport of `httpx2` is async-only, and WSGI cannot carry websockets. Test synchronous modules against a real server on a loopback port, which [`iron_gql.testing`](#testing) starts for you.
+- **Subscriptions over SSE or WebSocket.** A client subscribes by [GraphQL over SSE](https://github.com/enisdenjo/graphql-sse/blob/master/PROTOCOL.md) (one stream per operation) or by [`graphql-transport-ws`](https://github.com/enisdenjo/graphql-ws/blob/master/PROTOCOL.md). You name the protocol when you create the client; see [Subscriptions](#subscriptions).
+- **ASGI in-process calls.** `AsyncGQLClient` accepts an ASGI `target_app` and then calls the app in-process without using the network: queries, mutations, and `graphql-transport-ws` subscriptions. An SSE subscription needs a socket, because the ASGI transport of `httpx2` holds the response body until the app returns. The sync client has no in-process transport: the ASGI transport of `httpx2` is async-only, and WSGI cannot carry websockets. Test synchronous modules and SSE subscriptions against a real server on a loopback port, which [`iron_gql.testing`](#testing) starts for you.
 - **Deterministic validation.** `graphql-core` (a codegen dependency) validates every statement against the schema. It rejects operations that share a name but have different bodies.
 
 ## Package Layout
 - `runtime.py` contains `GQLClient` and `AsyncGQLClient`, the reusable `GQLOperation` base class, and the value serialization helpers.
 - `codegen/generate.py` runs query discovery, validation, and module rendering.
 - `codegen/parser.py` converts the GraphQL AST into typed helper structures for the renderer.
-- `testing/` holds the test helpers: the client swap, the `graphql-transport-ws` server primitives, and the loopback server.
+- `testing/` holds the test helpers: the client swap, the `graphql-transport-ws` server primitives, and the loopback servers.
 
 ## Getting Started
 1. **Describe your schema.** Write the schema in an SDL file (`schema.graphql`). Include the root types that you use (query, mutation, subscription).
@@ -58,6 +59,7 @@ pip install iron-gql[testing]   # + uvicorn for the loopback test server
        src_path=Path("."),
        module_full_name="myapp.gql.client",
        base_url_import="myapp.config:GRAPHQL_URL",
+       subscription_protocol="graphql-sse",
        scalars={"ID": "builtins:str"},
        to_camel_fn_full_name="myapp.inflection:to_camel",
        to_snake_fn=my_project_to_snake,
@@ -65,6 +67,8 @@ pip install iron-gql[testing]   # + uvicorn for the loopback test server
    ).write()
    ```
    `mode` is required: pass `"async"` or `"sync"` for every module. Each module is self-contained, so one project can generate both.
+
+   `subscription_protocol` is required too: `"graphql-sse"` or `"graphql-transport-ws"`. The generated module creates its client with it, so the module's subscriptions speak the protocol of your server.
 
    `src_path` — корень импортов: имя модуля генератор получает из пути файла относительно него, поэтому корень должен быть тем, относительно чего написаны абсолютные импорты проекта (`Path(".")` для flat layout, `Path("src")` для src layout). Из-под этого корня скан не спускается в скрытый каталог (имя начинается с точки) и в корень виртуального окружения (каталог, содержащий `pyvenv.cfg`). Всё остальное обходится, как бы оно ни называлось: statements собираются и из каталога, чьё имя не может быть частью имени модуля, — скрипт запускают, а не импортируют.
 
@@ -339,13 +343,43 @@ Every `.bind()` the scan leaves alone is recorded with the reason, and `debug_pa
 ## Customization Hooks
 - **Naming conventions.** Supply `to_camel_fn_full_name` (a module:path string) and a `to_snake_fn` callable. These functions align the casing with your own `alias_generator`.
 - **Endpoint configuration.** The generator writes `base_url_import` verbatim into the generated module. Set it to a global string, a configuration object, or a helper that returns the GraphQL endpoint.
+- **Subscription protocol.** The generator writes `subscription_protocol` into the generated module, where it creates the module's client.
 
 ## Runtime Highlights
 - `AsyncGQLClient` accepts an ASGI `target_app`. You can use the same runtime for production HTTP calls and for in-process ASGI execution.
 - `GQLClient.subscribe` returns a plain context manager over a blocking generator, so a synchronous consumer reads subscription messages with `for`.
+- Both clients take `subscription_protocol` (required) and `subscription_idle_timeout`; see [Subscriptions](#subscriptions).
 - `GQLOperation.with_headers` clones the operation object. The original does not change, so each call can have its own headers.
 - `Upload` scalars map to `iron_gql.FileVar`. When variables contain `FileVar` instances, the client automatically sends a multipart upload (see the [GraphQL multipart request spec](https://github.com/jaydenseric/graphql-multipart-request-spec)).
 - `serialize_var` converts variables to JSON-compatible structures with the Pydantic `TypeAdapter`. It supports custom scalar types, nested models, dicts, and lists.
+
+## Subscriptions
+
+A generated subscription returns a context manager over a stream of typed results. Read the stream with `async for` (or `for` in a sync module). Leave the `with` block to close the connection, also before the stream ends.
+
+```python
+async with watch_events.execute(channel="news") as stream:
+    async for event in stream:
+        print(event.events.message)
+```
+
+Name the protocol when you create a client: `subscription_protocol="graphql-sse"` or `subscription_protocol="graphql-transport-ws"`. The protocols are not interchangeable: use the one that your server speaks.
+
+With `"graphql-sse"`, each subscription is one `POST` request with `Accept: text/event-stream`. The stream and the errors work as follows:
+
+| The server | The client |
+|---|---|
+| sends `next` with data | yields a result |
+| sends `next` with errors | raises `GraphQLResponseError` |
+| sends `complete` | ends the stream |
+| ends the response, or the connection breaks, before `complete` | raises `SubscriptionInterruptedError` |
+| sends nothing for `subscription_idle_timeout` seconds | raises `SubscriptionInterruptedError` |
+| refuses with a status that is not 2xx | raises `httpx2.HTTPStatusError`, as for a query; `error.response` holds the status and the body |
+| answers with a single GraphQL response | raises `GraphQLResponseError` with its errors |
+
+`SubscriptionInterruptedError` tells you that the server did not confirm the end of the operation. The client does not open the subscription again. Open it again yourself if your server lets a new subscription continue from its current state.
+
+`subscription_idle_timeout` is the longest wait for the response headers and for the next data on the stream. The default `None` waits without a limit. A server that sends heartbeat comments keeps a healthy stream within the limit: set the timeout above the heartbeat interval of your server.
 
 ## Example
 
@@ -372,14 +406,14 @@ The chapters are written to be read and type-checked, not run: they point at a s
 
 Which transport a test needs follows from the client:
 
-| client | queries and mutations | subscriptions |
-|---|---|---|
-| `AsyncGQLClient` | `target_app`, no socket | `target_app`, no socket |
-| `GQLClient` | server on a loopback port | server on a loopback port |
+| client | queries and mutations | `graphql-transport-ws` subscriptions | `graphql-sse` subscriptions |
+|---|---|---|---|
+| `AsyncGQLClient` | `target_app`, no socket | `target_app`, no socket | server in the test's event loop |
+| `GQLClient` | server on a loopback port | server on a loopback port | server on a loopback port |
 
-`AsyncGQLClient` takes an ASGI `target_app` and calls it in process, websockets included, so an async module never needs a socket. `GQLClient` has no such transport: the ASGI transport of `httpx2` is async-only, and WSGI cannot carry websockets. A synchronous module is therefore tested against a real server, which `live_asgi_server` starts for you.
+`AsyncGQLClient` takes an ASGI `target_app` and calls it in process, websockets included. An SSE subscription is the exception: the ASGI transport of `httpx2` holds the response body until the app returns, so `subscribe` refuses a `target_app` client with `ValueError`. Serve the app with `async_live_asgi_server` instead. `GQLClient` has no in-process transport: the ASGI transport of `httpx2` is async-only, and WSGI cannot carry websockets. A synchronous module is therefore tested against a real server, which `live_asgi_server` starts for you.
 
-Only `live_asgi_server` has a dependency of its own — `uvicorn`, from `pip install iron-gql[testing]`. Everything else here needs nothing beyond the runtime, so a project that only replaces clients installs plain `iron-gql`.
+Only `iron_gql.testing.server` has a dependency of its own — `uvicorn`, from `pip install iron-gql[testing]`. Everything else here needs nothing beyond the runtime, so a project that only replaces clients installs plain `iron-gql`.
 
 You supply the fake yourself. The library takes no position on how you answer a query: run your own schema library, return canned JSON, or serve the app you are testing.
 
@@ -393,7 +427,11 @@ from iron_gql.testing import use_client
 from myapp.gql import api
 
 async def test_get_user():
-    client = AsyncGQLClient(base_url="http://testserver", target_app=my_asgi_app)
+    client = AsyncGQLClient(
+        base_url="http://testserver",
+        subscription_protocol="graphql-sse",
+        target_app=my_asgi_app,
+    )
     async with use_client(api, client):
         result = await get_user.execute(id="1")
         assert result.user.name == "Alice"
@@ -411,7 +449,9 @@ from iron_gql.testing.server import live_asgi_server
 def test_get_user_sync():
     with (
         live_asgi_server(my_asgi_app) as base_url,
-        use_client(api, GQLClient(base_url=base_url)),
+        use_client(
+            api, GQLClient(base_url=base_url, subscription_protocol="graphql-sse")
+        ),
     ):
         result = get_user.execute(id="1")
         assert result.user.name == "Alice"
@@ -419,9 +459,25 @@ def test_get_user_sync():
 
 The URL ends with `/graphql`. Pass `path="/other"` for a different one. The path is only a part of the URL: a fake app usually answers on every path, so the helper does not route.
 
+`live_asgi_server` runs the server in a thread with an event loop of its own. To serve an app that uses what the test opened in its own loop — a database pool, an event the app waits for — use `async_live_asgi_server`. It runs the server as a task of the calling event loop and takes the same arguments:
+
+```python
+from iron_gql.runtime import AsyncGQLClient
+from iron_gql.testing import use_client
+from iron_gql.testing.server import async_live_asgi_server
+
+async def test_watch_events():
+    async with async_live_asgi_server(my_asgi_app) as base_url:
+        client = AsyncGQLClient(base_url=base_url, subscription_protocol="graphql-sse")
+        async with use_client(api, client), watch_events.execute(channel="news") as stream:
+            assert [event.events.message async for event in stream] == ["hello"]
+```
+
+Both servers run the app without its lifespan: start what the app needs in the test.
+
 ### Script a subscription fake
 
-Subscriptions speak `graphql-transport-ws`, and a fake has to hold up the server end of it. `accept_graphql_ws` performs the handshake and hands you the connection; each step then asserts that the client kept to the protocol, and reports what arrived instead when it did not.
+A `graphql-transport-ws` fake has to hold up the server end of the protocol. `accept_graphql_ws` performs the handshake and hands you the connection; each step then asserts that the client kept to the protocol, and reports what arrived instead when it did not.
 
 ```python
 from iron_gql.runtime import ASGIReceive
@@ -449,6 +505,8 @@ async def events_app(scope: ASGIScope, receive: ASGIReceive, send: ASGISend) -> 
 On the subscription: `next(data)`, `error(errors)`, `complete()`, and `send_message(message)` for anything else.
 
 Control flow stays in your fake, so state lives in ordinary Python around these calls — a connection counter, a drop on the N-th connect, a failure of the first few messages.
+
+A `graphql-sse` fake needs no helper: it answers the `POST` with `content-type: text/event-stream` and writes the events, for example `event: next\ndata: {"data": {...}}\n\n`, then `event: complete\ndata: \n\n`.
 
 ## Validation and Troubleshooting
 - Error messages show the file and the line of the statement that caused the error.

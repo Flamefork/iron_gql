@@ -4,7 +4,6 @@ from collections.abc import AsyncGenerator
 from collections.abc import Generator
 from contextlib import asynccontextmanager
 from contextlib import contextmanager
-from dataclasses import dataclass
 from typing import Any
 from typing import Literal
 
@@ -16,6 +15,10 @@ from httpx2.websockets import WebSocketSession
 
 from iron_gql.errors import GraphQLResponseError
 from iron_gql.slots import SlotReaders
+from iron_gql.subscription import NEXT_PAYLOAD
+from iron_gql.subscription import Emit
+from iron_gql.subscription import malformed_next_error
+from iron_gql.subscription import next_result
 
 
 class _WSMessage(pydantic.BaseModel):
@@ -24,13 +27,6 @@ class _WSMessage(pydantic.BaseModel):
     payload: object = None
 
 
-class _NextPayload(pydantic.BaseModel):
-    model_config = pydantic.ConfigDict(extra="ignore")
-    data: dict[str, Any] | None = None
-    errors: list[dict[str, Any]] | None = None
-
-
-_NEXT_PAYLOAD = pydantic.TypeAdapter(_NextPayload)
 _ERROR_PAYLOAD: pydantic.TypeAdapter[list[dict[str, Any]] | None] = (
     pydantic.TypeAdapter(list[dict[str, Any]] | None)
 )
@@ -39,11 +35,6 @@ _ERROR_PAYLOAD: pydantic.TypeAdapter[list[dict[str, Any]] | None] = (
 _MAX_PRE_ACK_MESSAGES = 16
 _WS_CONNECTION_ACK_TIMEOUT_SECONDS = 10
 _WS_NORMAL_CLOSURE = 1000
-
-
-@dataclass(frozen=True, slots=True)
-class Emit[T: pydantic.BaseModel]:
-    value: T
 
 
 # What a received protocol message asks the caller to do. Only "pong" needs IO,
@@ -76,19 +67,10 @@ def _message_action[T: pydantic.BaseModel](
     match message.type:
         case "next":
             try:
-                payload = _NEXT_PAYLOAD.validate_python(message.payload or {})
+                payload = NEXT_PAYLOAD.validate_python(message.payload or {})
             except pydantic.ValidationError as exc:
-                raise GraphQLResponseError([
-                    {"message": f"Malformed next payload: {exc}"}
-                ]) from exc
-            if payload.errors or payload.data is None:
-                raise GraphQLResponseError(
-                    payload.errors or [{"message": "No data in response"}]
-                )
-            # Same contract as the query path: a payload that fails result
-            # validation surfaces as pydantic.ValidationError with a response
-            # path, identically across both transports.
-            return Emit(result_type.model_validate(payload.data, context=slot_readers))
+                raise malformed_next_error(exc) from exc
+            return Emit(next_result(payload, result_type, slot_readers))
         case "error":
             try:
                 error_payload = _ERROR_PAYLOAD.validate_python(message.payload)
@@ -126,14 +108,10 @@ def _invalid_json_error(exc: json.JSONDecodeError) -> GraphQLResponseError:
 async def async_graphql_ws_subscribe[T: pydantic.BaseModel](
     ws: AsyncWebSocketSession,
     result_type: type[T],
-    query: str,
-    variables: dict[str, Any] | None,
+    payload: dict[str, Any],
     slot_readers: SlotReaders | None,
 ) -> AsyncGenerator[AsyncGenerator[T]]:
     await _async_ws_handshake(ws)
-    payload: dict[str, Any] = {"query": query}
-    if variables:
-        payload["variables"] = variables
     await ws.send_json({"id": "1", "type": "subscribe", "payload": payload})
     yield _async_ws_receive_messages(ws, result_type, slot_readers)
 
@@ -221,14 +199,10 @@ async def _async_ws_receive_messages[T: pydantic.BaseModel](
 def graphql_ws_subscribe[T: pydantic.BaseModel](
     ws: WebSocketSession,
     result_type: type[T],
-    query: str,
-    variables: dict[str, Any] | None,
+    payload: dict[str, Any],
     slot_readers: SlotReaders | None,
 ) -> Generator[Generator[T]]:
     _ws_handshake(ws)
-    payload: dict[str, Any] = {"query": query}
-    if variables:
-        payload["variables"] = variables
     ws.send_json({"id": "1", "type": "subscribe", "payload": payload})
     yield _ws_receive_messages(ws, result_type, slot_readers)
 

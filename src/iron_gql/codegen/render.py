@@ -26,6 +26,7 @@ from iron_gql.codegen.ir import field_name_to_pascal
 from iron_gql.codegen.ir import render_type_expr
 from iron_gql.codegen.ir import slot_roots
 from iron_gql.codegen.util import indent_block
+from iron_gql.runtime import SubscriptionProtocol
 
 
 def render_header(*, unsafe_multiple_inheritance: bool) -> str:
@@ -324,12 +325,14 @@ import {to_camel_ref.module}
 
 def render_client_init(
     base_url_ref: ImportRef,
+    subscription_protocol: SubscriptionProtocol,
     to_camel_ref: ImportRef,
     mode: ModeConfig,
 ) -> str:
     return f"""\
 _client = runtime.{mode.client_class}(
     base_url={base_url_ref.symbol},
+    subscription_protocol="{subscription_protocol}",
 )
 
 
@@ -585,6 +588,7 @@ def render_gql_fn(
 def render_module(
     mode: GenerationMode,
     base_url_ref: ImportRef,
+    subscription_protocol: SubscriptionProtocol,
     gql_fn_name: str,
     collected: CollectedModuleIR,
     scalars: dict[str, ImportRef],
@@ -603,7 +607,9 @@ def render_module(
         # Fragment definition всегда наследует ровно один on-type base.
         render_header(unsafe_multiple_inheritance=uses_slot_models),
         render_imports(to_camel_ref, scalars, base_url_ref, mode_config),
-        render_client_init(base_url_ref, to_camel_ref, mode_config),
+        render_client_init(
+            base_url_ref, subscription_protocol, to_camel_ref, mode_config
+        ),
         OPEN_BASE if uses_open_models else "",
         SLOT_BASE if uses_slot_models else "",
         "\n".join(render_enums(collected.enums)),

@@ -38,6 +38,7 @@ from tests.generated.bindings_wire_shape.settings import GRAPHQL_URL
 
 _client = runtime.AsyncGQLClient(
     base_url=GRAPHQL_URL,
+    subscription_protocol="graphql-sse",
 )
 
 

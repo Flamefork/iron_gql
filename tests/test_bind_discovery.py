@@ -2040,6 +2040,7 @@ def test_ignored_binds_are_written_to_the_debug_directory(
     )
     debug_dir = test_project.root / "debug_out"
     render_gql_module(
+        subscription_protocol="graphql-sse",
         mode="async",
         schema_path=test_project.root / "schema.graphql",
         src_path=test_project.root,

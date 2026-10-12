@@ -12,12 +12,14 @@ from werkzeug import Response
 from iron_gql.codegen import GraphQLGenerationError
 from iron_gql.runtime import AsyncGQLClient
 from iron_gql.runtime import GQLBoundOperation
+from iron_gql.runtime import SubscriptionProtocol
 from tests.conftest import ProjectBuilder
 from tests.conftest import generated_package
 from tests.conftest import generated_source
 from tests.conftest import gql_server
 from tests.conftest import make_subscription_app
 from tests.conftest import read_type_erased
+from tests.conftest import subscription_server
 from tests.conftest import use_package_client
 
 SCHEMA = """
@@ -1974,41 +1976,43 @@ SECOND_SUBSCRIPTION_ATTACHMENT: dict[str, object] = {
 }
 
 
-async def test_subscription_validates_slot_on_every_message():
+@pytest.mark.parametrize("protocol", ["graphql-transport-ws", "graphql-sse"])
+async def test_subscription_validates_slot_on_every_message(
+    protocol: SubscriptionProtocol,
+):
     # Eager validation runs per streamed message, so a test reading only the
     # first message would pass even if the slot context were dropped for every
     # message after it. Reading two consecutive messages with different
     # `url` values, and asserting both, is what pins that the context
-    # is applied on each `next` rather than consumed once.
-    messages: list[dict[str, object]] = [
+    # is applied on each `next` rather than consumed once -- by either
+    # protocol, since each hands the context on along its own path.
+    payloads: list[dict[str, object]] = [
         {
-            "type": "next",
-            "payload": {
-                "data": {
-                    "attachmentChanged": {
-                        "id": "p-1",
-                        "attachment": FIRST_SUBSCRIPTION_ATTACHMENT,
-                    }
+            "data": {
+                "attachmentChanged": {
+                    "id": "p-1",
+                    "attachment": FIRST_SUBSCRIPTION_ATTACHMENT,
                 }
-            },
+            }
         },
         {
-            "type": "next",
-            "payload": {
-                "data": {
-                    "attachmentChanged": {
-                        "id": "p-1",
-                        "attachment": SECOND_SUBSCRIPTION_ATTACHMENT,
-                    }
+            "data": {
+                "attachmentChanged": {
+                    "id": "p-1",
+                    "attachment": SECOND_SUBSCRIPTION_ATTACHMENT,
                 }
-            },
+            }
         },
-        {"type": "complete"},
     ]
-    app = make_subscription_app(messages)
 
-    async with use_package_client(
-        "slots_subscription", "http://testserver/graphql", target_app=app
+    async with (
+        subscription_server(protocol, payloads) as (base_url, target_app),
+        use_package_client(
+            "slots_subscription",
+            base_url,
+            target_app=target_app,
+            subscription_protocol=protocol,
+        ),
     ):
         events: list[str] = []
         async with subscription_queries.watch_image.execute(id="p-1") as stream:
@@ -2402,7 +2406,10 @@ async def test_subscription_surfaces_broken_data_in_a_later_message():
     app = make_subscription_app(messages)
 
     async with use_package_client(
-        "slots_subscription", "http://testserver/graphql", target_app=app
+        "slots_subscription",
+        "http://testserver/graphql",
+        target_app=app,
+        subscription_protocol="graphql-transport-ws",
     ):
         events: list[str] = []
 

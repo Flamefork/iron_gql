@@ -1568,7 +1568,10 @@ async def test_bound_subscription_streams_and_reads_each_message():
     ]
     app = make_subscription_app(messages)
     async with use_package_client(
-        "bindings_subscription", "http://testserver/graphql", target_app=app
+        "bindings_subscription",
+        "http://testserver/graphql",
+        target_app=app,
+        subscription_protocol="graphql-transport-ws",
     ):
         events: list[str] = []
         # execute() only ever takes the template's own variables -- the

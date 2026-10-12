@@ -22,6 +22,7 @@ def render_modules() -> list[RenderedModule]:
             src_path=example_dir,
             module_full_name=module_full_name,
             base_url_import="example.config:GRAPHQL_URL",
+            subscription_protocol="graphql-sse",
             scalars={"ID": "builtins:str"},
             to_camel_fn_full_name="pydantic.alias_generators:to_camel",
             to_snake_fn=alias_generators.to_snake,

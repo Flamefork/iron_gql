@@ -36,10 +36,12 @@ from iron_gql.runtime import ASGIScope
 from iron_gql.runtime import ASGISend
 from iron_gql.runtime import AsyncGQLClient
 from iron_gql.runtime import GQLClient
+from iron_gql.runtime import SubscriptionProtocol
 from iron_gql.slots import GQLFragment
 from iron_gql.slots import GQLSlotNode
 from iron_gql.testing import accept_graphql_ws
 from iron_gql.testing import use_client
+from iron_gql.testing.server import async_live_asgi_server
 from tests.corpus.generated_oracles import assert_documents_are_valid
 from tests.corpus.generated_oracles import assert_method_namespaces_are_closed
 from tests.corpus.generated_oracles import assert_module_is_self_contained
@@ -154,6 +156,115 @@ def make_subscription_app(messages: list[dict[str, object]]) -> ASGIApp:
     return app
 
 
+_BODY_CHUNK = pydantic.TypeAdapter(bytes)
+_HEADER_PAIRS = pydantic.TypeAdapter(list[tuple[bytes, bytes]])
+_JSON_OBJECT = pydantic.TypeAdapter(dict[str, object])
+
+
+# The server end of one GraphQL over SSE request, as steps a fake drives
+# itself: the request as received, then whatever response the test needs --
+# a stream it writes event by event, or a single response in its place.
+@dataclass
+class SSETestRequest:
+    scope: ASGIScope
+    headers: dict[str, str]
+    body: dict[str, object]
+    receive: ASGIReceive
+    send: ASGISend
+
+    async def respond(self, status: int, content_type: str, body: bytes) -> None:
+        await self.send({
+            "type": "http.response.start",
+            "status": status,
+            "headers": [(b"content-type", content_type.encode())],
+        })
+        await self.send({"type": "http.response.body", "body": body})
+
+    async def open_stream(self) -> None:
+        await self.send({
+            "type": "http.response.start",
+            "status": 200,
+            "headers": [(b"content-type", b"text/event-stream")],
+        })
+
+    async def write(self, chunk: bytes) -> None:
+        await self.send({
+            "type": "http.response.body",
+            "body": chunk,
+            "more_body": True,
+        })
+
+    async def next(self, payload: dict[str, object]) -> None:
+        await self.write(f"event: next\ndata: {json.dumps(payload)}\n\n".encode())
+
+    async def complete(self) -> None:
+        await self.write(b"event: complete\ndata: \n\n")
+
+    # Closes the response cleanly: what the stream said so far is all of it.
+    async def end(self) -> None:
+        await self.send({"type": "http.response.body", "body": b""})
+
+    # Waits for the client to hang up and returns what the server saw: a fake
+    # that returns earlier ends the response under the client.
+    async def wait_disconnect(self) -> object:
+        return (await self.receive())["type"]
+
+
+async def accept_graphql_sse(
+    scope: ASGIScope, receive: ASGIReceive, send: ASGISend
+) -> SSETestRequest:
+    body = b""
+    more_body = True
+    while more_body:
+        event = await receive()
+        body += _BODY_CHUNK.validate_python(event["body"])
+        more_body = bool(event.get("more_body"))
+    headers = {
+        key.decode(): value.decode()
+        for key, value in _HEADER_PAIRS.validate_python(scope["headers"])
+    }
+    return SSETestRequest(
+        scope, headers, _JSON_OBJECT.validate_json(body), receive, send
+    )
+
+
+# The SSE counterpart of `make_subscription_app`: one `next` per payload, then
+# `complete`.
+def make_sse_subscription_app(payloads: list[dict[str, object]]) -> ASGIApp:
+    async def app(scope: ASGIScope, receive: ASGIReceive, send: ASGISend) -> None:
+        request = await accept_graphql_sse(scope, receive, send)
+        await request.open_stream()
+        for payload in payloads:
+            await request.next(payload)
+        await request.complete()
+        await request.end()
+
+    return app
+
+
+# A subscription server for `payloads` in either protocol, as the arguments
+# `use_package_client` takes: graphql-transport-ws is served in process,
+# graphql-sse needs a socket.
+@asynccontextmanager
+async def subscription_server(
+    protocol: SubscriptionProtocol, payloads: list[dict[str, object]]
+) -> AsyncIterator[tuple[str, ASGIApp | None]]:
+    match protocol:
+        case "graphql-transport-ws":
+            yield (
+                "http://testserver/graphql",
+                make_subscription_app([
+                    *({"type": "next", "payload": payload} for payload in payloads),
+                    {"type": "complete"},
+                ]),
+            )
+        case "graphql-sse":
+            async with async_live_asgi_server(
+                make_sse_subscription_app(payloads)
+            ) as base_url:
+                yield base_url, None
+
+
 def write_text(path: Path, content: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(textwrap.dedent(content).lstrip("\n"), encoding="utf-8")
@@ -206,6 +317,7 @@ def generated_package(
         src_path=root,
         module_full_name="gql.api",
         base_url_import=f"tests.generated.{name}.settings:GRAPHQL_URL",
+        subscription_protocol="graphql-sse",
         scalars=dict(scalars),
         to_camel_fn_full_name="pydantic.alias_generators:to_camel",
         to_snake_fn=alias_generators.to_snake,
@@ -253,19 +365,30 @@ def generated_queries_path(package: str) -> Path:
 
 @asynccontextmanager
 async def use_package_client(
-    package: str, base_url: str, target_app: ASGIApp | None = None
+    package: str,
+    base_url: str,
+    target_app: ASGIApp | None = None,
+    subscription_protocol: SubscriptionProtocol = "graphql-sse",
 ) -> AsyncIterator[None]:
     """Point the committed generated package's client at base_url."""
-    client = AsyncGQLClient(base_url=base_url, target_app=target_app)
+    client = AsyncGQLClient(
+        base_url=base_url,
+        subscription_protocol=subscription_protocol,
+        target_app=target_app,
+    )
     async with use_client(_generated_api_module(package), client):
         yield
 
 
 @contextmanager
-def use_sync_package_client(package: str, base_url: str) -> Iterator[None]:
+def use_sync_package_client(
+    package: str,
+    base_url: str,
+    subscription_protocol: SubscriptionProtocol = "graphql-sse",
+) -> Iterator[None]:
     """The sync counterpart of `use_package_client`; the sync client takes no
     target_app, so its base_url always points at a real server."""
-    client = GQLClient(base_url=base_url)
+    client = GQLClient(base_url=base_url, subscription_protocol=subscription_protocol)
     with use_client(_generated_api_module(package), client):
         yield
 
@@ -352,6 +475,7 @@ class ProjectBuilder:
         module_full_name: str | None = None,
         mode: GenerationMode = "async",
         to_snake_fn: Callable[[str], str] = alias_generators.to_snake,
+        subscription_protocol: SubscriptionProtocol = "graphql-sse",
     ) -> RenderedModule:
         return render_gql_module(
             mode=mode,
@@ -359,6 +483,7 @@ class ProjectBuilder:
             src_path=self.root,
             module_full_name=module_full_name or self.gql_module,
             base_url_import=base_url_import or f"{self.package}.settings:GRAPHQL_URL",
+            subscription_protocol=subscription_protocol,
             scalars={"ID": "builtins:str"},
             to_camel_fn_full_name=to_camel_fn_full_name,
             to_snake_fn=to_snake_fn,
@@ -371,6 +496,7 @@ class ProjectBuilder:
         module_full_name: str | None = None,
         mode: GenerationMode = "async",
         to_snake_fn: Callable[[str], str] = alias_generators.to_snake,
+        subscription_protocol: SubscriptionProtocol = "graphql-sse",
     ) -> None:
         self.render(
             to_camel_fn_full_name=to_camel_fn_full_name,
@@ -378,6 +504,7 @@ class ProjectBuilder:
             module_full_name=module_full_name,
             mode=mode,
             to_snake_fn=to_snake_fn,
+            subscription_protocol=subscription_protocol,
         ).write()
 
     def import_api(self) -> ModuleType:
@@ -389,8 +516,10 @@ class ProjectBuilder:
         # pytest leaves `syspath_prepend`'s `path` parameter unannotated
         self._monkeypatch.syspath_prepend(str(path))  # pyright: ignore[reportUnknownMemberType]
 
-    def generate_and_import(self) -> tuple[ModuleType, ModuleType]:
-        self.generate()
+    def generate_and_import(
+        self, subscription_protocol: SubscriptionProtocol = "graphql-sse"
+    ) -> tuple[ModuleType, ModuleType]:
+        self.generate(subscription_protocol=subscription_protocol)
         self.clear_import_state()
         api_module = importlib.import_module(self.gql_module)
         queries_module = importlib.import_module(f"{self.package}.queries")

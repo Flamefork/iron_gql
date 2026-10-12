@@ -194,7 +194,9 @@ def test_sync_module_streams_subscription():
     ])
     with (
         live_asgi_server(app) as base_url,
-        use_sync_package_client("sync_package", base_url),
+        use_sync_package_client(
+            "sync_package", base_url, subscription_protocol="graphql-transport-ws"
+        ),
         sync_queries.user_renamed.execute(id="user-1") as stream,
     ):
         names = [event.user_renamed.name for event in stream]

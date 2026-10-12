@@ -1,3 +1,4 @@
+import asyncio
 import importlib
 import socket
 import sys
@@ -16,6 +17,7 @@ from pytest_httpserver import HTTPServer
 from iron_gql.runtime import AsyncGQLClient
 from iron_gql.runtime import GQLClient
 from iron_gql.testing import use_client
+from iron_gql.testing.server import async_live_asgi_server
 from iron_gql.testing.server import live_asgi_server
 from tests.conftest import ProjectBuilder
 from tests.conftest import build_schema
@@ -126,7 +128,9 @@ async def test_use_client_swaps_restores_and_closes_async_client(
     api_module = importlib.import_module("tests.generated.testing_async_swap.gql.api")
     namespace = cast("dict[str, object]", vars(api_module))
     original = namespace["_client"]
-    client = AsyncGQLClient(base_url=_ping_url(httpserver))
+    client = AsyncGQLClient(
+        subscription_protocol="graphql-sse", base_url=_ping_url(httpserver)
+    )
 
     # `ping` was constructed at module import, before the client is replaced.
     async with use_client(api_module, client) as active:
@@ -144,7 +148,9 @@ def test_use_client_swaps_restores_and_closes_sync_client(httpserver: HTTPServer
     api_module = importlib.import_module("tests.generated.testing_sync_swap.gql.api")
     namespace = cast("dict[str, object]", vars(api_module))
     original = namespace["_client"]
-    client = GQLClient(base_url=_ping_url(httpserver))
+    client = GQLClient(
+        subscription_protocol="graphql-sse", base_url=_ping_url(httpserver)
+    )
 
     # `ping` was constructed at module import, before the client is replaced.
     with use_client(api_module, client) as active:
@@ -164,10 +170,18 @@ def test_live_asgi_server_defaults_to_the_graphql_path():
 
 
 def test_live_asgi_server_serves_the_given_path_and_frees_the_port():
-    with live_asgi_server(_ok_app, path="/custom") as base_url:
+    # Only the request reaches the app: the server runs no lifespan.
+    scope_types: list[object] = []
+
+    async def app(scope: _Event, receive: _Receive, send: _Send) -> None:
+        scope_types.append(scope["type"])
+        await _ok_app(scope, receive, send)
+
+    with live_asgi_server(app, path="/custom") as base_url:
         assert base_url.endswith("/custom")
         response = httpx2.post(base_url, json={"query": "query Ping { ping }"})
         assert response.json() == {"data": {"ping": "pong"}}
+    assert scope_types == ["http"]
 
     port = urlsplit(base_url).port
     assert port is not None
@@ -180,6 +194,36 @@ def test_live_asgi_server_serves_the_given_path_and_frees_the_port():
 def test_live_asgi_server_reraises_a_failed_startup():
     with pytest.raises(ValueError, match="broken app"), live_asgi_server(_broken_app):
         pass
+
+
+async def test_async_live_asgi_server_serves_in_the_calling_loop():
+    # The app runs as a task of this loop, so it can await what the test owns.
+    # Only the request reaches the app: the server runs no lifespan.
+    seen_from_app: list[tuple[object, asyncio.AbstractEventLoop]] = []
+
+    async def app(scope: _Event, receive: _Receive, send: _Send) -> None:
+        seen_from_app.append((scope["type"], asyncio.get_running_loop()))
+        await _ok_app(scope, receive, send)
+
+    async with async_live_asgi_server(app, path="/custom") as base_url:
+        assert base_url.endswith("/custom")
+        async with httpx2.AsyncClient() as client:
+            response = await client.post(base_url, json={"query": "query { ping }"})
+        assert response.json() == {"data": {"ping": "pong"}}
+
+    assert seen_from_app == [("http", asyncio.get_running_loop())]
+    port = urlsplit(base_url).port
+    assert port is not None
+    with socket.socket() as probe:
+        probe.settimeout(2)
+        with pytest.raises(ConnectionRefusedError):
+            probe.connect(("127.0.0.1", port))
+
+
+async def test_async_live_asgi_server_reraises_a_failed_startup():
+    with pytest.raises(ValueError, match="broken app"):
+        async with async_live_asgi_server(_broken_app):
+            pass
 
 
 def test_server_import_without_the_extra_names_the_extra(
