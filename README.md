@@ -353,6 +353,20 @@ Every `.bind()` the scan leaves alone is recorded with the reason, and `debug_pa
 - `Upload` scalars map to `iron_gql.FileVar`. When variables contain `FileVar` instances, the client automatically sends a multipart upload (see the [GraphQL multipart request spec](https://github.com/jaydenseric/graphql-multipart-request-spec)).
 - `serialize_var` converts variables to JSON-compatible structures with the Pydantic `TypeAdapter`. It supports custom scalar types, nested models, dicts, and lists.
 
+## Query Errors
+
+A query or a mutation is sent with `Accept: application/graphql-response+json, application/json;q=0.9`, as [GraphQL over HTTP](https://graphql.github.io/graphql-over-http/draft/) asks of a client that does not know which of the two media types its server speaks. An `Accept` that you set in the headers of the client or of the call is sent as it is; the call's wins over the client's. The client reads the response as follows:
+
+| The server answers | The client |
+|---|---|
+| 2xx with `data` | returns the result |
+| 2xx with `errors`, with `data` or without | raises `GraphQLResponseError` with the errors |
+| 3xx | raises `httpx2.HTTPStatusError` |
+| 4xx or 5xx of the type `application/graphql-response+json`, with `errors` | raises `GraphQLResponseError` with the errors |
+| any other 4xx or 5xx | raises `httpx2.HTTPStatusError`; `error.response` holds the status and the body |
+
+The type is compared without its parameters, such as `charset`, and regardless of case. `GraphQLResponseError` means that the server explained the failure in GraphQL terms: a server of the current edition answers a request error with a 4xx or 5xx status and a GraphQL body, and a server of the earlier edition answers it with 200 and `application/json`. `httpx2.HTTPStatusError` means that no GraphQL explanation came: a proxy or a gateway answered, the body has another type, or a GraphQL body carries no `errors`.
+
 ## Subscriptions
 
 A generated subscription returns a context manager over a stream of typed results. Read the stream with `async for` (or `for` in a sync module). Leave the `with` block to close the connection, also before the stream ends.
@@ -365,7 +379,7 @@ async with watch_events.execute(channel="news") as stream:
 
 Name the protocol when you create a client: `subscription_protocol="graphql-sse"` or `subscription_protocol="graphql-transport-ws"`. The protocols are not interchangeable: use the one that your server speaks.
 
-With `"graphql-sse"`, each subscription is one `POST` request with `Accept: text/event-stream`. The stream and the errors work as follows:
+With `"graphql-sse"`, each subscription is one `POST` request with `Accept: text/event-stream`, exactly: the reference graphql-sse server opens a stream for that value only. An `Accept` that you set is sent as it is, as for a query. The stream and the errors work as follows:
 
 | The server | The client |
 |---|---|
@@ -374,7 +388,7 @@ With `"graphql-sse"`, each subscription is one `POST` request with `Accept: text
 | sends `complete` | ends the stream |
 | ends the response, or the connection breaks, before `complete` | raises `SubscriptionInterruptedError` |
 | sends nothing for `subscription_idle_timeout` seconds | raises `SubscriptionInterruptedError` |
-| refuses with a status that is not 2xx | raises `httpx2.HTTPStatusError`, as for a query; `error.response` holds the status and the body |
+| refuses with a status that is not 2xx | raises as for a query: `GraphQLResponseError` for a 4xx or 5xx GraphQL response with `errors`, `httpx2.HTTPStatusError` otherwise |
 | answers with a single GraphQL response | raises `GraphQLResponseError` with its errors |
 
 `SubscriptionInterruptedError` tells you that the server did not confirm the end of the operation. The client does not open the subscription again. Open it again yourself if your server lets a new subscription continue from its current state.

@@ -328,6 +328,30 @@ def _parse_query_response[T: pydantic.BaseModel](
     return result_type.model_validate(body.data, context=slot_readers)
 
 
+# GraphQL over HTTP: a client that does not know whether its server speaks
+# the GraphQL media type asks for it first and for JSON after it. A
+# subscription keeps the `Accept: text/event-stream` httpx2 gives a stream:
+# the reference graphql-sse server opens one for exactly that value only.
+_QUERY_ACCEPT = "application/graphql-response+json, application/json;q=0.9"
+
+
+def _caller_accept(headers: dict[str, str] | None) -> str | None:
+    return httpx2.Headers(headers or {}).get("Accept")
+
+
+# The headers of one request: an `Accept` the caller set goes as it is, empty
+# too -- the call's over the client's -- and `default` stands in for none.
+# The client's is repeated in the call because httpx2 puts its own over it
+# for a stream.
+def _with_accept(
+    caller_accept: str | None, default: str | None, headers: dict[str, str]
+) -> dict[str, str]:
+    accept = default if caller_accept is None else caller_accept
+    merged = httpx2.Headers() if accept is None else httpx2.Headers({"Accept": accept})
+    merged.update(headers)
+    return dict(merged)
+
+
 # How `subscribe` reaches the server. Named by the caller, because the two
 # are not interchangeable: a server speaks one of them.
 type SubscriptionProtocol = Literal["graphql-sse", "graphql-transport-ws"]
@@ -375,6 +399,7 @@ class AsyncGQLClient:
             query_timeout, subscription_idle_timeout
         )
         self._target_app = target_app
+        self._caller_accept = _caller_accept(headers)
         transport = httpx2.ASGITransport(app=target_app) if target_app else None
         self._client = httpx2.AsyncClient(
             transport=transport,
@@ -392,6 +417,7 @@ class AsyncGQLClient:
         slot_readers: SlotReaders | None = None,
     ) -> T:
         payload, files = _build_payload(query, variables)
+        headers = _with_accept(self._caller_accept, _QUERY_ACCEPT, headers)
         if files:
             body, file_streams = _multipart_body(payload, files)
             response = await self._client.post(
@@ -422,7 +448,7 @@ class AsyncGQLClient:
                     self._client,
                     self._endpoint_url,
                     payload,
-                    headers=headers,
+                    headers=_with_accept(self._caller_accept, None, headers),
                     timeouts=self._subscription_timeouts,
                     result_type=result_type,
                     slot_readers=slot_readers,
@@ -491,6 +517,7 @@ class GQLClient:
         self._subscription_timeouts = _subscription_timeouts(
             query_timeout, subscription_idle_timeout
         )
+        self._caller_accept = _caller_accept(headers)
         self._client = httpx2.Client(headers=headers or {}, timeout=query_timeout)
 
     def query[T: pydantic.BaseModel](
@@ -503,6 +530,7 @@ class GQLClient:
         slot_readers: SlotReaders | None = None,
     ) -> T:
         payload, files = _build_payload(query, variables)
+        headers = _with_accept(self._caller_accept, _QUERY_ACCEPT, headers)
         if files:
             body, file_streams = _multipart_body(payload, files)
             response = self._client.post(
@@ -531,7 +559,7 @@ class GQLClient:
                     self._client,
                     self._endpoint_url,
                     payload,
-                    headers=headers,
+                    headers=_with_accept(self._caller_accept, None, headers),
                     timeouts=self._subscription_timeouts,
                     result_type=result_type,
                     slot_readers=slot_readers,

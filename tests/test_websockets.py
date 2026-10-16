@@ -20,8 +20,12 @@ from iron_gql.runtime import GQLOperation
 from iron_gql.testing import WSTestConnection
 from iron_gql.testing import accept_graphql_ws
 from iron_gql.testing.server import live_asgi_server
+from tests.conftest import errors_read_by_form
 from tests.conftest import generated_package
 from tests.conftest import use_package_client
+from tests.corpus.graphql_over_http import ERRORS_FORMS
+from tests.corpus.graphql_over_http import ErrorsForm
+from tests.corpus.graphql_over_http import with_errors
 
 generated_package(
     "websockets_codegen",
@@ -1281,6 +1285,45 @@ async def test_subscribe_malformed_error_payload():
         )
     )
     await _async_subscribe_error(app, "Malformed error payload")
+
+
+async def _drain_events() -> None:
+    async with codegen_queries.events.execute(channel="test") as stream:
+        async for _ in stream:
+            pass
+
+
+# The `errors` of a `next` without data and of an `error`, in every corpus
+# form. Through the generated operation, as a caller meets it.
+@pytest.mark.parametrize("message_type", ["next", "error"])
+@pytest.mark.parametrize(
+    "form", [pytest.param(form, id=f"errors-{form.name}") for form in ERRORS_FORMS]
+)
+async def test_subscription_errors_are_read_by_their_form(
+    message_type: str, form: ErrorsForm
+):
+    payload = with_errors({}, form) if message_type == "next" else form.value
+    app = _make_ws_raw_app(
+        post_subscribe_texts=(
+            json.dumps({"id": "1", "type": message_type, "payload": payload}),
+        )
+    )
+    async with use_package_client(
+        "websockets_codegen",
+        "http://testserver/graphql",
+        target_app=app,
+        subscription_protocol="graphql-transport-ws",
+    ):
+        with pytest.raises(GraphQLResponseError) as error:
+            await _drain_events()
+    assert errors_read_by_form(
+        error.value,
+        form,
+        malformed=f"Malformed {message_type} payload",
+        none="No data in response"
+        if message_type == "next"
+        else "Error without payload",
+    )
 
 
 async def test_subscribe_abnormal_disconnect_without_reason():

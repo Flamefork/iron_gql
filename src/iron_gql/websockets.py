@@ -13,6 +13,7 @@ from httpx2.websockets import AsyncWebSocketSession
 from httpx2.websockets import WebSocketDisconnect
 from httpx2.websockets import WebSocketSession
 
+from iron_gql.errors import GraphQLErrors
 from iron_gql.errors import GraphQLResponseError
 from iron_gql.slots import SlotReaders
 from iron_gql.subscription import NEXT_PAYLOAD
@@ -28,7 +29,7 @@ class _WSMessage(pydantic.BaseModel):
 
 
 _ERROR_PAYLOAD: pydantic.TypeAdapter[list[dict[str, Any]] | None] = (
-    pydantic.TypeAdapter(list[dict[str, Any]] | None)
+    pydantic.TypeAdapter(GraphQLErrors | None)
 )
 
 

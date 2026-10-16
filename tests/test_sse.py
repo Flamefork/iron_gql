@@ -28,10 +28,14 @@ from iron_gql.testing.server import live_asgi_server
 from tests.conftest import ProjectBuilder
 from tests.conftest import SSETestRequest
 from tests.conftest import accept_graphql_sse
+from tests.conftest import errors_read_by_form
 from tests.conftest import generated_package
 from tests.conftest import make_sse_subscription_app
 from tests.conftest import make_subscription_app
 from tests.conftest import use_package_client
+from tests.corpus.graphql_over_http import ERRORS_FORMS
+from tests.corpus.graphql_over_http import ErrorsForm
+from tests.corpus.graphql_over_http import with_errors
 
 generated_package(
     "sse_codegen",
@@ -292,21 +296,6 @@ async def test_generated_module_subscribes_by_the_protocol_it_was_generated_with
             await client.close()
 
 
-async def test_refusal_before_the_stream_raises_http_status_error_with_its_body():
-    async def handler(request: SSETestRequest) -> None:
-        await request.respond(
-            401,
-            "application/graphql-response+json",
-            b'{"errors": [{"message": "Login required"}]}',
-        )
-
-    async with _sse_client(handler) as client:
-        with pytest.raises(httpx2.HTTPStatusError) as error:
-            await _read_counters(client, [])
-    assert error.value.response.status_code == 401
-    assert error.value.response.json() == {"errors": [{"message": "Login required"}]}
-
-
 async def test_single_graphql_response_with_errors_raises_them():
     async def handler(request: SSETestRequest) -> None:
         await request.respond(
@@ -365,6 +354,37 @@ async def test_next_with_malformed_data_is_an_error():
     async with _sse_client(handler) as client:
         with pytest.raises(GraphQLResponseError, match="Malformed next payload"):
             await _read_counters(client, [])
+
+
+async def _drain_events() -> None:
+    async with codegen_queries.events.execute(channel="test") as stream:
+        async for _ in stream:
+            pass
+
+
+# The `errors` of a `next` without data, in every corpus form. Through the
+# generated operation, as a caller meets it.
+@pytest.mark.parametrize(
+    "form", [pytest.param(form, id=f"errors-{form.name}") for form in ERRORS_FORMS]
+)
+async def test_next_errors_are_read_by_their_form(form: ErrorsForm):
+    async def handler(request: SSETestRequest) -> None:
+        await request.open_stream()
+        await request.next(with_errors({"data": None}, form))
+        await request.end()
+
+    async with (
+        async_live_asgi_server(_sse_app(handler)) as base_url,
+        use_package_client("sse_codegen", base_url),
+    ):
+        with pytest.raises(GraphQLResponseError) as error:
+            await _drain_events()
+    assert errors_read_by_form(
+        error.value,
+        form,
+        malformed="Malformed next payload",
+        none="No data in response",
+    )
 
 
 async def test_result_failing_validation_passes_through_as_validation_error():
@@ -666,23 +686,6 @@ def test_sync_leaving_the_subscription_early_closes_the_connection():
         finally:
             client.close()
         assert disconnected.wait(_STEP_TIMEOUT)
-
-
-def test_sync_refusal_before_the_stream_raises_http_status_error_with_its_body():
-    async def handler(request: SSETestRequest) -> None:
-        await request.respond(
-            401,
-            "application/graphql-response+json",
-            b'{"errors": [{"message": "Login required"}]}',
-        )
-
-    with (
-        live_asgi_server(_sse_app(handler)) as base_url,
-        pytest.raises(httpx2.HTTPStatusError) as error,
-    ):
-        _sync_counters(base_url)
-    assert error.value.response.status_code == 401
-    assert error.value.response.json() == {"errors": [{"message": "Login required"}]}
 
 
 def test_sync_response_ending_without_complete_is_an_interruption():

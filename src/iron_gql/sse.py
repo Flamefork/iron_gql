@@ -15,6 +15,7 @@ import pydantic
 
 from iron_gql.errors import GraphQLResponseError
 from iron_gql.errors import SubscriptionInterruptedError
+from iron_gql.response import media_type
 from iron_gql.response import raise_for_status
 from iron_gql.response import response_body
 from iron_gql.slots import SlotReaders
@@ -61,7 +62,7 @@ def _content_type(response: httpx2.Response) -> str:
 
 
 def _is_event_stream(response: httpx2.Response) -> bool:
-    return _content_type(response).partition(";")[0].strip().lower() == _EVENT_STREAM
+    return media_type(response) == _EVENT_STREAM
 
 
 # A response that opened no stream: a refusal before the stream, by status,

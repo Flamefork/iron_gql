@@ -26,6 +26,7 @@ from pytest_httpserver import HTTPServer
 from werkzeug import Request
 from werkzeug import Response
 
+from iron_gql import GraphQLResponseError
 from iron_gql.codegen import GenerationMode
 from iron_gql.codegen import RenderedModule
 from iron_gql.codegen import render_gql_module
@@ -45,6 +46,7 @@ from iron_gql.testing.server import async_live_asgi_server
 from tests.corpus.generated_oracles import assert_documents_are_valid
 from tests.corpus.generated_oracles import assert_method_namespaces_are_closed
 from tests.corpus.generated_oracles import assert_module_is_self_contained
+from tests.corpus.graphql_over_http import ErrorsForm
 
 type Resolver = Callable[..., object]
 type Resolvers = Mapping[str, Mapping[str, Resolver]]
@@ -141,6 +143,22 @@ def basedpyright_report(*check_paths: Path) -> BasedPyrightReport:
             f"stdout={completed.stdout!r}\nstderr={completed.stderr!r}"
         )
         pytest.fail(msg)
+
+
+# How a subscription ends on a message whose `errors` entry has this corpus
+# form, whatever the protocol: well-formed errors are raised as they came, a
+# malformed entry makes the payload malformed, and none leaves the message
+# without the errors it needed -- the message names each of the last two.
+def errors_read_by_form(
+    error: GraphQLResponseError, form: ErrorsForm, *, malformed: str, none: str
+) -> bool:
+    match form.kind:
+        case "errors":
+            return error.errors == form.value
+        case "malformed":
+            return str(error).startswith(malformed)
+        case "none":
+            return str(error).startswith(none)
 
 
 def make_subscription_app(messages: list[dict[str, object]]) -> ASGIApp:
