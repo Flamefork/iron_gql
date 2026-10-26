@@ -368,7 +368,7 @@ Every `.bind()` the scan leaves alone is recorded with the reason, and `debug_pa
 - Both clients take `model_base`, the base of the models that the client parses the protocol with; `pydantic.BaseModel` when you pass none. A generated module passes its own; see **Model base** in [Customization Hooks](#customization-hooks).
 - `GQLOperation.with_headers` clones the operation object. The original does not change, so each call can have its own headers.
 - `Upload` scalars map to `iron_gql.FileVar`. When variables contain `FileVar` instances, the client automatically sends a multipart upload (see the [GraphQL multipart request spec](https://github.com/jaydenseric/graphql-multipart-request-spec)).
-- `serialize_var` converts variables to JSON-compatible structures with the Pydantic `TypeAdapter`. It supports custom scalar types, nested models, dicts, and lists.
+- Variables are converted to JSON-compatible structures: dicts, lists, and nested input models are walked, and values of other types, such as custom scalars, are dumped with the Pydantic `TypeAdapter`.
 - Pydantic secrets (`SecretStr`, `SecretBytes`, `Secret[T]`) go to the server as their values at any depth of the variables: a variable, a field of an input model, a list element, a mapping value. In `repr` and in the dumps of your models they stay masked. Map a secret scalar to one of them, e.g. `"Secret": "pydantic:SecretStr"`; for `Secret[T]`, give the parameterized type a name in your module and map the scalar to that name.
 
 ## Query Errors
