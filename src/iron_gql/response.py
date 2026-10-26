@@ -3,16 +3,11 @@ from typing import Any
 import httpx2
 import pydantic
 
-from iron_gql.errors import GraphQLErrors
 from iron_gql.errors import GraphQLResponseError
+from iron_gql.protocol import ProtocolModels
+from iron_gql.protocol import ResponseBody
 
 GRAPHQL_RESPONSE = "application/graphql-response+json"
-
-
-class ResponseBody(pydantic.BaseModel):
-    model_config = pydantic.ConfigDict(extra="ignore")
-    data: dict[str, Any] | None = None
-    errors: GraphQLErrors | None = None
 
 
 # The media type of the response, without parameters and in lower case: how
@@ -26,7 +21,7 @@ def media_type(response: httpx2.Response) -> str:
 # GraphQL media type is read independent of its status, so a 4xx or 5xx one
 # whose body carries `errors` raises those; any other raises
 # `httpx2.HTTPStatusError`, the response with its body inside.
-def raise_for_status(response: httpx2.Response) -> None:
+def raise_for_status(response: httpx2.Response, models: ProtocolModels) -> None:
     if httpx2.codes.is_redirect(response.status_code):
         location: str = response.headers.get("Location", "")
         message = f"Unexpected 3xx response ({response.status_code})"
@@ -36,24 +31,26 @@ def raise_for_status(response: httpx2.Response) -> None:
             message, request=response.request, response=response
         )
     if response.is_error and media_type(response) == GRAPHQL_RESPONSE:
-        errors = _error_status_errors(response)
+        errors = _error_status_errors(response, models)
         if errors:
             raise GraphQLResponseError(errors)
     response.raise_for_status()
 
 
-def _error_status_errors(response: httpx2.Response) -> list[dict[str, Any]] | None:
+def _error_status_errors(
+    response: httpx2.Response, models: ProtocolModels
+) -> list[dict[str, Any]] | None:
     try:
-        return ResponseBody.model_validate_json(response.content).errors
+        return models.body.model_validate_json(response.content).errors
     except pydantic.ValidationError:
         return None
 
 
 # The GraphQL response a successful status carries. Its `errors` are raised
 # here; what to make of `data` is the caller's.
-def response_body(response: httpx2.Response) -> ResponseBody:
+def response_body(response: httpx2.Response, models: ProtocolModels) -> ResponseBody:
     try:
-        body = ResponseBody.model_validate(response.json())
+        body = models.body.model_validate(response.json())
     except pydantic.ValidationError as exc:
         raise GraphQLResponseError([
             {"message": f"Malformed response body: {exc}"}

@@ -78,7 +78,7 @@ def _diff_lines(text: str) -> list[str]:
 # diagnosed rejection of the GraphQL input raises GraphQLGenerationError; a
 # malformed api_gql call site (anything but a single string literal) raises
 # TypeError before any GraphQL is read.
-def render_gql_module(
+def render_gql_module(  # noqa: PLR0913 -- keyword-only options of the entry point
     *,
     mode: GenerationMode,
     schema_path: Path,
@@ -89,6 +89,7 @@ def render_gql_module(
     scalars: dict[str, str] | None = None,
     to_camel_fn_full_name: str = "pydantic.alias_generators:to_camel",
     to_snake_fn: StrTransform = alias_generators.to_snake,
+    model_base_import: str = "pydantic:BaseModel",
     debug_path: Path | None = None,
 ) -> RenderedModule:
     if scalars is None:
@@ -101,6 +102,7 @@ def render_gql_module(
     base_url_ref = ImportRef.parse(base_url_import)
     scalar_refs = {name: ImportRef.parse(ref) for name, ref in scalars.items()}
     to_camel_ref = ImportRef.parse(to_camel_fn_full_name)
+    model_base_ref = ImportRef.parse(model_base_import)
 
     discovered = discover_module(src_path, gql_fn_name, skip_path=target_module_path)
 
@@ -128,6 +130,7 @@ def render_gql_module(
         base_url_ref=base_url_ref,
         scalars=scalar_refs,
         to_camel_ref=to_camel_ref,
+        model_base_ref=model_base_ref,
     )
     collected = apply_rename(
         collect_module_ir(
@@ -171,5 +174,6 @@ def render_gql_module(
         collected=collected,
         scalars=scalar_refs,
         to_camel_ref=to_camel_ref,
+        model_base_ref=model_base_ref,
     )
     return RenderedModule(target_module_path, new_content + "\n")

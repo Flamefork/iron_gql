@@ -57,6 +57,9 @@ STDLIB_MODULE_NAMES = ("datetime", "typing")
 # unconditionally too — deriving the claim from `to_camel_ref` instead would
 # drop it as soon as a module points that option somewhere other than pydantic.
 THIRD_PARTY_MODULE_NAMES = ("pydantic",)
+# The base `GQLModel` derives from when the consumer names none. A module on it
+# renders as before the option existed: the client is left to its own default.
+DEFAULT_MODEL_BASE = ImportRef(module="pydantic", symbol="BaseModel")
 # Both modes' names are reserved whichever mode a module is generated in: the
 # reserved set must not depend on the mode in force today, or switching a
 # module to the other mode would rebind a name that generated fine before.
@@ -168,6 +171,7 @@ def scaffold_claims(
     base_url_ref: ImportRef,
     scalars: dict[str, ImportRef],
     to_camel_ref: ImportRef,
+    model_base_ref: ImportRef,
 ) -> dict[str, tuple[str, ...]]:
     # Names only imported when a module uses slots or fragments are listed
     # unconditionally: the reserved set must not depend on which optional
@@ -197,6 +201,7 @@ def scaffold_claims(
         (base_url_ref.root_symbol, base_url_ref.import_statement()),
         (to_camel_ref.root_module, f"import {to_camel_ref.root_module}"),
         *((ref.root_module, f"import {ref.root_module}") for ref in scalars.values()),
+        (model_base_ref.root_module, f"import {model_base_ref.root_module}"),
     ]
     claims: dict[str, dict[str, None]] = {}
     for name, origin in pairs:
@@ -277,9 +282,14 @@ def render_imports(
     to_camel_ref: ImportRef,
     scalars: dict[str, ImportRef],
     base_url_ref: ImportRef,
+    model_base_ref: ImportRef,
     mode: ModeConfig,
 ) -> str:
     import_modules = [ref.module for ref in scalars.values()]
+    # A base from a module the scaffold imports anyway -- pydantic's own -- is
+    # reached through that import.
+    if model_base_ref.module not in THIRD_PARTY_MODULE_NAMES:
+        import_modules.append(model_base_ref.module)
     scalar_imports = "\n".join(f"import {module}" for module in import_modules)
     # Every fixed name is emitted whole, whichever features the module
     # happens to use: the module suppresses unused imports, so an extra line
@@ -323,22 +333,34 @@ import {to_camel_ref.module}
 {base_url_ref.import_statement()}"""
 
 
+# `GQLModel` derives from the consumer's base, and the client builds its own
+# models of a response on the same one; the keys `GQLModel` sets win over the
+# base's. Validation by name and by alias are set as such rather than through
+# `populate_by_name`: pydantic stores a base's `populate_by_name=False` as
+# `validate_by_name=False`, which a subclass's `populate_by_name` does not undo.
 def render_client_init(
     base_url_ref: ImportRef,
     subscription_protocol: SubscriptionProtocol,
     to_camel_ref: ImportRef,
+    model_base_ref: ImportRef,
     mode: ModeConfig,
 ) -> str:
+    model_base_arg = (
+        ""
+        if model_base_ref == DEFAULT_MODEL_BASE
+        else f"\n    model_base={model_base_ref.dotted_path},"
+    )
     return f"""\
 _client = runtime.{mode.client_class}(
     base_url={base_url_ref.symbol},
-    subscription_protocol="{subscription_protocol}",
+    subscription_protocol="{subscription_protocol}",{model_base_arg}
 )
 
 
-class {MODEL_BASE_NAME}(pydantic.BaseModel):
+class {MODEL_BASE_NAME}({model_base_ref.dotted_path}):
     model_config = pydantic.ConfigDict(
-        populate_by_name=True,
+        validate_by_name=True,
+        validate_by_alias=True,
         serialize_by_alias=True,
         alias_generator=pydantic.AliasGenerator(
             validation_alias={to_camel_ref.dotted_path},
@@ -593,6 +615,7 @@ def render_module(
     collected: CollectedModuleIR,
     scalars: dict[str, ImportRef],
     to_camel_ref: ImportRef,
+    model_base_ref: ImportRef,
 ) -> str:
     mode_config = RENDER_MODES[mode]
     # Slot node base нужен только generated slot models. Open base создаётся,
@@ -606,9 +629,15 @@ def render_module(
         # Slot model — единственная multi-base форма generated module.
         # Fragment definition всегда наследует ровно один on-type base.
         render_header(unsafe_multiple_inheritance=uses_slot_models),
-        render_imports(to_camel_ref, scalars, base_url_ref, mode_config),
+        render_imports(
+            to_camel_ref, scalars, base_url_ref, model_base_ref, mode_config
+        ),
         render_client_init(
-            base_url_ref, subscription_protocol, to_camel_ref, mode_config
+            base_url_ref,
+            subscription_protocol,
+            to_camel_ref,
+            model_base_ref,
+            mode_config,
         ),
         OPEN_BASE if uses_open_models else "",
         SLOT_BASE if uses_slot_models else "",

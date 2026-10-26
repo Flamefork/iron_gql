@@ -13,15 +13,18 @@ from iron_gql.runtime import GQLClient
 
 
 # Binds `client` into a generated sync module for the duration of a test. The
-# original client is restored and `client` is closed on the way out.
+# original client is restored and `client` is closed on the way out. A client
+# built without a model base parses on the module's; one built with another
+# is refused.
 @contextmanager
 def _sync_client_context(
     api_module: ModuleType, client: GQLClient
 ) -> Iterator[GQLClient]:
     namespace = cast("dict[str, object]", vars(api_module))
-    previous = namespace["_client"]
-    namespace["_client"] = client
+    previous = cast("GQLClient", namespace["_client"])
     try:
+        client.adopt_model_base(previous.model_base)
+        namespace["_client"] = client
         yield client
     finally:
         namespace["_client"] = previous
@@ -34,9 +37,10 @@ async def _async_client_context(
     api_module: ModuleType, client: AsyncGQLClient
 ) -> AsyncIterator[AsyncGQLClient]:
     namespace = cast("dict[str, object]", vars(api_module))
-    previous = namespace["_client"]
-    namespace["_client"] = client
+    previous = cast("AsyncGQLClient", namespace["_client"])
     try:
+        client.adopt_model_base(previous.model_base)
+        namespace["_client"] = client
         yield client
     finally:
         namespace["_client"] = previous

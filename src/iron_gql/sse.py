@@ -15,11 +15,11 @@ import pydantic
 
 from iron_gql.errors import GraphQLResponseError
 from iron_gql.errors import SubscriptionInterruptedError
+from iron_gql.protocol import ProtocolModels
 from iron_gql.response import media_type
 from iron_gql.response import raise_for_status
 from iron_gql.response import response_body
 from iron_gql.slots import SlotReaders
-from iron_gql.subscription import NEXT_PAYLOAD
 from iron_gql.subscription import Emit
 from iron_gql.subscription import malformed_next_error
 from iron_gql.subscription import next_result
@@ -41,11 +41,12 @@ def _event_action[T: pydantic.BaseModel](
     event: httpx2.ServerSentEvent,
     result_type: type[T],
     slot_readers: SlotReaders | None,
+    models: ProtocolModels,
 ) -> EventAction[T]:
     match event.event:
         case "next":
             try:
-                payload = NEXT_PAYLOAD.validate_json(event.data)
+                payload = models.next_payload.model_validate_json(event.data)
             except pydantic.ValidationError as exc:
                 raise malformed_next_error(exc) from exc
             return Emit(next_result(payload, result_type, slot_readers))
@@ -68,9 +69,9 @@ def _is_event_stream(response: httpx2.Response) -> bool:
 # A response that opened no stream: a refusal before the stream, by status,
 # or a single GraphQL response in its place. Read the way a query's response
 # is, so a refusal carries the same error a query's would.
-def _reject(response: httpx2.Response) -> Never:
-    raise_for_status(response)
-    response_body(response)
+def _reject(response: httpx2.Response, models: ProtocolModels) -> Never:
+    raise_for_status(response, models)
+    response_body(response, models)
     msg = f"Expected an event stream, got {_content_type(response)!r}"
     raise GraphQLResponseError([{"message": msg}])
 
@@ -93,6 +94,7 @@ async def async_graphql_sse_subscribe[T: pydantic.BaseModel](
     timeouts: httpx2.Timeout,
     result_type: type[T],
     slot_readers: SlotReaders | None,
+    models: ProtocolModels,
 ) -> AsyncGenerator[AsyncGenerator[T]]:
     async with client.sse(
         url, method="POST", json=payload, headers=headers, timeout=timeouts
@@ -100,9 +102,9 @@ async def async_graphql_sse_subscribe[T: pydantic.BaseModel](
         response = source.response
         if not (response.is_success and _is_event_stream(response)):
             await response.aread()
-            _reject(response)
+            _reject(response, models)
         async with aclosing(
-            _async_receive_events(aiter(source), result_type, slot_readers)
+            _async_receive_events(aiter(source), result_type, slot_readers, models)
         ) as stream:
             yield stream
 
@@ -111,6 +113,7 @@ async def _async_receive_events[T: pydantic.BaseModel](
     events: AsyncIterator[httpx2.ServerSentEvent],
     result_type: type[T],
     slot_readers: SlotReaders | None,
+    models: ProtocolModels,
 ) -> AsyncGenerator[T]:
     while True:
         try:
@@ -119,7 +122,7 @@ async def _async_receive_events[T: pydantic.BaseModel](
             raise _ended_without_complete() from None
         except _INTERRUPTIONS as exc:
             raise _broke_before_complete(exc) from exc
-        match _event_action(event, result_type, slot_readers):
+        match _event_action(event, result_type, slot_readers, models):
             case Emit(value=value):
                 yield value
             case "stop":
@@ -136,6 +139,7 @@ def graphql_sse_subscribe[T: pydantic.BaseModel](
     timeouts: httpx2.Timeout,
     result_type: type[T],
     slot_readers: SlotReaders | None,
+    models: ProtocolModels,
 ) -> Generator[Generator[T]]:
     with client.sse(
         url, method="POST", json=payload, headers=headers, timeout=timeouts
@@ -143,9 +147,9 @@ def graphql_sse_subscribe[T: pydantic.BaseModel](
         response = source.response
         if not (response.is_success and _is_event_stream(response)):
             response.read()
-            _reject(response)
+            _reject(response, models)
         with closing(
-            _receive_events(iter(source), result_type, slot_readers)
+            _receive_events(iter(source), result_type, slot_readers, models)
         ) as stream:
             yield stream
 
@@ -154,6 +158,7 @@ def _receive_events[T: pydantic.BaseModel](
     events: Iterator[httpx2.ServerSentEvent],
     result_type: type[T],
     slot_readers: SlotReaders | None,
+    models: ProtocolModels,
 ) -> Generator[T]:
     while True:
         try:
@@ -162,7 +167,7 @@ def _receive_events[T: pydantic.BaseModel](
             raise _ended_without_complete() from None
         except _INTERRUPTIONS as exc:
             raise _broke_before_complete(exc) from exc
-        match _event_action(event, result_type, slot_readers):
+        match _event_action(event, result_type, slot_readers, models):
             case Emit(value=value):
                 yield value
             case "stop":

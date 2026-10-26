@@ -43,7 +43,8 @@ _client = runtime.GQLClient(
 
 class GQLModel(pydantic.BaseModel):
     model_config = pydantic.ConfigDict(
-        populate_by_name=True,
+        validate_by_name=True,
+        validate_by_alias=True,
         serialize_by_alias=True,
         alias_generator=pydantic.AliasGenerator(
             validation_alias=pydantic.alias_generators.to_camel,

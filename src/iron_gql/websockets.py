@@ -13,25 +13,13 @@ from httpx2.websockets import AsyncWebSocketSession
 from httpx2.websockets import WebSocketDisconnect
 from httpx2.websockets import WebSocketSession
 
-from iron_gql.errors import GraphQLErrors
 from iron_gql.errors import GraphQLResponseError
+from iron_gql.protocol import ProtocolModels
+from iron_gql.protocol import WSMessage
 from iron_gql.slots import SlotReaders
-from iron_gql.subscription import NEXT_PAYLOAD
 from iron_gql.subscription import Emit
 from iron_gql.subscription import malformed_next_error
 from iron_gql.subscription import next_result
-
-
-class _WSMessage(pydantic.BaseModel):
-    model_config = pydantic.ConfigDict(extra="ignore")
-    type: str | None = None
-    payload: object = None
-
-
-_ERROR_PAYLOAD: pydantic.TypeAdapter[list[dict[str, Any]] | None] = (
-    pydantic.TypeAdapter(GraphQLErrors | None)
-)
-
 
 _MAX_PRE_ACK_MESSAGES = 16
 _WS_CONNECTION_ACK_TIMEOUT_SECONDS = 10
@@ -46,7 +34,7 @@ _WS_NORMAL_CLOSURE = 1000
 type MessageAction[T: pydantic.BaseModel] = Emit[T] | Literal["pong", "skip", "stop"]
 
 
-def _handshake_action(message: _WSMessage) -> Literal["ack", "pong", "skip"]:
+def _handshake_action(message: WSMessage) -> Literal["ack", "pong", "skip"]:
     match message.type:
         case "connection_ack":
             return "ack"
@@ -61,20 +49,23 @@ def _handshake_action(message: _WSMessage) -> Literal["ack", "pong", "skip"]:
 
 
 def _message_action[T: pydantic.BaseModel](
-    message: _WSMessage,
+    message: WSMessage,
     result_type: type[T],
     slot_readers: SlotReaders | None,
+    models: ProtocolModels,
 ) -> MessageAction[T]:
     match message.type:
         case "next":
             try:
-                payload = NEXT_PAYLOAD.validate_python(message.payload or {})
+                payload = models.next_payload.model_validate(message.payload or {})
             except pydantic.ValidationError as exc:
                 raise malformed_next_error(exc) from exc
             return Emit(next_result(payload, result_type, slot_readers))
         case "error":
             try:
-                error_payload = _ERROR_PAYLOAD.validate_python(message.payload)
+                error_payload = models.ws_error.model_validate({
+                    "errors": message.payload
+                }).errors
             except pydantic.ValidationError as exc:
                 raise GraphQLResponseError([
                     {"message": f"Malformed error payload: {exc}"}
@@ -111,17 +102,20 @@ async def async_graphql_ws_subscribe[T: pydantic.BaseModel](
     result_type: type[T],
     payload: dict[str, Any],
     slot_readers: SlotReaders | None,
+    models: ProtocolModels,
 ) -> AsyncGenerator[AsyncGenerator[T]]:
-    await _async_ws_handshake(ws)
+    await _async_ws_handshake(ws, models)
     await ws.send_json({"id": "1", "type": "subscribe", "payload": payload})
-    yield _async_ws_receive_messages(ws, result_type, slot_readers)
+    yield _async_ws_receive_messages(ws, result_type, slot_readers, models)
 
 
-async def _async_ws_handshake(ws: AsyncWebSocketSession) -> None:
+async def _async_ws_handshake(
+    ws: AsyncWebSocketSession, models: ProtocolModels
+) -> None:
     await ws.send_json({"type": "connection_init"})
     for _ in range(_MAX_PRE_ACK_MESSAGES):
         try:
-            message = _WSMessage.model_validate(
+            message = models.ws_message.model_validate(
                 await asyncio.wait_for(
                     ws.receive_json(), timeout=_WS_CONNECTION_ACK_TIMEOUT_SECONDS
                 )
@@ -171,10 +165,11 @@ async def _async_ws_receive_messages[T: pydantic.BaseModel](
     ws: AsyncWebSocketSession,
     result_type: type[T],
     slot_readers: SlotReaders | None,
+    models: ProtocolModels,
 ) -> AsyncGenerator[T]:
     while True:
         try:
-            message = _WSMessage.model_validate(await ws.receive_json())
+            message = models.ws_message.model_validate(await ws.receive_json())
         except WebSocketDisconnect as exc:
             if exc.code != _WS_NORMAL_CLOSURE:
                 raise _disconnect_error(exc, "WebSocket disconnected") from exc
@@ -185,7 +180,7 @@ async def _async_ws_receive_messages[T: pydantic.BaseModel](
             raise GraphQLResponseError([
                 {"message": f"Malformed protocol message: {exc}"}
             ]) from exc
-        match _message_action(message, result_type, slot_readers):
+        match _message_action(message, result_type, slot_readers, models):
             case Emit(value=value):
                 yield value
             case "pong":
@@ -202,17 +197,18 @@ def graphql_ws_subscribe[T: pydantic.BaseModel](
     result_type: type[T],
     payload: dict[str, Any],
     slot_readers: SlotReaders | None,
+    models: ProtocolModels,
 ) -> Generator[Generator[T]]:
-    _ws_handshake(ws)
+    _ws_handshake(ws, models)
     ws.send_json({"id": "1", "type": "subscribe", "payload": payload})
-    yield _ws_receive_messages(ws, result_type, slot_readers)
+    yield _ws_receive_messages(ws, result_type, slot_readers, models)
 
 
-def _ws_handshake(ws: WebSocketSession) -> None:
+def _ws_handshake(ws: WebSocketSession, models: ProtocolModels) -> None:
     ws.send_json({"type": "connection_init"})
     for _ in range(_MAX_PRE_ACK_MESSAGES):
         try:
-            message = _WSMessage.model_validate(
+            message = models.ws_message.model_validate(
                 ws.receive_json(timeout=_WS_CONNECTION_ACK_TIMEOUT_SECONDS)
             )
         except WebSocketDisconnect as exc:
@@ -247,10 +243,11 @@ def _ws_receive_messages[T: pydantic.BaseModel](
     ws: WebSocketSession,
     result_type: type[T],
     slot_readers: SlotReaders | None,
+    models: ProtocolModels,
 ) -> Generator[T]:
     while True:
         try:
-            message = _WSMessage.model_validate(ws.receive_json())
+            message = models.ws_message.model_validate(ws.receive_json())
         except WebSocketDisconnect as exc:
             if exc.code != _WS_NORMAL_CLOSURE:
                 raise _disconnect_error(exc, "WebSocket disconnected") from exc
@@ -261,7 +258,7 @@ def _ws_receive_messages[T: pydantic.BaseModel](
             raise GraphQLResponseError([
                 {"message": f"Malformed protocol message: {exc}"}
             ]) from exc
-        match _message_action(message, result_type, slot_readers):
+        match _message_action(message, result_type, slot_readers, models):
             case Emit(value=value):
                 yield value
             case "pong":

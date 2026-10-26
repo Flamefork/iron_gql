@@ -316,6 +316,8 @@ def generated_package(
     queries: str,
     mode: GenerationMode = "async",
     scalars: Mapping[str, str] = DEFAULT_SCALARS,
+    settings: str = 'GRAPHQL_URL = "http://testserver/graphql/"\n',
+    model_base_import: str = "pydantic:BaseModel",
 ) -> None:
     """Generate a committed package under tests/generated/<name>/.
 
@@ -327,7 +329,7 @@ def generated_package(
     root = _package_root(name)
     write_text(root / "schema.graphql", schema)
     write_text(root / "__init__.py", "")
-    write_text(root / "settings.py", 'GRAPHQL_URL = "http://testserver/graphql/"\n')
+    write_text(root / "settings.py", settings)
     write_text(root / "queries.py", queries)
     render_gql_module(
         mode=mode,
@@ -339,6 +341,7 @@ def generated_package(
         scalars=dict(scalars),
         to_camel_fn_full_name="pydantic.alias_generators:to_camel",
         to_snake_fn=alias_generators.to_snake,
+        model_base_import=model_base_import,
     ).write()
     write_text(root / "gql" / "__init__.py", "")
     _check_generated(_generated_api_module(name), root / "schema.graphql")
@@ -494,6 +497,7 @@ class ProjectBuilder:
         mode: GenerationMode = "async",
         to_snake_fn: Callable[[str], str] = alias_generators.to_snake,
         subscription_protocol: SubscriptionProtocol = "graphql-sse",
+        model_base_import: str = "pydantic:BaseModel",
     ) -> RenderedModule:
         return render_gql_module(
             mode=mode,
@@ -505,6 +509,7 @@ class ProjectBuilder:
             scalars={"ID": "builtins:str"},
             to_camel_fn_full_name=to_camel_fn_full_name,
             to_snake_fn=to_snake_fn,
+            model_base_import=model_base_import,
         )
 
     def generate(
@@ -515,6 +520,7 @@ class ProjectBuilder:
         mode: GenerationMode = "async",
         to_snake_fn: Callable[[str], str] = alias_generators.to_snake,
         subscription_protocol: SubscriptionProtocol = "graphql-sse",
+        model_base_import: str = "pydantic:BaseModel",
     ) -> None:
         self.render(
             to_camel_fn_full_name=to_camel_fn_full_name,
@@ -523,6 +529,7 @@ class ProjectBuilder:
             mode=mode,
             to_snake_fn=to_snake_fn,
             subscription_protocol=subscription_protocol,
+            model_base_import=model_base_import,
         ).write()
 
     def import_api(self) -> ModuleType:

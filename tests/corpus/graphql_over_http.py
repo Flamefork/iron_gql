@@ -95,10 +95,12 @@ ERRORS_FORMS: tuple[ErrorsForm, ...] = (
     ErrorsForm(name="errors-a-string", value="Login required", kind="malformed"),
 )
 
-type DataKind = Literal["data", "null", "absent"]
+type DataKind = Literal["data", "null", "absent", "not-an-object"]
 
-# The `data` entry: the operation's result, `null`, or left out.
-DATA_FORMS: tuple[DataKind, ...] = ("data", "null", "absent")
+# The `data` entry: the operation's result, `null`, left out, or a value that
+# is not an object (GraphQL, "Data": a map) -- the last makes the body
+# malformed whatever its `errors`.
+DATA_FORMS: tuple[DataKind, ...] = ("data", "null", "absent", "not-an-object")
 
 # What the result of both operations holds when `data` is there: the query
 # reads `ping`, and a subscription is never handed a single response as data.
@@ -123,6 +125,8 @@ def _json_body(data: DataKind, errors: ErrorsForm) -> Body:
             document["data"] = None
         case "absent":
             pass
+        case "not-an-object":
+            document["data"] = ["pong"]
     if errors.value is not None:
         document["errors"] = errors.value
     return Body(
@@ -193,13 +197,18 @@ def expected(case: ResponseCase, *, subscription: bool) -> Outcome | None:
         return "redirect"
     if case.status.status_class == "error":
         explained = (
-            case.media_type.graphql and errors is not None and errors.kind == "errors"
+            case.media_type.graphql
+            and errors is not None
+            and errors.kind == "errors"
+            and case.body.data != "not-an-object"
         )
         return "errors" if explained else "status"
     # 2xx: read the same whatever the media type.
     if case.body.name == "not-json":
         return None
     if errors is None or errors.kind == "malformed":
+        return "malformed"
+    if case.body.data == "not-an-object":
         return "malformed"
     if errors.kind == "errors":
         return "errors"
@@ -274,3 +283,11 @@ def expected_accept(case: AcceptCase, *, subscription: bool) -> str:
     if case.client.accept is not None:
         return case.client.accept
     return STREAM_ACCEPT if subscription else QUERY_ACCEPT
+
+
+# A graphql-transport-ws message that is not one: not an object, or a `type`
+# that is not a string (graphql-transport-ws, "Message": `type` is a string).
+MALFORMED_WS_MESSAGES: dict[str, object] = {
+    "not-an-object": ["next"],
+    "type-not-a-string": {"type": ["next"]},
+}

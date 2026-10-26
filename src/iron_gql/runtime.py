@@ -24,6 +24,8 @@ from httpx2.websockets import AsyncWebSocketClient
 from httpx2.websockets import WebSocketClient
 
 from iron_gql.errors import GraphQLResponseError
+from iron_gql.protocol import ProtocolModels
+from iron_gql.protocol import protocol_models
 from iron_gql.response import raise_for_status
 from iron_gql.response import response_body
 from iron_gql.slots import OMITTED
@@ -319,9 +321,10 @@ def _parse_query_response[T: pydantic.BaseModel](
     response: httpx2.Response,
     result_type: type[T],
     slot_readers: SlotReaders | None,
+    models: ProtocolModels,
 ) -> T:
-    raise_for_status(response)
-    body = response_body(response)
+    raise_for_status(response, models)
+    body = response_body(response, models)
     if body.data is None:
         raise GraphQLResponseError([{"message": "No data in response"}])
 
@@ -382,6 +385,22 @@ def _subscription_timeouts(
     return httpx2.Timeout(query_timeout, read=subscription_idle_timeout)
 
 
+# The base a client takes from its module in `use_client`: one built without a
+# base takes the module's, one built with another refuses it -- a test client
+# parses the way the module's own does.
+def _adopted(
+    own: type[pydantic.BaseModel] | None, module_base: type[pydantic.BaseModel]
+) -> type[pydantic.BaseModel]:
+    if own is None or own is module_base:
+        return module_base
+    msg = (
+        f"The client parses on model_base={own.__module__}.{own.__qualname__}, "
+        f"its module on {module_base.__module__}.{module_base.__qualname__}: "
+        "pass the module's base or none"
+    )
+    raise ValueError(msg)
+
+
 class AsyncGQLClient:
     def __init__(
         self,
@@ -392,12 +411,14 @@ class AsyncGQLClient:
         headers: dict[str, str] | None = None,
         query_timeout: int = DEFAULT_QUERY_TIMEOUT,
         subscription_idle_timeout: float | None = None,
+        model_base: type[pydantic.BaseModel] | None = None,
     ):
         self._endpoint_url = httpx2.URL(base_url)
         self._subscription_protocol: SubscriptionProtocol = subscription_protocol
         self._subscription_timeouts = _subscription_timeouts(
             query_timeout, subscription_idle_timeout
         )
+        self._model_base = model_base
         self._target_app = target_app
         self._caller_accept = _caller_accept(headers)
         transport = httpx2.ASGITransport(app=target_app) if target_app else None
@@ -406,6 +427,19 @@ class AsyncGQLClient:
             headers=headers or {},
             timeout=query_timeout,
         )
+
+    # The base the client parses the protocol on; `pydantic.BaseModel` when
+    # none was given.
+    @property
+    def model_base(self) -> type[pydantic.BaseModel]:
+        return self._model_base or pydantic.BaseModel
+
+    def adopt_model_base(self, module_base: type[pydantic.BaseModel]) -> None:
+        self._model_base = _adopted(self._model_base, module_base)
+
+    @property
+    def _models(self) -> ProtocolModels:
+        return protocol_models(self.model_base)
 
     async def query[T: pydantic.BaseModel](
         self,
@@ -427,7 +461,7 @@ class AsyncGQLClient:
             response = await self._client.post(
                 self._endpoint_url, json=payload, headers=headers
             )
-        return _parse_query_response(response, result_type, slot_readers)
+        return _parse_query_response(response, result_type, slot_readers, self._models)
 
     @asynccontextmanager
     async def subscribe[T: pydantic.BaseModel](
@@ -452,6 +486,7 @@ class AsyncGQLClient:
                     timeouts=self._subscription_timeouts,
                     result_type=result_type,
                     slot_readers=slot_readers,
+                    models=self._models,
                 ) as stream:
                     yield stream
             case "graphql-transport-ws":
@@ -486,7 +521,7 @@ class AsyncGQLClient:
                     url, subprotocols=["graphql-transport-ws"]
                 ) as ws,
                 async_graphql_ws_subscribe(
-                    ws, result_type, payload, slot_readers
+                    ws, result_type, payload, slot_readers, self._models
                 ) as stream,
             ):
                 yield stream
@@ -511,14 +546,29 @@ class GQLClient:
         headers: dict[str, str] | None = None,
         query_timeout: int = DEFAULT_QUERY_TIMEOUT,
         subscription_idle_timeout: float | None = None,
+        model_base: type[pydantic.BaseModel] | None = None,
     ):
         self._endpoint_url = httpx2.URL(base_url)
         self._subscription_protocol: SubscriptionProtocol = subscription_protocol
         self._subscription_timeouts = _subscription_timeouts(
             query_timeout, subscription_idle_timeout
         )
+        self._model_base = model_base
         self._caller_accept = _caller_accept(headers)
         self._client = httpx2.Client(headers=headers or {}, timeout=query_timeout)
+
+    # The base the client parses the protocol on; `pydantic.BaseModel` when
+    # none was given.
+    @property
+    def model_base(self) -> type[pydantic.BaseModel]:
+        return self._model_base or pydantic.BaseModel
+
+    def adopt_model_base(self, module_base: type[pydantic.BaseModel]) -> None:
+        self._model_base = _adopted(self._model_base, module_base)
+
+    @property
+    def _models(self) -> ProtocolModels:
+        return protocol_models(self.model_base)
 
     def query[T: pydantic.BaseModel](
         self,
@@ -540,7 +590,7 @@ class GQLClient:
             response = self._client.post(
                 self._endpoint_url, json=payload, headers=headers
             )
-        return _parse_query_response(response, result_type, slot_readers)
+        return _parse_query_response(response, result_type, slot_readers, self._models)
 
     @contextmanager
     def subscribe[T: pydantic.BaseModel](
@@ -563,6 +613,7 @@ class GQLClient:
                     timeouts=self._subscription_timeouts,
                     result_type=result_type,
                     slot_readers=slot_readers,
+                    models=self._models,
                 ) as stream:
                     yield stream
             case "graphql-transport-ws":
@@ -576,7 +627,7 @@ class GQLClient:
                         url, subprotocols=["graphql-transport-ws"], headers=headers
                     ) as ws,
                     graphql_ws_subscribe(
-                        ws, result_type, payload, slot_readers
+                        ws, result_type, payload, slot_readers, self._models
                     ) as stream,
                 ):
                     yield stream

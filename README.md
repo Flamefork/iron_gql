@@ -344,11 +344,28 @@ Every `.bind()` the scan leaves alone is recorded with the reason, and `debug_pa
 - **Naming conventions.** Supply `to_camel_fn_full_name` (a module:path string) and a `to_snake_fn` callable. These functions align the casing with your own `alias_generator`.
 - **Endpoint configuration.** The generator writes `base_url_import` verbatim into the generated module. Set it to a global string, a configuration object, or a helper that returns the GraphQL endpoint.
 - **Subscription protocol.** The generator writes `subscription_protocol` into the generated module, where it creates the module's client.
+- **Model base.** `model_base_import` (a `module:attr` string, `"pydantic:BaseModel"` by default) names the Pydantic model that every model of the module derives from: `GQLModel`, the base of the generated models, inherits it. The generated module passes the same base to its client as `model_base`, and the client builds its own models of the protocol on it — the response body, a subscription's `next` payload, a graphql-transport-ws message and its `error` payload. A setting of your base therefore holds for everything the module parses. For example, `hide_input_in_errors=True` of your base holds for the client's own `Malformed response body` and `Malformed next payload` errors too:
+
+  ```python
+  # myapp/models.py
+  import pydantic
+
+
+  class Model(pydantic.BaseModel):
+      model_config = pydantic.ConfigDict(hide_input_in_errors=True)
+  ```
+
+  ```python
+  render_gql_module(..., model_base_import="myapp.models:Model")
+  ```
+
+  The `model_config` keys that the library sets win over the same keys of your base: the keys of `GQLModel` in the generated module, `extra="ignore"` of a model that validates inside a slot or a fragment subtree, and the keys of the protocol models — no alias generator and `extra="ignore"`. Every other key of your base applies.
 
 ## Runtime Highlights
 - `AsyncGQLClient` accepts an ASGI `target_app`. You can use the same runtime for production HTTP calls and for in-process ASGI execution.
 - `GQLClient.subscribe` returns a plain context manager over a blocking generator, so a synchronous consumer reads subscription messages with `for`.
 - Both clients take `subscription_protocol` (required) and `subscription_idle_timeout`; see [Subscriptions](#subscriptions).
+- Both clients take `model_base`, the base of the models that the client parses the protocol with; `pydantic.BaseModel` when you pass none. A generated module passes its own; see **Model base** in [Customization Hooks](#customization-hooks).
 - `GQLOperation.with_headers` clones the operation object. The original does not change, so each call can have its own headers.
 - `Upload` scalars map to `iron_gql.FileVar`. When variables contain `FileVar` instances, the client automatically sends a multipart upload (see the [GraphQL multipart request spec](https://github.com/jaydenseric/graphql-multipart-request-spec)).
 - `serialize_var` converts variables to JSON-compatible structures with the Pydantic `TypeAdapter`. It supports custom scalar types, nested models, dicts, and lists.
@@ -433,7 +450,7 @@ You supply the fake yourself. The library takes no position on how you answer a 
 
 ### Replace the client
 
-`use_client` binds your client into a generated module. Use it with `async with` for `AsyncGQLClient` and `with` for `GQLClient`. On exit it restores the previous client and closes the client that you passed in:
+`use_client` binds your client into a generated module. Use it with `async with` for `AsyncGQLClient` and `with` for `GQLClient`. On exit it restores the previous client and closes the client that you passed in. A client that you create without `model_base` takes the module's base, so it parses responses the way the module's own client does; a client created with another base raises `ValueError`:
 
 ```python
 from iron_gql.runtime import AsyncGQLClient

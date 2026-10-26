@@ -1,20 +1,10 @@
 from dataclasses import dataclass
-from typing import Any
 
 import pydantic
 
-from iron_gql.errors import GraphQLErrors
 from iron_gql.errors import GraphQLResponseError
+from iron_gql.protocol import NextPayload
 from iron_gql.slots import SlotReaders
-
-
-class NextPayload(pydantic.BaseModel):
-    model_config = pydantic.ConfigDict(extra="ignore")
-    data: dict[str, Any] | None = None
-    errors: GraphQLErrors | None = None
-
-
-NEXT_PAYLOAD = pydantic.TypeAdapter(NextPayload)
 
 
 @dataclass(frozen=True, slots=True)
