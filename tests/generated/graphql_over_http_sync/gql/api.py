@@ -29,7 +29,6 @@ from iron_gql import runtime
 from iron_gql import slots
 
 import pydantic.alias_generators
-
 import builtins
 
 from tests.generated.graphql_over_http_sync.settings import GRAPHQL_URL

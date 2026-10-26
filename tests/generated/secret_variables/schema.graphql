@@ -1,0 +1,17 @@
+    scalar SecretString
+scalar SecretBlob
+scalar SecretNumber
+    scalar JSON
+
+    input Vault {
+        string: SecretString
+blob: SecretBlob
+number: SecretNumber
+    }
+
+    type Query {
+        direct(string: SecretString, blob: SecretBlob, number: SecretNumber): Boolean!
+        inInput(vault: Vault!): Boolean!
+        inList(strings: [SecretString!], blobs: [SecretBlob!], numbers: [SecretNumber!]): Boolean!
+        inMapping(bag: JSON!): Boolean!
+    }

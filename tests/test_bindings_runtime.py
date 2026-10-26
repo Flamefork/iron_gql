@@ -1,3 +1,4 @@
+import copy
 import importlib
 import json
 import pickle
@@ -27,6 +28,8 @@ from tests.conftest import gql_server
 from tests.conftest import make_subscription_app
 from tests.conftest import read_type_erased
 from tests.conftest import use_package_client
+from tests.corpus.secrets import KINDS as SECRET_KINDS
+from tests.corpus.secrets import SecretKind
 
 # Shared by every fixture below: a nullable union field so a slot
 # discriminates by runtime __typename between two disjoint concrete types.
@@ -1409,6 +1412,33 @@ def test_applications_agreeing_on_the_wire_bind_whatever_python_shape_they_have(
         preview=wire_shape_queries.image_parts.with_args(payload=(1, 2)),
     )
     assert bound.fragment_args == {"payload": [1, 2]}
+
+
+@pytest.mark.parametrize(
+    "kind", SECRET_KINDS, ids=[kind.scalar for kind in SECRET_KINDS]
+)
+def test_applications_with_different_secrets_are_rejected(kind: SecretKind):
+    # Two secrets of one type mask to the same text, and the request sends
+    # their values: compared masked, the second slot silently got the first
+    # one's secret.
+    with pytest.raises(ValueError, match=r"conflicting values.*\$payload"):
+        wire_shape_queries.get_attachment.bind(
+            attachment=wire_shape_queries.image_parts.with_args(payload=kind.value),
+            preview=wire_shape_queries.image_parts.with_args(payload=kind.other),
+        )
+
+
+@pytest.mark.parametrize(
+    "kind", SECRET_KINDS, ids=[kind.scalar for kind in SECRET_KINDS]
+)
+def test_applications_with_equal_secrets_bind(kind: SecretKind):
+    # The positive twin: two secret objects holding one value ask for one
+    # request.
+    bound = wire_shape_queries.get_attachment.bind(
+        attachment=wire_shape_queries.image_parts.with_args(payload=kind.value),
+        preview=wire_shape_queries.image_parts.with_args(payload=copy.copy(kind.value)),
+    )
+    assert bound.fragment_args == {"payload": kind.value}
 
 
 async def test_mixed_mapping_keys_are_compared_after_wire_json_normalization(

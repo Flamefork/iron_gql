@@ -9,9 +9,11 @@ most committed modules were never type-checked at all.
 Every oracle is outside the generator: CPython resolving the module's own
 annotations, CPython's own symbol table answering what each generated method
 binds and reads, and graphql-core validating the documents the generator wrote
-against the schema it wrote them from.
+against the schema it wrote them from, CPython's own parser listing the
+module's imports.
 """
 
+import ast
 import inspect
 import symtable
 import typing
@@ -169,6 +171,25 @@ def _tables(table: symtable.SymbolTable) -> Iterator[symtable.SymbolTable]:
     for child in table.get_children():
         yield child
         yield from _tables(child)
+
+
+def assert_each_module_imported_once(module: ModuleType) -> None:
+    # Each option that names a `module:attr` -- a scalar, the alias function,
+    # the base -- brings its module along, and the scaffold imports pydantic
+    # and the standard modules itself: two of them naming one module wrote its
+    # `import` twice, which basedpyright rejects as a duplicate import.
+    source = Path(str(module.__file__)).read_text(encoding="utf-8")
+    imported = [
+        alias.name
+        for node in ast.parse(source).body
+        if isinstance(node, ast.Import)
+        for alias in node.names
+    ]
+    repeated = sorted({name for name in imported if imported.count(name) > 1})
+    if repeated:
+        msg = f"generated module {module.__name__} imports more than once:"
+        msg += f" {', '.join(repeated)}"
+        raise AssertionError(msg)
 
 
 def assert_documents_are_valid(

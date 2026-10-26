@@ -688,12 +688,24 @@ def _is_walkable(obj: object) -> TypeIs[_Walkable]:
     return isinstance(obj, _WALKABLE_TYPES)
 
 
+_SECRET_TYPES = (pydantic.SecretStr, pydantic.SecretBytes, pydantic.Secret)
+
+
+def _revealed(obj: object) -> object:
+    # A secret masks itself in every pydantic dump, `mode="json"` included;
+    # the request is the one place its value goes out.
+    if isinstance(obj, _SECRET_TYPES):
+        return _revealed(obj.get_secret_value())
+    return obj
+
+
 def serialize_variables(
     variables: Mapping[str, object],
 ) -> tuple[dict[str, Any], dict[str, FileVar]]:
     files: dict[str, FileVar] = {}
 
-    def walk(path: str, obj: object) -> object:
+    def walk(path: str, value: object) -> object:
+        obj = _revealed(value)
         if _is_walkable(obj):
             return _walk_known(path, obj)
         tp = type(obj)

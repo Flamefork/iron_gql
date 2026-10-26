@@ -29,7 +29,6 @@ from iron_gql import runtime
 from iron_gql import slots
 
 import pydantic.alias_generators
-
 import builtins
 
 from tests.generated.fragment_factory_typing.settings import GRAPHQL_URL

@@ -285,12 +285,20 @@ def render_imports(
     model_base_ref: ImportRef,
     mode: ModeConfig,
 ) -> str:
-    import_modules = [ref.module for ref in scalars.values()]
-    # A base from a module the scaffold imports anyway -- pydantic's own -- is
-    # reached through that import.
-    if model_base_ref.module not in THIRD_PARTY_MODULE_NAMES:
-        import_modules.append(model_base_ref.module)
-    scalar_imports = "\n".join(f"import {module}" for module in import_modules)
+    # The alias function, a scalar or a base from a module the scaffold imports
+    # anyway -- pydantic's own -- is reached through that import, and a module
+    # several of them share is imported once.
+    scaffold_modules = {*STDLIB_MODULE_NAMES, *THIRD_PARTY_MODULE_NAMES}
+    import_modules = dict.fromkeys(
+        module
+        for module in (
+            to_camel_ref.module,
+            *(ref.module for ref in scalars.values()),
+            model_base_ref.module,
+        )
+        if module not in scaffold_modules
+    )
+    module_imports = "\n".join(f"import {module}" for module in import_modules)
     # Every fixed name is emitted whole, whichever features the module
     # happens to use: the module suppresses unused imports, so an extra line
     # costs nothing, while a predicate that drifts from the emitter that
@@ -326,9 +334,7 @@ def render_imports(
 
 {iron_gql_imports}
 
-import {to_camel_ref.module}
-
-{scalar_imports}
+{module_imports}
 
 {base_url_ref.import_statement()}"""
 

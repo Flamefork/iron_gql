@@ -44,6 +44,7 @@ from iron_gql.testing import accept_graphql_ws
 from iron_gql.testing import use_client
 from iron_gql.testing.server import async_live_asgi_server
 from tests.corpus.generated_oracles import assert_documents_are_valid
+from tests.corpus.generated_oracles import assert_each_module_imported_once
 from tests.corpus.generated_oracles import assert_method_namespaces_are_closed
 from tests.corpus.generated_oracles import assert_module_is_self_contained
 from tests.corpus.graphql_over_http import ErrorsForm
@@ -354,6 +355,7 @@ def _check_generated(module: ModuleType, schema_path: Path) -> None:
     # of, and the gaps are the ones nobody did.
     assert_module_is_self_contained(module)
     assert_method_namespaces_are_closed(module)
+    assert_each_module_imported_once(module)
     schema = graphql.build_schema(schema_path.read_text(encoding="utf-8"))
     assert_documents_are_valid(module, schema)
 
@@ -498,6 +500,7 @@ class ProjectBuilder:
         to_snake_fn: Callable[[str], str] = alias_generators.to_snake,
         subscription_protocol: SubscriptionProtocol = "graphql-sse",
         model_base_import: str = "pydantic:BaseModel",
+        scalars: Mapping[str, str] = DEFAULT_SCALARS,
     ) -> RenderedModule:
         return render_gql_module(
             mode=mode,
@@ -506,7 +509,7 @@ class ProjectBuilder:
             module_full_name=module_full_name or self.gql_module,
             base_url_import=base_url_import or f"{self.package}.settings:GRAPHQL_URL",
             subscription_protocol=subscription_protocol,
-            scalars={"ID": "builtins:str"},
+            scalars=dict(scalars),
             to_camel_fn_full_name=to_camel_fn_full_name,
             to_snake_fn=to_snake_fn,
             model_base_import=model_base_import,
@@ -521,6 +524,7 @@ class ProjectBuilder:
         to_snake_fn: Callable[[str], str] = alias_generators.to_snake,
         subscription_protocol: SubscriptionProtocol = "graphql-sse",
         model_base_import: str = "pydantic:BaseModel",
+        scalars: Mapping[str, str] = DEFAULT_SCALARS,
     ) -> None:
         self.render(
             to_camel_fn_full_name=to_camel_fn_full_name,
@@ -530,6 +534,7 @@ class ProjectBuilder:
             to_snake_fn=to_snake_fn,
             subscription_protocol=subscription_protocol,
             model_base_import=model_base_import,
+            scalars=scalars,
         ).write()
 
     def import_api(self) -> ModuleType:

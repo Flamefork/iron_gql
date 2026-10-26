@@ -16,6 +16,11 @@ from iron_gql.codegen import render_gql_module
 from tests.conftest import ProjectBuilder
 from tests.conftest import generated_package
 from tests.conftest import gql_server
+from tests.corpus import module_imports
+from tests.corpus.generated_oracles import assert_each_module_imported_once
+from tests.corpus.generated_oracles import assert_module_is_self_contained
+from tests.corpus.module_imports import IMPORT_FORMS
+from tests.corpus.module_imports import ImportForm
 
 generated_package(
     "generation_nested_inputs",
@@ -1294,3 +1299,22 @@ def test_sync_and_async_modules_coexist(test_project: ProjectBuilder):
     assert "async def" not in sync_source
     assert "await " not in sync_source
     assert "from collections.abc import Generator" in sync_source
+
+
+@pytest.mark.parametrize("form", IMPORT_FORMS, ids=[form.name for form in IMPORT_FORMS])
+def test_each_module_is_imported_once(test_project: ProjectBuilder, form: ImportForm):
+    test_project.prepare(
+        schema=module_imports.schema(form), queries=module_imports.queries(form)
+    )
+    test_project.write_file(
+        test_project.root / "sample_app/shared.py", module_imports.SHARED_MODULE
+    )
+    test_project.generate(
+        scalars=form.scalars,
+        to_camel_fn_full_name=form.to_camel,
+        model_base_import=form.model_base,
+    )
+    generated = test_project.import_api()
+
+    assert_each_module_imported_once(generated)
+    assert_module_is_self_contained(generated)
