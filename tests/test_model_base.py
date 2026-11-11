@@ -149,16 +149,16 @@ from tests.generated.model_base_sync.gql import api as sync_api
 _EXTENSIONS = {"extensions": {"trace": "t-1"}}
 
 
-def _response_app(body: object) -> ASGIApp:
+def _response_app(content: bytes) -> ASGIApp:
     async def app(scope: ASGIScope, receive: ASGIReceive, send: ASGISend) -> None:
         request = await accept_graphql_sse(scope, receive, send)
-        await request.respond(200, "application/json", json.dumps(body).encode())
+        await request.respond(200, "application/json", content)
 
     return app
 
 
 def _query_app(data: dict[str, object]) -> ASGIApp:
-    return _response_app({"data": data, **_EXTENSIONS})
+    return _response_app(json.dumps({"data": data, **_EXTENSIONS}).encode())
 
 
 def _sse_app(payload: object) -> ASGIApp:
@@ -172,14 +172,14 @@ def _sse_app(payload: object) -> ASGIApp:
     return app
 
 
-# Sends `message` as it is where the client waits for `connection_ack`, or
-# for the subscription's first message.
-def _ws_message_app(message: object, *, after_ack: bool) -> ASGIApp:
+# Sends the `message` frame as it is where the client waits for
+# `connection_ack`, or for the subscription's first message.
+def _ws_message_app(message: str, *, after_ack: bool) -> ASGIApp:
     async def app(scope: ASGIScope, receive: ASGIReceive, send: ASGISend) -> None:
         connection = await accept_graphql_ws(scope, receive, send)
         if after_ack:
             _ = await connection.ack()
-        await send({"type": "websocket.send", "text": json.dumps(message)})
+        await send({"type": "websocket.send", "text": message})
         await connection.drain()
 
     return app
@@ -306,10 +306,14 @@ def _next_app(protocol: SubscriptionProtocol, payload: object) -> ASGIApp:
             ])
 
 
-def _assert_hides_input(result: object, prefix: str) -> None:
+# Pydantic shows the input only as `input_value`; `raw` -- the input as the
+# server sent it, or the `repr` of a value parsed out of it -- catches the
+# client quoting the whole input itself.
+def _assert_hides_input(result: object, prefix: str, raw: str) -> None:
     assert isinstance(result, GraphQLResponseError), result
     assert str(result).startswith(prefix)
     assert "input_value" not in str(result)
+    assert raw not in str(result)
 
 
 @pytest.mark.parametrize("protocol", _PROTOCOLS)
@@ -326,17 +330,23 @@ _MALFORMED_ERRORS: dict[str, object] = {
     form.name: form.value for form in ERRORS_FORMS if form.kind == "malformed"
 }
 
-# The JSON bodies of the corpus that are no GraphQL response, by its own
-# table, each also sent as a subscription's `next` payload.
-_MALFORMED_BODIES: dict[str, object] = {
-    body.name: json.loads(body.content)
+# The bodies of the corpus that are no GraphQL response, by its own table.
+_MALFORMED_BODIES: dict[str, bytes] = {
+    body.name: body.content
     for body in BODIES
-    if body.name != "not-json"
-    and expected(
+    if expected(
         ResponseCase(status=STATUSES[0], media_type=MEDIA_TYPES[0], body=body),
         subscription=False,
     )
     == "malformed"
+}
+
+# Those of them that are JSON, each sent as a subscription's `next` payload:
+# the payload rides inside a message that is itself JSON.
+_MALFORMED_PAYLOADS: dict[str, object] = {
+    name: json.loads(content)
+    for name, content in _MALFORMED_BODIES.items()
+    if name != "not-json"
 }
 
 
@@ -345,7 +355,9 @@ async def test_async_response_error_hides_its_input(body: str):
     async with _serving(_response_app(_MALFORMED_BODIES[body])):
         with pytest.raises(GraphQLResponseError) as caught:
             await queries.get_post.execute()
-    _assert_hides_input(caught.value, "Malformed response body")
+    _assert_hides_input(
+        caught.value, "Malformed response body", _MALFORMED_BODIES[body].decode()
+    )
 
 
 @pytest.mark.parametrize("body", list(_MALFORMED_BODIES))
@@ -359,7 +371,9 @@ def test_sync_response_error_hides_its_input(body: str):
         pytest.raises(GraphQLResponseError) as caught,
     ):
         sync_queries.get_post.execute()
-    _assert_hides_input(caught.value, "Malformed response body")
+    _assert_hides_input(
+        caught.value, "Malformed response body", _MALFORMED_BODIES[body].decode()
+    )
 
 
 # A single response in place of the stream is read the way a query's is.
@@ -368,18 +382,22 @@ def test_sync_response_error_hides_its_input(body: str):
 async def test_refused_stream_error_hides_its_input(mode: _Mode, body: str):
     app = _response_app(_MALFORMED_BODIES[body])
     result = await _subscription(mode, "graphql-sse", app)
-    _assert_hides_input(result, "Malformed response body")
+    _assert_hides_input(
+        result, "Malformed response body", _MALFORMED_BODIES[body].decode()
+    )
 
 
-@pytest.mark.parametrize("body", list(_MALFORMED_BODIES))
+@pytest.mark.parametrize("body", list(_MALFORMED_PAYLOADS))
 @pytest.mark.parametrize("protocol", _PROTOCOLS)
 @pytest.mark.parametrize("mode", _MODES)
 async def test_next_error_hides_its_input(
     mode: _Mode, protocol: SubscriptionProtocol, body: str
 ):
-    app = _next_app(protocol, _MALFORMED_BODIES[body])
+    app = _next_app(protocol, _MALFORMED_PAYLOADS[body])
     result = await _subscription(mode, protocol, app)
-    _assert_hides_input(result, "Malformed next payload")
+    _assert_hides_input(
+        result, "Malformed next payload", repr(_MALFORMED_PAYLOADS[body])
+    )
 
 
 @pytest.mark.parametrize("errors", list(_MALFORMED_ERRORS))
@@ -389,7 +407,9 @@ async def test_ws_error_payload_hides_its_input(mode: _Mode, errors: str):
         {"type": "error", "payload": _MALFORMED_ERRORS[errors]}
     ])
     result = await _subscription(mode, "graphql-transport-ws", app)
-    _assert_hides_input(result, "Malformed error payload")
+    _assert_hides_input(
+        result, "Malformed error payload", repr(_MALFORMED_ERRORS[errors])
+    )
 
 
 @pytest.mark.parametrize("message", list(MALFORMED_WS_MESSAGES))
@@ -397,7 +417,11 @@ async def test_ws_error_payload_hides_its_input(mode: _Mode, errors: str):
 async def test_ws_handshake_message_error_hides_its_input(mode: _Mode, message: str):
     app = _ws_message_app(MALFORMED_WS_MESSAGES[message], after_ack=False)
     result = await _subscription(mode, "graphql-transport-ws", app)
-    _assert_hides_input(result, "Malformed protocol message during handshake")
+    _assert_hides_input(
+        result,
+        "Malformed protocol message during handshake",
+        MALFORMED_WS_MESSAGES[message],
+    )
 
 
 @pytest.mark.parametrize("message", list(MALFORMED_WS_MESSAGES))
@@ -405,7 +429,9 @@ async def test_ws_handshake_message_error_hides_its_input(mode: _Mode, message: 
 async def test_ws_stream_message_error_hides_its_input(mode: _Mode, message: str):
     app = _ws_message_app(MALFORMED_WS_MESSAGES[message], after_ack=True)
     result = await _subscription(mode, "graphql-transport-ws", app)
-    _assert_hides_input(result, "Malformed protocol message:")
+    _assert_hides_input(
+        result, "Malformed protocol message:", MALFORMED_WS_MESSAGES[message]
+    )
 
 
 async def test_use_client_gives_its_base_to_a_client_without_one():

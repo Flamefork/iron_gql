@@ -70,7 +70,7 @@ pip install iron-gql[testing]   # + uvicorn for the loopback test server
 
    `subscription_protocol` is required too: `"graphql-sse"` or `"graphql-transport-ws"`. The generated module creates its client with it, so the module's subscriptions speak the protocol of your server.
 
-   `src_path` — корень импортов: имя модуля генератор получает из пути файла относительно него, поэтому корень должен быть тем, относительно чего написаны абсолютные импорты проекта (`Path(".")` для flat layout, `Path("src")` для src layout). Из-под этого корня скан не спускается в скрытый каталог (имя начинается с точки) и в корень виртуального окружения (каталог, содержащий `pyvenv.cfg`). Всё остальное обходится, как бы оно ни называлось: statements собираются и из каталога, чьё имя не может быть частью имени модуля, — скрипт запускают, а не импортируют.
+   `src_path` is the import root: the generator derives a module's name from the file's path relative to it, so the root must be what the project's absolute imports are written relative to (`Path(".")` for a flat layout, `Path("src")` for a src layout). Below this root the scan does not descend into a hidden directory (its name starts with a dot) or into the root of a virtual environment (a directory containing `pyvenv.cfg`). Everything else is walked whatever it is called: statements are collected even from a directory whose name cannot be part of a module name — a script is run, not imported.
 
    This writes `myapp/gql/client.py`. The module contains:
    - a client singleton for the chosen mode,
@@ -142,7 +142,7 @@ get_post_attachment = api_gql("""
 """)
 ```
 
-Statement ровно с одним fragment definition возвращает типизированное значение **fragment definition**, если пакет содержит template. Каждый вызов `api_gql()` создаёт новое эквивалентное значение с тем же generated-типом. В пакете без template нет binding context, поэтому fragment statements сохраняют прежний смысл. Генератор создаёт базовый `On{Type}` для каждого используемого type condition. Plain definitions и factory applications наследуют базу своего type condition; инфраструктурный код может принимать через неё любой bindable fragment на этом типе. Statement с несколькими definitions остаётся bundle, чьи fragments можно spread по имени.
+A statement with exactly one fragment definition returns a typed **fragment definition** value if the package contains a template. Each `api_gql()` call creates a new equivalent value of the same generated type. A package without a template has no binding context, so its fragment statements keep their old meaning. The generator creates an `On{Type}` base for each type condition in use. Plain definitions and factory applications inherit the base of their type condition; infrastructure code can accept any bindable fragment on that type through it. A statement with several definitions stays a bundle whose fragments can be spread by name.
 
 ```python
 image_url = api_gql("""
@@ -186,7 +186,7 @@ The caller passes its own fragment and gets back that fragment's own model. The 
 caption = await attachment_of("p-1", image_caption)
 ```
 
-Для этого нужны базы `On{Type}`. Helper для любого fragment на `ImageAttachment` принимает `OnImageAttachment[TModel, TReads]` и возвращает `TModel`; helper, который возвращает caller весь result, выражает тип result через оба параметра fragment. В обоих случаях сохраняется точный тип: модель fragment уникальна для его definition, поэтому данные другого fragment нельзя прочитать из slot по ошибке.
+This is what the `On{Type}` bases are for. A helper for any fragment on `ImageAttachment` accepts `OnImageAttachment[TModel, TReads]` and returns `TModel`; a helper that returns the whole result to its caller expresses the result type through both of the fragment's parameters. Either way the exact type is kept: a fragment's model is unique to its definition, so another fragment's data cannot be read from the slot by mistake.
 
 A bind can also be written literally, with the template and fragments local to the function or written straight into the call:
 
@@ -244,7 +244,7 @@ Pickle support depends on which generic models the payload instantiates. A popul
 
 `execute` takes only the template's own variables. There is no slot keyword argument: the fragment selection already happened at `bind()` time.
 
-Читайте slot через fragment definition: `image_caption.read(result.post.attachment)` возвращает собственную модель fragment или `None`, если node равен `None` либо его runtime type не входит в coverage fragment. Так читается любой fragment, чьи поля попали непосредственно в payload slot: переданный в `bind()` fragment или fragment, который другой bound fragment spread рядом со своими полями. Новый эквивалентный definition из повторного вызова `api_gql()` читает тот же result:
+Read a slot through a fragment definition: `image_caption.read(result.post.attachment)` returns the fragment's own model, or `None` if the node is `None` or its runtime type is outside the fragment's coverage. Any fragment whose fields landed directly in the slot payload is read this way: a fragment passed to `bind()`, or a fragment that another bound fragment spreads next to its own fields. A new equivalent definition from a repeated `api_gql()` call reads the same result:
 
 ```python
 result = await get_post_attachment_any.execute(id="p-1")
@@ -256,11 +256,11 @@ same_definition = api_gql("""
 attachment = same_definition.read(result.post.attachment)
 ```
 
-`fragment.read(node)` проверяется статически: тип node хранит definitions, предложенные binding для этого slot. Чтение чужого definition — включая любое чтение незаполненного slot — является type error. На type-erased пути та же ошибка связи поднимает `ValueError`, а не возвращает `None`, чтобы ошибка wiring не выглядела как допустимое несовпадение runtime type.
+`fragment.read(node)` is checked statically: the node's type holds the definitions the binding offered for this slot. Reading a definition that was not offered — including any read of an unfilled slot — is a type error. On the type-erased path the same wiring mistake raises `ValueError` instead of returning `None`, so that a wiring bug does not look like an acceptable runtime type mismatch.
 
-Эта проверка работает, пока сохранён точный тип definition или application. Для heterogeneous registry укажите оба type-параметра явно: `GQLFragment[pydantic.BaseModel, Any]`. Если точный readable-контракт уже стёрт, используйте и `{Operation}Result[Any]`: он принимает result любого binding и поддерживает тот же `read`. Теряется только статическая проверка; runtime по-прежнему допускает лишь definition, который binding предложил для slot.
+This check works as long as the exact type of the definition or application is kept. For a heterogeneous registry, give both type parameters explicitly: `GQLFragment[pydantic.BaseModel, Any]`. If the exact readable contract is already erased, use `{Operation}Result[Any]` as well: it accepts the result of any binding and supports the same `read`. Only the static check is lost; at runtime only a definition the binding offered for the slot is still accepted.
 
-Так общая инфраструктура может владеть operation и возвращать данные вместо сырого result: helper указывает `Any` для неизвестного ему slot и читает через переданный caller fragment.
+This way shared infrastructure can own an operation and return data instead of the raw result: the helper writes `Any` for the slot it does not know and reads through the fragment its caller passed.
 
 ```python
 def title[TData: pydantic.BaseModel, TReads](
@@ -271,13 +271,13 @@ def title[TData: pydantic.BaseModel, TReads](
 
 A fragment reached through a *narrower* type condition — an interface brick spread inside a per-type fragment — reads back as `None` for the types that condition excludes, exactly like any other type mismatch.
 
-A fragment spread внутри *nested field* bound fragment ведёт себя иначе: его поля приходят под этим field, а не в payload slot, поэтому slot не может читать их напрямую. Данные доступны через модель enclosing fragment (`image_parts.read(node).thumb.alt`); nested definition не входит в offered set node, поэтому прямой `read` остаётся static type error и поднимает `ValueError` в runtime.
+A fragment spread inside a bound fragment's *nested field* behaves differently: its fields arrive under that field, not in the slot payload, so the slot cannot read them directly. The data is available through the enclosing fragment's model (`image_parts.read(node).thumb.alt`); the nested definition is not in the node's offered set, so a direct `read` stays a static type error and raises `ValueError` at runtime.
 
 Fragments are isolated from each other — each one reads exactly its own selection, never the fields another caller's fragment selected. The data is not part of the fields of the result model, so `model_dump()` does not include it; re-validating a dump without a fragments context fails immediately.
 
 ### Fragment variables
 
-Fragments могут spread другие fragments и использовать собственные variables. Генератор синтезирует для каждой variable GraphQL declaration, допустимый во всех местах использования. Если такого declaration нет, generation завершается ошибкой. Fragment, closure которого использует variable, становится **fragment factory**. Сам definition factory нельзя передать в `bind()`; типизированный `with_args` создаёт bindable **fragment application** со значениями variables:
+Fragments can spread other fragments and use variables of their own. For each variable the generator synthesizes a GraphQL declaration that is valid at every place of use. If no such declaration exists, generation fails. A fragment whose closure uses a variable becomes a **fragment factory**. A factory definition itself cannot be passed to `bind()`; the typed `with_args` creates a bindable **fragment application** carrying the variable values:
 
 ```python
 image_thumbnail = api_gql("""
@@ -287,7 +287,7 @@ image_thumbnail = api_gql("""
 """)
 ```
 
-Вызывайте `with_args` там, где известны значения, и передавайте application в `bind()`. Читать result можно через definition factory или через любую application той же factory; `read()` проверяет definition, но не происхождение значений arguments:
+Call `with_args` where the values are known and pass the application to `bind()`. The result can be read through the factory definition or through any application of the same factory; `read()` checks the definition, not where the argument values came from:
 
 ```python
 async def show_thumbnail(post_id: str, width: int) -> None:
@@ -299,9 +299,9 @@ async def show_thumbnail(post_id: str, width: int) -> None:
         image = image_thumbnail.read(result.post.attachment)
 ```
 
-Обязательной fragment variable соответствует обязательный keyword в `with_args`. `None` всегда отправляет явный GraphQL `null`. Если все usage positions nullable и у каждой есть schema default, keyword можно пропустить: variable не попадёт в request, и применится schema default. Non-null position со schema default всё равно требует keyword: graphql-core 3.3, как и graphql-js 17, не учитывает default позиции для variable внутри fragment, и nullable-объявление отвергли бы и кодоген, и сервер. Omission и `None` — разные состояния. Точная сигнатура `with_args` отвергает пропущенные обязательные и лишние keywords. Набор variables в application неизменяем. Applied class остаётся private; создавайте applications только через `with_args`.
+A required fragment variable maps to a required keyword in `with_args`. `None` always sends an explicit GraphQL `null`. If every usage position is nullable and each has a schema default, the keyword can be omitted: the variable is left out of the request and the schema default applies. A non-null position with a schema default still requires the keyword: graphql-core 3.3, like graphql-js 17, ignores a position's default for a variable inside a fragment, and a nullable declaration would be rejected by both the codegen and the server. Omission and `None` are different states. The exact `with_args` signature rejects missing required keywords and extra ones. An application's set of variables is immutable. The applied class stays private; create applications only through `with_args`.
 
-Каждый `with_args` возвращает новую application. Applications одной factory могут содержать разные arguments, но читают одну и ту же проекцию. `read()` завершится ошибкой только для definition другой factory или другого fragment.
+Each `with_args` returns a new application. Applications of one factory can carry different arguments but read the same projection. `read()` fails only for a definition of another factory or another fragment.
 
 Two applications of one factory can fill two slots of one template. They read their own slots, but they cannot supply two independent values for one GraphQL variable. If the applications disagree, `bind()` reports the variable and both sources without showing either value. Use the same value, or use two fragments with different names.
 
@@ -336,7 +336,7 @@ A combination with no text of its own raises `LookupError` where the `bind()` ca
 
 Passing the same fragment to one slot twice is rejected at generation instead, naming the call site: a slot spreads each of its fragments once, so `bind(slot=(f, f))` asks for a combination that cannot exist.
 
-Каталоги, в которые обход не спускался, `debug_path` записывает в `skipped_dirs.json` — путь и причина, по той же причине, по которой существует `ignored_binds.json`: дерево, оставленное без внимания намеренно, и дерево, потерянное сканом, одинаково выглядят как statements, которых нет в пакете. Содержимое отсечённых каталогов не читается, поэтому в отчёте нет ни числа файлов, ни того, что в них лежит.
+`debug_path` writes the directories the walk did not descend into to `skipped_dirs.json` — the path and the reason — for the same reason `ignored_binds.json` exists: a tree left out on purpose and a tree the scan lost look the same, as statements missing from the package. The contents of pruned directories are not read, so the report has neither a file count nor what lies in them.
 
 Every `.bind()` the scan leaves alone is recorded with the reason, and `debug_path` writes them to `ignored_binds.json` alongside the other debug artifacts. Most entries there are now ordinary: a call whose slots take single values needs nothing from the scan, and a third-party `.bind()` is none of the generator's business. The one worth reading the file for is a *tuple* bind written on an expression no scan can follow — `TEMPLATES["q"].bind(slot=(a, b))`, where the value under the key is a runtime question: its combination is never generated, so the call raises `LookupError`, and the reason recorded here is what tells that apart from a bind the generator lost.
 
@@ -379,11 +379,12 @@ A query or a mutation is sent with `Accept: application/graphql-response+json, a
 |---|---|
 | 2xx with `data` | returns the result |
 | 2xx with `errors`, with `data` or without | raises `GraphQLResponseError` with the errors |
+| 2xx whose body is not a GraphQL response: not JSON, or JSON of another shape | raises `GraphQLResponseError`: "Malformed response body" |
 | 3xx | raises `httpx2.HTTPStatusError` |
 | 4xx or 5xx of the type `application/graphql-response+json`, with `errors` | raises `GraphQLResponseError` with the errors |
 | any other 4xx or 5xx | raises `httpx2.HTTPStatusError`; `error.response` holds the status and the body |
 
-The type is compared without its parameters, such as `charset`, and regardless of case. `GraphQLResponseError` means that the server explained the failure in GraphQL terms: a server of the current edition answers a request error with a 4xx or 5xx status and a GraphQL body, and a server of the earlier edition answers it with 200 and `application/json`. `httpx2.HTTPStatusError` means that no GraphQL explanation came: a proxy or a gateway answered, the body has another type, or a GraphQL body carries no `errors`.
+The type is compared without its parameters, such as `charset`, and regardless of case. `GraphQLResponseError` means that the server explained the failure in GraphQL terms: a server of the current edition answers a request error with a 4xx or 5xx status and a GraphQL body, and a server of the earlier edition answers it with 200 and `application/json`. It also means that a response came with a 2xx status, of any type, but its body could not be read as a GraphQL response. `httpx2.HTTPStatusError` means that no GraphQL explanation came: a proxy or a gateway answered, the body has another type, or a GraphQL body carries no `errors`.
 
 ## Subscriptions
 
@@ -407,7 +408,7 @@ With `"graphql-sse"`, each subscription is one `POST` request with `Accept: text
 | ends the response, or the connection breaks, before `complete` | raises `SubscriptionInterruptedError` |
 | sends nothing for `subscription_idle_timeout` seconds | raises `SubscriptionInterruptedError` |
 | refuses with a status that is not 2xx | raises as for a query: `GraphQLResponseError` for a 4xx or 5xx GraphQL response with `errors`, `httpx2.HTTPStatusError` otherwise |
-| answers with a single GraphQL response | raises `GraphQLResponseError` with its errors |
+| answers with a 2xx response that is not a stream | raises `GraphQLResponseError`: with the errors of the body, "Malformed response body" for a body that is not a GraphQL response, or, for one without errors, that no event stream came |
 
 `SubscriptionInterruptedError` tells you that the server did not confirm the end of the operation. The client does not open the subscription again. Open it again yourself if your server lets a new subscription continue from its current state.
 

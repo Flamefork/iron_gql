@@ -188,10 +188,8 @@ type Outcome = Literal[
 
 
 # The table of the ticket that decided the rule, for a query's response and
-# for a subscription's response in place of a stream. `None` where the
-# behaviour is not decided yet: a 2xx body that is not JSON (open ticket
-# `graphql-over-http-client/02`).
-def expected(case: ResponseCase, *, subscription: bool) -> Outcome | None:
+# for a subscription's response in place of a stream.
+def expected(case: ResponseCase, *, subscription: bool) -> Outcome:
     errors = case.body.errors
     if case.status.status_class == "redirect":
         return "redirect"
@@ -204,8 +202,6 @@ def expected(case: ResponseCase, *, subscription: bool) -> Outcome | None:
         )
         return "errors" if explained else "status"
     # 2xx: read the same whatever the media type.
-    if case.body.name == "not-json":
-        return None
     if errors is None or errors.kind == "malformed":
         return "malformed"
     if case.body.data == "not-an-object":
@@ -285,9 +281,11 @@ def expected_accept(case: AcceptCase, *, subscription: bool) -> str:
     return STREAM_ACCEPT if subscription else QUERY_ACCEPT
 
 
-# A graphql-transport-ws message that is not one: not an object, or a `type`
-# that is not a string (graphql-transport-ws, "Message": `type` is a string).
-MALFORMED_WS_MESSAGES: dict[str, object] = {
-    "not-an-object": ["next"],
-    "type-not-a-string": {"type": ["next"]},
+# A graphql-transport-ws frame that is no message: not JSON, not an object,
+# or a `type` that is not a string (graphql-transport-ws, "Message": `type` is
+# a string).
+MALFORMED_WS_MESSAGES: dict[str, str] = {
+    "not-json": "Internal Server Error",
+    "not-an-object": json.dumps(["next"]),
+    "type-not-a-string": json.dumps({"type": ["next"]}),
 }

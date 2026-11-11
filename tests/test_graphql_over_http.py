@@ -34,7 +34,6 @@ from tests.conftest import generated_package
 from tests.corpus.graphql_over_http import CLIENT_ACCEPTS
 from tests.corpus.graphql_over_http import DATA
 from tests.corpus.graphql_over_http import AcceptCase
-from tests.corpus.graphql_over_http import Outcome
 from tests.corpus.graphql_over_http import ResponseCase
 from tests.corpus.graphql_over_http import build_accept_corpus
 from tests.corpus.graphql_over_http import build_corpus
@@ -169,9 +168,7 @@ def _observed(
 def _divergence(
     case: ResponseCase, *, subscription: bool, result: object, seen: _Seen
 ) -> str | None:
-    want: Outcome | None = expected(case, subscription=subscription)
-    if want is None:
-        return None
+    want = expected(case, subscription=subscription)
     got = _observed(case, result, seen.get(case.id, []))
     return None if got == want else f"{case.id}: expected {want}, got {got}"
 

@@ -50,7 +50,7 @@ def _error_status_errors(
 # here; what to make of `data` is the caller's.
 def response_body(response: httpx2.Response, models: ProtocolModels) -> ResponseBody:
     try:
-        body = models.body.model_validate(response.json())
+        body = models.body.model_validate_json(response.content)
     except pydantic.ValidationError as exc:
         raise GraphQLResponseError([
             {"message": f"Malformed response body: {exc}"}

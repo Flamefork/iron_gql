@@ -1,5 +1,4 @@
 import asyncio
-import json
 from collections.abc import AsyncGenerator
 from collections.abc import Generator
 from contextlib import asynccontextmanager
@@ -28,9 +27,9 @@ _WS_NORMAL_CLOSURE = 1000
 
 # What a received protocol message asks the caller to do. Only "pong" needs IO,
 # which is why the decision is separated from the transport at all: the async
-# and sync receive loops differ in nothing else. Reading the message off the
-# wire stays in each loop — `receive_json` is typed as Any, so validating it
-# there is what keeps that Any from leaking into the shared code.
+# and sync receive loops differ in nothing else. Each loop reads a frame as text
+# and parses it with the message model in one step, so a frame that is not JSON
+# is as malformed as one that is JSON of the wrong shape.
 type MessageAction[T: pydantic.BaseModel] = Emit[T] | Literal["pong", "skip", "stop"]
 
 
@@ -92,10 +91,6 @@ def _disconnect_error(exc: WebSocketDisconnect, prefix: str) -> GraphQLResponseE
     return GraphQLResponseError([{"message": msg}])
 
 
-def _invalid_json_error(exc: json.JSONDecodeError) -> GraphQLResponseError:
-    return GraphQLResponseError([{"message": f"Server sent invalid JSON: {exc}"}])
-
-
 @asynccontextmanager
 async def async_graphql_ws_subscribe[T: pydantic.BaseModel](
     ws: AsyncWebSocketSession,
@@ -115,19 +110,15 @@ async def _async_ws_handshake(
     await ws.send_json({"type": "connection_init"})
     for _ in range(_MAX_PRE_ACK_MESSAGES):
         try:
-            message = models.ws_message.model_validate(
+            message = models.ws_message.model_validate_json(
                 await asyncio.wait_for(
-                    ws.receive_json(), timeout=_WS_CONNECTION_ACK_TIMEOUT_SECONDS
+                    ws.receive_text(), timeout=_WS_CONNECTION_ACK_TIMEOUT_SECONDS
                 )
             )
         except WebSocketDisconnect as exc:
             raise _disconnect_error(
                 exc, "WebSocket disconnected before connection_ack"
             ) from exc
-        except json.JSONDecodeError as exc:
-            raise GraphQLResponseError([
-                {"message": f"Server sent invalid JSON during handshake: {exc}"}
-            ]) from exc
         except TimeoutError as exc:
             timeout = _WS_CONNECTION_ACK_TIMEOUT_SECONDS
             msg = f"Timed out waiting for connection_ack after {timeout} seconds"
@@ -169,13 +160,11 @@ async def _async_ws_receive_messages[T: pydantic.BaseModel](
 ) -> AsyncGenerator[T]:
     while True:
         try:
-            message = models.ws_message.model_validate(await ws.receive_json())
+            message = models.ws_message.model_validate_json(await ws.receive_text())
         except WebSocketDisconnect as exc:
             if exc.code != _WS_NORMAL_CLOSURE:
                 raise _disconnect_error(exc, "WebSocket disconnected") from exc
             return
-        except json.JSONDecodeError as exc:
-            raise _invalid_json_error(exc) from exc
         except pydantic.ValidationError as exc:
             raise GraphQLResponseError([
                 {"message": f"Malformed protocol message: {exc}"}
@@ -208,17 +197,13 @@ def _ws_handshake(ws: WebSocketSession, models: ProtocolModels) -> None:
     ws.send_json({"type": "connection_init"})
     for _ in range(_MAX_PRE_ACK_MESSAGES):
         try:
-            message = models.ws_message.model_validate(
-                ws.receive_json(timeout=_WS_CONNECTION_ACK_TIMEOUT_SECONDS)
+            message = models.ws_message.model_validate_json(
+                ws.receive_text(timeout=_WS_CONNECTION_ACK_TIMEOUT_SECONDS)
             )
         except WebSocketDisconnect as exc:
             raise _disconnect_error(
                 exc, "WebSocket disconnected before connection_ack"
             ) from exc
-        except json.JSONDecodeError as exc:
-            raise GraphQLResponseError([
-                {"message": f"Server sent invalid JSON during handshake: {exc}"}
-            ]) from exc
         except TimeoutError as exc:
             timeout = _WS_CONNECTION_ACK_TIMEOUT_SECONDS
             msg = f"Timed out waiting for connection_ack after {timeout} seconds"
@@ -247,13 +232,11 @@ def _ws_receive_messages[T: pydantic.BaseModel](
 ) -> Generator[T]:
     while True:
         try:
-            message = models.ws_message.model_validate(ws.receive_json())
+            message = models.ws_message.model_validate_json(ws.receive_text())
         except WebSocketDisconnect as exc:
             if exc.code != _WS_NORMAL_CLOSURE:
                 raise _disconnect_error(exc, "WebSocket disconnected") from exc
             return
-        except json.JSONDecodeError as exc:
-            raise _invalid_json_error(exc) from exc
         except pydantic.ValidationError as exc:
             raise GraphQLResponseError([
                 {"message": f"Malformed protocol message: {exc}"}

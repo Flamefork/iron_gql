@@ -909,7 +909,7 @@ async def test_subscribe_disconnect_before_ack_with_reason():
         await client.close()
 
 
-async def test_subscribe_invalid_json_during_messages():
+async def test_subscribe_not_json_during_messages():
     app = _make_ws_raw_app(post_subscribe_texts=("not valid json{{{",))
     client = AsyncGQLClient(
         subscription_protocol="graphql-transport-ws",
@@ -925,13 +925,13 @@ async def test_subscribe_invalid_json_during_messages():
                 async for _ in stream:
                     pass
 
-        with pytest.raises(GraphQLResponseError, match="Server sent invalid JSON"):
+        with pytest.raises(GraphQLResponseError, match="Malformed protocol message:"):
             await consume()
     finally:
         await client.close()
 
 
-async def test_subscribe_invalid_json_during_handshake():
+async def test_subscribe_not_json_during_handshake():
     app = _make_ws_raw_app(pre_ack_texts=("<<<broken>>>",), ack=False)
     client = AsyncGQLClient(
         subscription_protocol="graphql-transport-ws",
@@ -948,7 +948,7 @@ async def test_subscribe_invalid_json_during_handshake():
                     pass
 
         with pytest.raises(
-            GraphQLResponseError, match="Server sent invalid JSON during handshake"
+            GraphQLResponseError, match="Malformed protocol message during handshake"
         ):
             await consume()
     finally:
@@ -1212,9 +1212,9 @@ def test_sync_subscribe_disconnect_before_connection_ack():
     _sync_subscribe_error(app, "disconnected before connection_ack.*unauthorized")
 
 
-def test_sync_subscribe_invalid_json_during_handshake():
+def test_sync_subscribe_not_json_during_handshake():
     app = _make_ws_raw_app(pre_ack_texts=("not valid json{{{",), ack=False)
-    _sync_subscribe_error(app, "Server sent invalid JSON during handshake")
+    _sync_subscribe_error(app, "Malformed protocol message during handshake")
 
 
 def test_sync_subscribe_malformed_message_during_handshake():
@@ -1228,9 +1228,9 @@ def test_sync_subscribe_connection_ack_timeout(monkeypatch: pytest.MonkeyPatch):
     _sync_subscribe_error(app, "Timed out waiting for connection_ack")
 
 
-def test_sync_subscribe_invalid_json_during_messages():
+def test_sync_subscribe_not_json_during_messages():
     app = _make_ws_raw_app(post_subscribe_texts=("not valid json{{{",))
-    _sync_subscribe_error(app, "Server sent invalid JSON")
+    _sync_subscribe_error(app, "Malformed protocol message:")
 
 
 def test_sync_subscribe_malformed_message_during_messages():
