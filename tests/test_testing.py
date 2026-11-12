@@ -879,5 +879,175 @@ async def test_a_ws_fake_names_the_scope_it_was_handed_instead_of_a_websocket():
             await http.get("http://testserver/graphql")
 
 
+async def test_a_ws_fake_subscription_stamps_its_id_over_one_in_the_message():
+    async def app(scope: _Event, receive: _Receive, send: _Send) -> None:
+        connection = await accept_graphql_ws(scope, receive, send)
+        subscription = await connection.ack()
+        await subscription.send_message({"id": "other", "type": "complete"})
+        await connection.drain()
+
+    async with (
+        httpx2.AsyncClient(transport=ASGIWebSocketTransport(app)) as http,
+        AsyncWebSocketClient(http).connect("ws://testserver/graphql") as ws,
+    ):
+        await _acknowledged(ws)
+        await ws.send_text(
+            json.dumps({"id": "op-7", "type": "subscribe", "payload": {}})
+        )
+        assert await _receive(ws) == {"id": "op-7", "type": "complete"}
+
+
+# What the client sends after the handshake does not end `drain`: only its
+# hang-up does, so the fake never closes the connection under a live client.
+async def test_a_ws_fake_drains_until_the_client_hangs_up():
+    received: list[object] = []
+
+    async def app(scope: _Event, receive: _Receive, send: _Send) -> None:
+        async def recording_receive() -> _Event:
+            event = await receive()
+            received.append(event["type"])
+            return event
+
+        connection = await accept_graphql_ws(scope, recording_receive, send)
+        await connection.drain()
+
+    async with (
+        httpx2.AsyncClient(transport=ASGIWebSocketTransport(app)) as http,
+        AsyncWebSocketClient(http).connect("ws://testserver/graphql") as ws,
+    ):
+        await ws.send_text(json.dumps({"type": "connection_init"}))
+        await ws.send_text(json.dumps({"type": "pong"}))
+
+    assert received == [
+        "websocket.connect",
+        "websocket.receive",
+        "websocket.receive",
+        "websocket.disconnect",
+    ]
+
+
+# ASGI makes the scope's `subprotocols` optional; a server that leaves it out
+# offered none, so the fake accepts without one.
+async def test_a_ws_fake_accepts_a_scope_without_subprotocols():
+    incoming: asyncio.Queue[_Event] = asyncio.Queue()
+    incoming.put_nowait({"type": "websocket.connect"})
+    incoming.put_nowait({
+        "type": "websocket.receive",
+        "text": json.dumps({"type": "connection_init"}),
+    })
+    sent: asyncio.Queue[_Event] = asyncio.Queue()
+
+    await accept_graphql_ws({"type": "websocket"}, incoming.get, sent.put)
+
+    assert sent.get_nowait() == {"type": "websocket.accept", "subprotocol": None}
+    assert sent.empty()
+
+
+async def _hang_up(ws: AsyncWebSocketSession) -> None:
+    await ws.close()
+
+
+async def _binary_frame(ws: AsyncWebSocketSession) -> None:
+    await ws.send_bytes(b"{}")
+    await _closed_by_fake(ws)
+
+
+async def _init_without_type(ws: AsyncWebSocketSession) -> None:
+    await ws.send_text(json.dumps({"payload": {}}))
+    await _closed_by_fake(ws)
+
+
+async def _acknowledged(ws: AsyncWebSocketSession) -> None:
+    await ws.send_text(json.dumps({"type": "connection_init"}))
+    assert await _receive(ws) == {"type": "connection_ack"}
+
+
+async def _subscribe_without_id(ws: AsyncWebSocketSession) -> None:
+    await _acknowledged(ws)
+    await ws.send_text(json.dumps({"type": "subscribe", "payload": {}}))
+    await _closed_by_fake(ws)
+
+
+async def _subscribe_without_payload(ws: AsyncWebSocketSession) -> None:
+    await _acknowledged(ws)
+    await ws.send_text(json.dumps({"id": "op-1", "type": "subscribe"}))
+    await _closed_by_fake(ws)
+
+
+async def _closed_by_fake(ws: AsyncWebSocketSession) -> None:
+    with pytest.raises(WebSocketDisconnect):
+        await ws.receive_text()
+
+
+_NO_ID_FAILURE = "subscribe carried no string id: {'type': 'subscribe', 'payload': {}}"
+_NO_PAYLOAD_FAILURE = (
+    "subscribe carried no payload object: {'id': 'op-1', 'type': 'subscribe'}"
+)
+_BINARY_FRAME_FAILURE = (
+    "expected a text frame, got {'type': 'websocket.receive', 'bytes': b'{}'}"
+)
+
+
+# A client that strays from the protocol fails the step it strayed at, and the
+# assertion names what arrived instead -- whatever the client sent, or that it
+# sent nothing. The transport turns an app's exception into a close frame, so
+# the fake's own exception is caught at the app.
+@pytest.mark.parametrize(
+    ("client_steps", "expected_pattern"),
+    [
+        # The close code is the transport's own enum, so only its kind is pinned.
+        (
+            _hang_up,
+            r"expected a text frame, got \{'type': 'websocket\.disconnect', .*\}",
+        ),
+        (
+            _binary_frame,
+            re.escape(_BINARY_FRAME_FAILURE),
+        ),
+        (
+            _init_without_type,
+            re.escape("expected connection_init, got {'payload': {}}"),
+        ),
+        (
+            _subscribe_without_id,
+            re.escape(_NO_ID_FAILURE),
+        ),
+        (
+            _subscribe_without_payload,
+            re.escape(_NO_PAYLOAD_FAILURE),
+        ),
+    ],
+    ids=[
+        "hang-up",
+        "binary-frame",
+        "no-type",
+        "subscribe-without-id",
+        "subscribe-without-payload",
+    ],
+)
+async def test_a_ws_fake_names_what_a_straying_client_sent(
+    client_steps: Callable[[AsyncWebSocketSession], Awaitable[None]],
+    expected_pattern: str,
+):
+    failures: list[AssertionError] = []
+
+    async def app(scope: _Event, receive: _Receive, send: _Send) -> None:
+        try:
+            connection = await accept_graphql_ws(scope, receive, send)
+            await connection.ack()
+        except AssertionError as exc:
+            failures.append(exc)
+            raise
+
+    async with (
+        httpx2.AsyncClient(transport=ASGIWebSocketTransport(app)) as http,
+        AsyncWebSocketClient(http).connect("ws://testserver/graphql") as ws,
+    ):
+        await client_steps(ws)
+
+    [failure] = failures
+    assert re.fullmatch(expected_pattern, str(failure))
+
+
 async def _receive(ws: AsyncWebSocketSession) -> dict[str, object]:
     return _JSON_OBJECT.validate_json(await ws.receive_text())

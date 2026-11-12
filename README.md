@@ -570,7 +570,7 @@ async def events_app(scope: ASGIScope, receive: ASGIReceive, send: ASGISend) -> 
 
 `accept_graphql_ws` accepts the socket, echoes the subprotocol when the client offered it, and consumes `connection_init`. On the connection you then call:
 
-- `ack()` — sends `connection_ack` and waits for the client's `subscribe`. The subscription it returns exposes the received message as `payload` and stamps its `id` on everything it sends.
+- `ack()` — sends `connection_ack` and waits for the client's `subscribe`. The subscription it returns exposes the `payload` of that message, the query and variables the client asked for, as `payload`, and stamps the message's `id` on everything it sends.
 - `send_message(message)` and `expect_pong()` — for `ping` and other connection-level traffic.
 - `close(code, reason)` — closes the socket, for testing how the client reacts.
 - `drain()` — waits for the client to hang up. Return before that and you tear the connection down under it.

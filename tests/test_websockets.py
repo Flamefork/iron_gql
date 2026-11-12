@@ -270,9 +270,7 @@ async def test_subscribe_codegen_asgi():
             results = [(item.events.id, item.events.message) async for item in stream]
         assert results == [("1", "hello"), ("2", "world")]
         assert captured.subscribe is not None
-        payload = captured.subscribe["payload"]
-        assert isinstance(payload, dict)
-        assert payload["variables"] == {"channel": "test"}
+        assert captured.subscribe["variables"] == {"channel": "test"}
 
 
 async def test_subscribe_connection_rejected():
@@ -634,9 +632,7 @@ async def test_subscribe_no_variables_key_when_none():
             async for _ in stream:
                 pass
         assert captured.subscribe is not None
-        payload = captured.subscribe["payload"]
-        assert isinstance(payload, dict)
-        assert "variables" not in payload
+        assert "variables" not in captured.subscribe
     finally:
         await client.close()
 
@@ -1014,7 +1010,7 @@ def test_sync_subscribe_streams_messages():
     assert captured.scope_headers["x-default"] == "on"
     assert captured.scope_headers["x-call"] == "yes"
     assert captured.subscribe is not None
-    assert captured.subscribe["payload"] == {"query": "subscription { counter }"}
+    assert captured.subscribe == {"query": "subscription { counter }"}
 
 
 def test_sync_subscribe_answers_ping():
