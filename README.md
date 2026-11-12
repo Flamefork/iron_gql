@@ -414,6 +414,22 @@ With `"graphql-sse"`, each subscription is one `POST` request with `Accept: text
 
 `subscription_idle_timeout` is the longest wait for the response headers and for the next data on the stream. The default `None` waits without a limit. A server that sends heartbeat comments keeps a healthy stream within the limit: set the timeout above the heartbeat interval of your server.
 
+## Client Lifetime
+
+A generated module creates its client at import and keeps it for the life of the process. Nobody has to close it: the client owns its connections.
+
+- `GQLClient` keeps one connection pool. It closes the pool when the client is garbage-collected or when the interpreter exits.
+- `AsyncGQLClient` opens separate connections in each event loop that it runs in, because an `httpx2` connection belongs to the loop that opened it. The first query or subscription in a loop opens them. They close when the loop shuts down its async generators, as `asyncio.run` and `asyncio.Runner` do on exit. One client therefore serves consecutive `asyncio.run` calls and loops in several threads at once. All loops of a client share its cookies, subscriptions included.
+
+`close()` is final: after it, every query and subscription of the client raises `RuntimeError`, in any loop. Calling it again is safe. `AsyncGQLClient.close()` closes the connections of the running loop before it returns, also when it is called again or concurrently in that loop. The connections of other loops close when those loops end, or when `close()` is called in them.
+
+Leave the `async with` block of a subscription before its loop ends.
+
+Known limits:
+- A loop closed without `shutdown_asyncgens`, such as `loop.close()` after `run_until_complete`, leaves the connections of `AsyncGQLClient` in it to the garbage collector, which emits `ResourceWarning`. The client still works in the next loop.
+- `AsyncGQLClient` keeps the connections of a loop that was stopped but not closed, so such loops add up.
+- After `os.fork()`, the child process inherits the open connections of the parent's clients.
+
 ## Example
 
 The [`example/`](example/) directory reads as chapters. Each one adds what the one before it did not need:
@@ -452,7 +468,7 @@ You supply the fake yourself. The library takes no position on how you answer a 
 
 ### Replace the client
 
-`use_client` binds your client into a generated module. Use it with `async with` for `AsyncGQLClient` and `with` for `GQLClient`. On exit it restores the previous client and closes the client that you passed in. A client that you create without `model_base` takes the module's base, so it parses responses the way the module's own client does; a client created with another base raises `ValueError`:
+`use_client` binds your client into a generated module. Use it with `async with` for `AsyncGQLClient` and `with` for `GQLClient`. On exit it restores the previous client and closes the client that you passed in, so give each `use_client` a client instance of its own. A client that you create without `model_base` takes the module's base, so it parses responses the way the module's own client does; a client created with another base raises `ValueError`, and that client stays yours to close:
 
 ```python
 from iron_gql.runtime import AsyncGQLClient
@@ -469,6 +485,10 @@ async def test_get_user():
         result = await get_user.execute(id="1")
         assert result.user.name == "Alice"
 ```
+
+The swap holds for the whole process: a request made from a worker thread while the swap is active goes through your client too. Swaps of one module nest: an inner `use_client` overrides the outer one until it exits. A swap that exits while a swap of the same module entered after it is still active raises `RuntimeError` in the test that exits it. After that error, `use_client` restores the module's client as far as it can, but makes no guarantees.
+
+Two limits apply. Requests of scenarios that run at the same time are not isolated from each other, since they all share the module's client. Entering and exiting swaps of one module from several threads at the same time is not supported.
 
 ### Serve an app on a loopback port
 

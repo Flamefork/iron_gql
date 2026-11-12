@@ -141,6 +141,7 @@ from tests.generated.model_base import queries
 from tests.generated.model_base import settings
 from tests.generated.model_base.gql import api
 from tests.generated.model_base_sync import queries as sync_queries
+from tests.generated.model_base_sync import settings as sync_settings
 from tests.generated.model_base_sync.gql import api as sync_api
 
 # A key the protocol lets a server add beside the ones the client reads:
@@ -452,18 +453,43 @@ async def test_use_client_takes_a_client_on_the_module_base():
         assert client.model_base is settings.Model
 
 
+class _Answer(pydantic.BaseModel):
+    ok: bool
+
+
+# A refused client was never the module's: it stays open for its caller.
 @pytest.mark.parametrize("base", [pydantic.BaseModel, settings.Model])
 def test_use_client_refuses_a_client_on_another_base(base: type[pydantic.BaseModel]):
-    client = GQLClient(
+    with live_asgi_server(_query_app({"ok": True})) as base_url:
+        client = GQLClient(
+            base_url=base_url, subscription_protocol="graphql-sse", model_base=base
+        )
+        previous = cast("GQLClient", vars(sync_api)["_client"])
+        with pytest.raises(ValueError, match="pass the module's base or none"):  # noqa: SIM117
+            with use_client(sync_api, client):
+                pass
+        assert cast("GQLClient", vars(sync_api)["_client"]) is previous
+        assert client.query(_Answer, "query { ok }", variables={}, headers={}).ok
+
+
+@pytest.mark.parametrize("base", [pydantic.BaseModel, sync_settings.Model])
+async def test_use_client_refuses_an_async_client_on_another_base(
+    base: type[pydantic.BaseModel],
+):
+    client = AsyncGQLClient(
         base_url="http://testserver",
         subscription_protocol="graphql-sse",
+        target_app=_query_app({"ok": True}),
         model_base=base,
     )
-    previous = cast("GQLClient", vars(sync_api)["_client"])
-    with pytest.raises(ValueError, match="pass the module's base or none"):  # noqa: SIM117
-        with use_client(sync_api, client):
+    previous = cast("AsyncGQLClient", vars(api)["_client"])
+    with pytest.raises(ValueError, match="pass the module's base or none"):
+        async with use_client(api, client):
             pass
-    assert cast("GQLClient", vars(sync_api)["_client"]) is previous
+    assert cast("AsyncGQLClient", vars(api)["_client"]) is previous
+    answer = await client.query(_Answer, "query { ok }", variables={}, headers={})
+    assert answer.ok
+    await client.close()
 
 
 # The generated module imports the base's module whole and spells the base by

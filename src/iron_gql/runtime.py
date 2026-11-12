@@ -1,4 +1,7 @@
+import asyncio
 import json
+import threading
+import weakref
 from collections.abc import AsyncGenerator
 from collections.abc import Awaitable
 from collections.abc import Callable
@@ -9,6 +12,7 @@ from contextlib import asynccontextmanager
 from contextlib import contextmanager
 from copy import replace
 from dataclasses import dataclass
+from http.cookiejar import CookieJar
 from types import MappingProxyType
 from typing import IO
 from typing import Any
@@ -97,12 +101,12 @@ class GQLTemplate:
     pass
 
 
-# Generated definition class и typenames, на которых он достижим в slot.
-# Одна entry на каждый fragment, читаемый в одном slot комбинации.
+# A generated definition class and the typenames on which it is reachable in the
+# slot. One entry per fragment read in one slot of a combination.
 type SlotReaderSpec = tuple[FragmentDefinitionType, frozenset[str]]
-# `exec_source` и readable-fragment spec для каждого slot. Template хранит одну
-# такую entry на discovered combination в `_binding_specs`: document text и
-# per-slot reader table.
+# `exec_source` and the readable-fragment spec for each slot. A template keeps
+# one such entry per discovered combination in `_binding_specs`: the document
+# text and the per-slot reader table.
 type BoundSpec = tuple[str, dict[str, tuple[SlotReaderSpec, ...]]]
 
 
@@ -115,10 +119,10 @@ def _applied_value(
 
 
 def _canonical_request_json(value: object) -> str:
-    # Сначала JSON model задаёт тот же public encoder, которым пользуется query
-    # transport. В частности, object key `1` становится `"1"` до сортировки;
-    # отдельная реализация такого преобразования дублировала бы wire contract
-    # httpx2. Request только кодируется и не отправляется.
+    # The JSON model is first produced by the same public encoder the query
+    # transport uses. In particular, object key `1` becomes `"1"` before sorting; a
+    # separate implementation of that conversion would duplicate httpx2's wire
+    # contract. The request is only encoded, not sent.
     encoded = httpx2.Request("POST", "http://request-shape.invalid", json=value).content
     adapter: pydantic.TypeAdapter[_JSONValue] = pydantic.TypeAdapter(_JSONValue)
     normalized = adapter.validate_json(encoded)
@@ -173,10 +177,10 @@ def _same_request(value: object, other: object) -> bool:
 def _merged_fragment_args(
     passed: Mapping[str, tuple[GQLBindableFragment[pydantic.BaseModel, Any], ...]],
 ) -> dict[str, object]:
-    # Генерация доказывает, что разные direct factories владеют непересекающимися
-    # именами variables. Динамическими остаются только повторные applications
-    # одной factory: их конкретные значения появляются лишь при bind(), и до
-    # слияния каждая application должна описывать один и тот же запрос.
+    # Generation proves that different direct factories own disjoint variable
+    # names. Only repeated applications of one factory stay dynamic: their
+    # concrete values appear only at bind(), and before merging each application
+    # must describe the same request.
     applications: dict[
         FragmentDefinitionType,
         list[tuple[str, GQLBindableFragment[pydantic.BaseModel, Any]]],
@@ -262,12 +266,12 @@ class GQLBoundOperation(GQLOperation):
         spec: BoundSpec,
         passed: Mapping[str, tuple[GQLBindableFragment[pydantic.BaseModel, Any], ...]],
     ) -> Self:
-        # Здесь static slot phantom встречается с общим runtime class всех
-        # комбинаций. `render._bind_impl` вызывает метод сразу после lookup
-        # `spec` в template binding specs. Applications дают только fragment variables;
-        # readers создаются из generated definition classes внутри spec.
-        # Поэтому definition и все applications одной factory разделяют
-        # projection identity.
+        # Here the static slot phantom meets the runtime class shared by all
+        # combinations. `render._bind_impl` calls the method right after looking
+        # up `spec` in the template binding specs. Applications supply only
+        # fragment variables; readers are created from the generated definition
+        # classes inside the spec. So the definition and all applications of one
+        # factory share projection identity.
         exec_source, definitions_by_slot = spec
         return cls(
             _exec_source=exec_source,
@@ -401,6 +405,30 @@ def _adopted(
     raise ValueError(msg)
 
 
+# The transport of one event loop and the hook that closes it as the loop ends.
+@dataclass(slots=True)
+class _LoopTransport:
+    http: httpx2.AsyncClient
+    hook: AsyncGenerator[None]
+    closing: asyncio.Task[None] | None = None
+
+    # One closing per transport, which every `close()` in its loop awaits: a
+    # second `aclose()` of a hook still closing would raise instead of waiting.
+    # Only the loop's own thread starts it, so no lock guards it -- nor may
+    # one be held: under an eager task factory the hook runs at once, and it
+    # takes the client's lock.
+    def closing_in(self, loop: asyncio.AbstractEventLoop) -> asyncio.Task[None]:
+        if self.closing is None:
+            self.closing = loop.create_task(self.hook.aclose())
+        return self.closing
+
+
+_CLOSED = (
+    "The client is closed: close() is final, and a closed client sends no "
+    "request and opens no subscription. Create a new client instead"
+)
+
+
 class AsyncGQLClient:
     def __init__(
         self,
@@ -421,12 +449,21 @@ class AsyncGQLClient:
         self._model_base = model_base
         self._target_app = target_app
         self._caller_accept = _caller_accept(headers)
-        transport = httpx2.ASGITransport(app=target_app) if target_app else None
-        self._client = httpx2.AsyncClient(
-            transport=transport,
-            headers=headers or {},
-            timeout=query_timeout,
-        )
+        self._headers = dict(headers or {})
+        self._query_timeout = query_timeout
+        # One jar for every transport: a cookie a response sets in one loop
+        # goes out with the next request whatever loop sends it. httpx2 shares
+        # a `CookieJar` it is given, where it would copy its own `Cookies`.
+        self._cookies = CookieJar()
+        # An httpx2 pool is bound to the loop it opened its connections in, so
+        # each loop the client runs in gets a transport of its own, closed by a
+        # hook when that loop shuts down its async generators.
+        self._transports: dict[asyncio.AbstractEventLoop, _LoopTransport] = {}
+        # Guards the entries and `_closed` across the threads whose loops share
+        # the client. Held for bookkeeping only -- never over I/O or an
+        # `await` -- and not at all by a request whose loop has its transport.
+        self._lock = threading.Lock()
+        self._closed = False
 
     # The base the client parses the protocol on; `pydantic.BaseModel` when
     # none was given.
@@ -441,6 +478,63 @@ class AsyncGQLClient:
     def _models(self) -> ProtocolModels:
         return protocol_models(self.model_base)
 
+    # The transport of the running loop, opened on the loop's first operation.
+    # An operation takes it once and keeps it to its end.
+    async def _transport(self) -> httpx2.AsyncClient:
+        loop = asyncio.get_running_loop()
+        entry = self._transports.get(loop)
+        if entry is not None:
+            if self._closed:
+                raise RuntimeError(_CLOSED)
+            return entry.http
+        with self._lock:
+            if self._closed:
+                raise RuntimeError(_CLOSED)
+            self._drop_closed_loops()
+            http = httpx2.AsyncClient(
+                transport=(
+                    httpx2.ASGITransport(app=self._target_app)
+                    if self._target_app
+                    else None
+                ),
+                headers=self._headers,
+                cookies=self._cookies,
+                timeout=self._query_timeout,
+            )
+            hook = self._closed_with(loop, http)
+            self._transports[loop] = _LoopTransport(http, hook)
+        # The first step registers the hook with the running loop, whose
+        # `shutdown_asyncgens` -- `asyncio.run`, `asyncio.Runner` -- then
+        # closes it. The entry keeps it alive until then: a hook the collector
+        # took would close the transport under a live loop.
+        await anext(hook)
+        return http
+
+    # `shutdown_asyncgens` closes the async generators of a loop all at once,
+    # in no set order. An operation that the cleanup of another generator
+    # starts meanwhile may find this transport closing, or, once it is gone,
+    # open a transport whose hook the shutdown no longer reaches -- that one is
+    # left to the collector, as under a loop closed by hand. Accepted: the
+    # alternative, waiting for operations in flight, still misses the late ones.
+    async def _closed_with(
+        self, loop: asyncio.AbstractEventLoop, http: httpx2.AsyncClient
+    ) -> AsyncGenerator[None]:
+        try:
+            yield
+        finally:
+            try:
+                await http.aclose()
+            finally:
+                with self._lock:
+                    del self._transports[loop]
+
+    # A loop closed without `shutdown_asyncgens` never runs its hook, and its
+    # transport cannot be closed from another loop: the entry goes, the
+    # transport to the collector.
+    def _drop_closed_loops(self) -> None:
+        for loop in [loop for loop in self._transports if loop.is_closed()]:
+            del self._transports[loop]
+
     async def query[T: pydantic.BaseModel](
         self,
         result_type: type[T],
@@ -452,13 +546,14 @@ class AsyncGQLClient:
     ) -> T:
         payload, files = _build_payload(query, variables)
         headers = _with_accept(self._caller_accept, _QUERY_ACCEPT, headers)
+        transport = await self._transport()
         if files:
             body, file_streams = _multipart_body(payload, files)
-            response = await self._client.post(
+            response = await transport.post(
                 self._endpoint_url, data=body, files=file_streams, headers=headers
             )
         else:
-            response = await self._client.post(
+            response = await transport.post(
                 self._endpoint_url, json=payload, headers=headers
             )
         return _parse_query_response(response, result_type, slot_readers, self._models)
@@ -476,10 +571,11 @@ class AsyncGQLClient:
         payload = _subscription_payload(query, variables)
         match self._subscription_protocol:
             case "graphql-sse":
+                transport = await self._transport()
                 if self._target_app is not None:
                     raise ValueError(_SSE_NEEDS_A_SOCKET)
                 async with async_graphql_sse_subscribe(
-                    self._client,
+                    transport,
                     self._endpoint_url,
                     payload,
                     headers=_with_accept(self._caller_accept, None, headers),
@@ -503,19 +599,20 @@ class AsyncGQLClient:
         headers: dict[str, str],
         slot_readers: SlotReaders | None,
     ) -> AsyncGenerator[AsyncGenerator[T]]:
-        transport = (
-            ASGIWebSocketTransport(self._target_app) if self._target_app else None
-        )
+        # A websocket needs a transport of its own under `target_app`, so the
+        # session gets a client of its own built from the loop's transport.
+        transport = await self._transport()
         url = str(ws_url(self._endpoint_url))
         try:
             async with (
                 httpx2.AsyncClient(
-                    transport=transport,
-                    headers={
-                        **httpx2.Headers(self._client.headers),
-                        **headers,
-                    },
-                    cookies=httpx2.Cookies(self._client.cookies),
+                    transport=(
+                        ASGIWebSocketTransport(self._target_app)
+                        if self._target_app
+                        else None
+                    ),
+                    headers={**httpx2.Headers(transport.headers), **headers},
+                    cookies=self._cookies,
                 ) as client,
                 AsyncWebSocketClient(client).connect(
                     url, subprotocols=["graphql-transport-ws"]
@@ -533,8 +630,18 @@ class AsyncGQLClient:
                 raise unwrapped from None
             raise
 
+    # Final in every loop. The transport of the running loop is closed before
+    # `close()` returns; those of other live loops close as their loops end,
+    # or on a `close()` called from them.
     async def close(self) -> None:
-        await self._client.aclose()
+        loop = asyncio.get_running_loop()
+        with self._lock:
+            self._closed = True
+            self._drop_closed_loops()
+            entry = self._transports.get(loop)
+        if entry is not None:
+            # A cancelled caller leaves the closing to the others waiting on it.
+            await asyncio.shield(entry.closing_in(loop))
 
 
 class GQLClient:
@@ -555,7 +662,13 @@ class GQLClient:
         )
         self._model_base = model_base
         self._caller_accept = _caller_accept(headers)
-        self._client = httpx2.Client(headers=headers or {}, timeout=query_timeout)
+        http = httpx2.Client(headers=headers or {}, timeout=query_timeout)
+        self._http = http
+        # Closes the pool when the client is collected or the interpreter
+        # exits: a generated module's client has no owner to call `close()`.
+        # The finalizer holds the pool's `close`, not the client -- holding the
+        # client would keep it alive and the finalizer would never fire.
+        self._finalizer = weakref.finalize(self, http.close)
 
     # The base the client parses the protocol on; `pydantic.BaseModel` when
     # none was given.
@@ -583,11 +696,11 @@ class GQLClient:
         headers = _with_accept(self._caller_accept, _QUERY_ACCEPT, headers)
         if files:
             body, file_streams = _multipart_body(payload, files)
-            response = self._client.post(
+            response = self._open_http().post(
                 self._endpoint_url, data=body, files=file_streams, headers=headers
             )
         else:
-            response = self._client.post(
+            response = self._open_http().post(
                 self._endpoint_url, json=payload, headers=headers
             )
         return _parse_query_response(response, result_type, slot_readers, self._models)
@@ -606,7 +719,7 @@ class GQLClient:
         match self._subscription_protocol:
             case "graphql-sse":
                 with graphql_sse_subscribe(
-                    self._client,
+                    self._open_http(),
                     self._endpoint_url,
                     payload,
                     headers=_with_accept(self._caller_accept, None, headers),
@@ -623,7 +736,7 @@ class GQLClient:
                 # rebuild them because its websocket transport differs from
                 # its HTTP one.
                 with (
-                    WebSocketClient(self._client).connect(
+                    WebSocketClient(self._open_http()).connect(
                         url, subprotocols=["graphql-transport-ws"], headers=headers
                     ) as ws,
                     graphql_ws_subscribe(
@@ -632,8 +745,14 @@ class GQLClient:
                 ):
                     yield stream
 
+    def _open_http(self) -> httpx2.Client:
+        if not self._finalizer.alive:
+            raise RuntimeError(_CLOSED)
+        return self._http
+
+    # Final and idempotent: the finalizer runs once, whoever runs it first.
     def close(self) -> None:
-        self._client.close()
+        self._finalizer()
 
 
 # typeshed quirk: `BaseExceptionGroup.exceptions` is declared via a Self-bound
