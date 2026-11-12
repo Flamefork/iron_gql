@@ -144,6 +144,10 @@ timeout_method = "thread"
 # and `example/` is in `testpaths`: without them the copy fails its first test
 # run, or silently kills mutants with a smaller suite than `pytest` runs.
 also_copy = ["README.md", "example/"]
+# The coverage exemption of `exclude_also` below, applied to mutation: a
+# `raise AssertionError` marks an invariant unreachable by construction, so no
+# test can reach its mutants. One mechanism for the whole project, per ADR 0007.
+do_not_mutate_patterns = ["raise AssertionError"]
 
 [tool.coverage.run]
 branch = true

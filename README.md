@@ -506,7 +506,7 @@ async def test_get_user():
         assert result.user.name == "Alice"
 ```
 
-The swap holds for the whole process: a request made from a worker thread while the swap is active goes through your client too. Swaps of one module nest: an inner `use_client` overrides the outer one until it exits. A swap that exits while a swap of the same module entered after it is still active raises `RuntimeError` in the test that exits it. After that error, `use_client` restores the module's client as far as it can, but makes no guarantees.
+The swap holds for the whole process: a request made from a worker thread while the swap is active goes through your client too. Swaps of one module nest: an inner `use_client` overrides the outer one until it exits. A swap that exits while a swap of the same module entered after it is still active raises `RuntimeError` in the test that exits it. After that error, `use_client` restores the module's client as far as it can, but makes no guarantees. A module that binds no `GQLClient` or `AsyncGQLClient` as `_client`, as every generated module does, raises `TypeError`.
 
 Two limits apply. Requests of scenarios that run at the same time are not isolated from each other, since they all share the module's client. Entering and exiting swaps of one module from several threads at the same time is not supported.
 

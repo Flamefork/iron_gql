@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import socket
 import threading
 import time
@@ -39,7 +40,10 @@ def _wait_for_start(server: uvicorn.Server, failure: list[BaseException]) -> Non
     while not server.started:
         if failure:
             raise failure[0]
-        if time.monotonic() > deadline:
+        # `>=` differs from `>` only on a reading that lands on the deadline
+        # exactly, and then gives up one poll sooner: an equivalent mutant
+        # no simplification removes.
+        if time.monotonic() > deadline:  # pragma: no mutate
             raise AssertionError(_STARTUP_INVARIANT)
         time.sleep(0.01)
 
@@ -51,7 +55,10 @@ async def _async_wait_for_start(
     while not server.started:
         if serving.done():
             serving.result()
-        if time.monotonic() > deadline:
+        # `>=` differs from `>` only on a reading that lands on the deadline
+        # exactly, and then gives up one poll sooner: an equivalent mutant
+        # no simplification removes.
+        if time.monotonic() > deadline:  # pragma: no mutate
             raise AssertionError(_STARTUP_INVARIANT)
         await asyncio.sleep(0.01)
 
@@ -59,12 +66,13 @@ async def _async_wait_for_start(
 def _config(app: ASGIApp) -> uvicorn.Config:
     return uvicorn.Config(
         app,
-        log_level="warning",
+        log_level=logging.WARNING,
         # Fakes do not speak the lifespan protocol, and an app served in the
         # test's own loop has its lifespan run by the test.
         lifespan="off",
-        # wsproto ships transitively with iron_gql (httpx2[ws]); "auto"
-        # would silently serve without websockets if it found nothing.
+        # wsproto ships with iron_gql (httpx2[ws]). "auto" would pick the
+        # `websockets` package wherever a consumer has it installed, so the
+        # server a fake runs behind would depend on the consumer's environment.
         ws="wsproto",
         # An unclosed connection must not hold up teardown.
         timeout_graceful_shutdown=1,
@@ -82,7 +90,9 @@ def _config(app: ASGIApp) -> uvicorn.Config:
 # inherited by every connection it accepts, on Linux and macOS alike.
 def _loopback_listener() -> tuple[socket.socket, int]:
     listener = socket.socket()
-    listener.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+    # Any nonzero value turns the option on, so `2` reads the same as `1`: an
+    # equivalent mutant no simplification removes.
+    listener.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)  # pragma: no mutate
     listener.bind(("127.0.0.1", 0))
     _host, port = _SOCKET_ADDRESS.validate_python(listener.getsockname())
     return listener, port

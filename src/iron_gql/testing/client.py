@@ -7,7 +7,6 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from dataclasses import field
 from types import ModuleType
-from typing import cast
 from typing import overload
 
 from iron_gql.runtime import AsyncGQLClient
@@ -35,11 +34,11 @@ _swaps: dict[ModuleType, _ModuleSwaps] = {}
 
 
 def _enter(api_module: ModuleType, client: _Client) -> _Swap:
-    namespace = cast("dict[str, object]", vars(api_module))
+    namespace: dict[str, object] = vars(api_module)
     swaps = _swaps.get(api_module)
     if swaps is None:
         # The module's first swap: what it binds now is its own client.
-        swaps = _ModuleSwaps(cast("_Client", namespace["_client"]))
+        swaps = _ModuleSwaps(_own_client(api_module, namespace))
     # Before anything is recorded: a refused client stays its caller's.
     client.adopt_model_base(swaps.original.model_base)
     swap = _Swap(client)
@@ -49,10 +48,26 @@ def _enter(api_module: ModuleType, client: _Client) -> _Swap:
     return swap
 
 
+# A module that binds no client as `_client` -- as every generated module
+# does -- has nothing to swap or restore.
+def _own_client(api_module: ModuleType, namespace: dict[str, object]) -> _Client:
+    match namespace.get("_client"):
+        case GQLClient() | AsyncGQLClient() as own:
+            return own
+        case _:
+            msg = (
+                f"use_client takes a generated module, and {api_module.__name__} "
+                "binds no GQLClient or AsyncGQLClient as `_client`. Pass the "
+                "module the generator wrote, the one the swapped operations "
+                "are declared in"
+            )
+            raise TypeError(msg)
+
+
 # Removes `swap` wherever it stands and binds the latest swap left, or the
 # original client once none is. Returns whether `swap` was the latest one.
 def _leave(api_module: ModuleType, swap: _Swap) -> bool:
-    namespace = cast("dict[str, object]", vars(api_module))
+    namespace: dict[str, object] = vars(api_module)
     swaps = _swaps[api_module]
     latest = swaps.active[-1] is swap
     swaps.active.remove(swap)
@@ -85,7 +100,8 @@ def _out_of_order(api_module: ModuleType) -> RuntimeError:
 # and exiting swaps of one module from several threads at once is not
 # supported: there is no lock. A client built without a model base parses on
 # the module's; one built with another is refused and stays the caller's to
-# close. The binding moves before the client closes, and, in the async manager,
+# close. A module that binds no client as `_client` is refused with `TypeError`.
+# The binding moves before the client closes, and, in the async manager,
 # before the first `await`.
 @contextmanager
 def _sync_client_context(

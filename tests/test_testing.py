@@ -7,6 +7,8 @@ import re
 import socket
 import stat
 import sys
+import threading
+import time
 from collections.abc import AsyncGenerator
 from collections.abc import Awaitable
 from collections.abc import Callable
@@ -27,11 +29,18 @@ import httpx2
 import pydantic
 import pytest
 from graphql import GraphQLResolveInfo
+from httpx2.websockets import ASGIWebSocketTransport
+from httpx2.websockets import AsyncWebSocketClient
+from httpx2.websockets import AsyncWebSocketSession
+from httpx2.websockets import WebSocketClient
+from httpx2.websockets import WebSocketDisconnect
 from pytest_httpserver import HTTPServer
 
 from iron_gql.runtime import ASGIApp
 from iron_gql.runtime import AsyncGQLClient
 from iron_gql.runtime import GQLClient
+from iron_gql.testing import SUBPROTOCOL
+from iron_gql.testing import accept_graphql_ws
 from iron_gql.testing import use_client
 from iron_gql.testing.server import async_live_asgi_server
 from iron_gql.testing.server import live_asgi_server
@@ -364,7 +373,14 @@ def swaps(request: pytest.FixtureRequest) -> Iterator[_Swaps]:
 
 
 def _out_of_order(swaps: _Swaps) -> str:
-    return rf"use_client of {re.escape(swaps.module.__name__)} exited while .* Nest"
+    message = (
+        f"use_client of {swaps.module.__name__} exited while a use_client of "
+        "the same module entered after it is still active. Nest the swaps of "
+        "one module, and do not swap one module from tests that run at the "
+        "same time in one process. The module's client was restored as far "
+        "as possible, but from now on there are no guarantees"
+    )
+    return f"^{re.escape(message)}$"
 
 
 async def test_nested_swaps_bind_the_inner_then_the_outer_then_the_original(
@@ -508,6 +524,38 @@ async def test_a_refused_inner_swap_leaves_the_outer_one_active(swaps: _Swaps):
     await swaps.assert_released()
 
 
+def _bare_module() -> ModuleType:
+    return ModuleType("plain_app.settings")
+
+
+def _module_with_foreign_client() -> ModuleType:
+    module = ModuleType("plain_app.settings")
+    module.__dict__["_client"] = httpx2.Client()
+    return module
+
+
+@pytest.mark.parametrize(
+    "module", [_bare_module, _module_with_foreign_client], ids=["bare", "foreign"]
+)
+def test_use_client_refuses_a_module_the_generator_did_not_write(
+    module: Callable[[], ModuleType],
+):
+    client = GQLClient(
+        base_url="http://testserver/graphql", subscription_protocol="graphql-sse"
+    )
+    expected = (
+        "use_client takes a generated module, and plain_app.settings binds no "
+        "GQLClient or AsyncGQLClient as `_client`. Pass the module the "
+        "generator wrote, the one the swapped operations are declared in"
+    )
+
+    with (
+        pytest.raises(TypeError, match=f"^{re.escape(expected)}$"),
+        use_client(module(), client),
+    ):
+        pass
+
+
 def test_a_sync_swap_holds_in_worker_threads():
     module = importlib.import_module("tests.generated.testing_sync_swap.gql.api")
     with live_asgi_server(_named_app("swap")) as base_url:
@@ -545,8 +593,10 @@ def test_live_asgi_server_serves_the_given_path_and_frees_the_port():
 
 
 def test_live_asgi_server_reraises_a_failed_startup():
+    entered = False
     with pytest.raises(ValueError, match="broken app"), live_asgi_server(_broken_app):
-        pass
+        entered = True
+    assert not entered
 
 
 async def test_async_live_asgi_server_serves_in_the_calling_loop():
@@ -574,9 +624,88 @@ async def test_async_live_asgi_server_serves_in_the_calling_loop():
 
 
 async def test_async_live_asgi_server_reraises_a_failed_startup():
+    entered = False
     with pytest.raises(ValueError, match="broken app"):
         async with async_live_asgi_server(_broken_app):
-            pass
+            entered = True
+    assert not entered
+
+
+# Startup is polled; a start the helper notices late costs every test that
+# serves a fake. The first start in a process imports the protocol modules, so
+# the one timed is the second.
+def test_live_asgi_server_notices_a_warm_start_at_once():
+    with live_asgi_server(_ok_app):
+        pass
+    started = time.monotonic()
+    with live_asgi_server(_ok_app):
+        elapsed = time.monotonic() - started
+    assert elapsed < 0.5
+
+
+async def test_async_live_asgi_server_notices_a_warm_start_at_once():
+    async with async_live_asgi_server(_ok_app):
+        pass
+    started = time.monotonic()
+    async with async_live_asgi_server(_ok_app):
+        elapsed = time.monotonic() - started
+    assert elapsed < 0.5
+
+
+def test_live_asgi_server_serves_without_printing(capfd: pytest.CaptureFixture[str]):
+    with live_asgi_server(_ok_app) as base_url:
+        response = httpx2.post(base_url, json={"query": "query Ping { ping }"})
+        assert response.json() == {"data": {"ping": "pong"}}
+
+    assert capfd.readouterr() == ("", "")
+
+
+# A request the app never answers holds its connection open; teardown cancels
+# it after a second instead of waiting for it.
+def test_live_asgi_server_tears_down_past_a_hanging_request():
+    reached = threading.Event()
+
+    async def app(scope: _Event, receive: _Receive, _send: _Send) -> None:
+        assert scope["type"] == "http"
+        await receive()
+        reached.set()
+        await asyncio.Event().wait()
+
+    with (
+        live_asgi_server(app) as base_url,
+        socket.create_connection(_server_address(base_url)) as client,
+    ):
+        client.sendall(_REQUEST)
+        assert reached.wait(timeout=5)
+        stopping = time.monotonic()
+    assert time.monotonic() - stopping < 1.8
+
+
+# The server speaks websockets through wsproto even where a consumer has the
+# `websockets` package installed: a stand-in for that package breaks any server
+# that would pick it.
+def test_live_asgi_server_serves_websockets_through_wsproto(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setitem(sys.modules, "websockets", ModuleType("websockets"))
+    monkeypatch.delitem(sys.modules, "uvicorn.protocols.websockets.auto", raising=False)
+
+    async def app(scope: _Event, receive: _Receive, send: _Send) -> None:
+        connection = await accept_graphql_ws(scope, receive, send)
+        await connection.send_message({"type": "connection_ack"})
+        await connection.drain()
+
+    with (
+        live_asgi_server(app) as base_url,
+        httpx2.Client() as http,
+        WebSocketClient(http).connect(
+            base_url.replace("http://", "ws://"), subprotocols=[SUBPROTOCOL]
+        ) as ws,
+    ):
+        ws.send_text(json.dumps({"type": "connection_init"}))
+        assert _JSON_OBJECT.validate_json(ws.receive_text()) == {
+            "type": "connection_ack"
+        }
 
 
 _REQUEST = b"GET /graphql HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n"
@@ -678,3 +807,77 @@ def test_client_helpers_import_without_the_extra(monkeypatch: pytest.MonkeyPatch
     module = importlib.import_module("iron_gql.testing")
 
     assert "use_client" in dir(module)
+
+
+_JSON_OBJECT = pydantic.TypeAdapter(dict[str, object])
+
+
+# A plain websocket client reads what the fake puts on the wire: the frames a
+# subscription sends carry the id the client chose, and a close carries the
+# code and reason given.
+async def test_a_ws_fake_sends_frames_under_the_client_id():
+    async def app(scope: _Event, receive: _Receive, send: _Send) -> None:
+        connection = await accept_graphql_ws(scope, receive, send)
+        subscription = await connection.ack()
+        await subscription.next({"ping": "pong"})
+        await subscription.error([{"message": "boom"}])
+        await subscription.complete()
+        await connection.close(4400)
+
+    async with (
+        httpx2.AsyncClient(transport=ASGIWebSocketTransport(app)) as http,
+        AsyncWebSocketClient(http).connect(
+            "ws://testserver/graphql", subprotocols=[SUBPROTOCOL]
+        ) as ws,
+    ):
+        assert ws.subprotocol == SUBPROTOCOL
+        await ws.send_text(json.dumps({"type": "connection_init"}))
+        assert await _receive(ws) == {"type": "connection_ack"}
+        await ws.send_text(
+            json.dumps({
+                "id": "op-7",
+                "type": "subscribe",
+                "payload": {"query": "subscription { ping }"},
+            })
+        )
+        assert await _receive(ws) == {
+            "id": "op-7",
+            "type": "next",
+            "payload": {"data": {"ping": "pong"}},
+        }
+        assert await _receive(ws) == {
+            "id": "op-7",
+            "type": "error",
+            "payload": [{"message": "boom"}],
+        }
+        assert await _receive(ws) == {"id": "op-7", "type": "complete"}
+        with pytest.raises(WebSocketDisconnect) as closed:
+            await ws.receive_text()
+        assert (closed.value.code, closed.value.reason) == (4400, "")
+
+
+async def test_a_ws_fake_hands_no_subprotocol_to_a_client_that_did_not_ask():
+    async def app(scope: _Event, receive: _Receive, send: _Send) -> None:
+        connection = await accept_graphql_ws(scope, receive, send)
+        await connection.drain()
+
+    async with (
+        httpx2.AsyncClient(transport=ASGIWebSocketTransport(app)) as http,
+        AsyncWebSocketClient(http).connect("ws://testserver/graphql") as ws,
+    ):
+        assert ws.subprotocol is None
+        await ws.send_text(json.dumps({"type": "connection_init"}))
+
+
+async def test_a_ws_fake_names_the_scope_it_was_handed_instead_of_a_websocket():
+    async def app(scope: _Event, receive: _Receive, send: _Send) -> None:
+        await accept_graphql_ws(scope, receive, send)
+
+    expected = "expected a websocket scope, got 'http'"
+    async with httpx2.AsyncClient(transport=httpx2.ASGITransport(app=app)) as http:
+        with pytest.raises(AssertionError, match=f"^{re.escape(expected)}$"):
+            await http.get("http://testserver/graphql")
+
+
+async def _receive(ws: AsyncWebSocketSession) -> dict[str, object]:
+    return _JSON_OBJECT.validate_json(await ws.receive_text())
