@@ -501,7 +501,12 @@ def test_bind_template_ref_to_a_fragment_is_rejected(tmp_path: Path):
         schema_path, [fragment_only_stmt], [bind], bind_keyword_checks=()
     )
 
-    assert any("is not an operation" in error for error in parse_res.errors)
+    assert parse_res.errors == [
+        (
+            "Bind at <test:bad>:1: template at <test:fragment_only>:1 is not an "
+            "operation; call bind on an operation statement with a @slot field"
+        ),
+    ]
 
 
 def test_bind_template_ref_to_an_invalid_operation_is_diagnosed_accurately(
@@ -605,9 +610,13 @@ def test_bind_slot_arg_not_a_single_fragment_statement_is_rejected(tmp_path: Pat
         bind_keyword_checks=(),
     )
 
-    assert any(
-        "is not a single-fragment statement" in error for error in parse_res.errors
-    )
+    assert parse_res.errors == [
+        (
+            "Bind at <test:bad>:1: value for slot 'attachment' at <test:plain>:1 is "
+            "not a single-fragment statement; pass a statement that holds exactly "
+            "one fragment definition"
+        ),
+    ]
 
 
 def test_a_fragment_in_two_slots_gives_two_combination_keys(tmp_path: Path):

@@ -1,5 +1,6 @@
 import importlib
 import json
+import keyword
 import os
 from typing import cast
 
@@ -23,6 +24,8 @@ from tests.corpus.generated_oracles import assert_each_module_imported_once
 from tests.corpus.generated_oracles import assert_module_is_self_contained
 from tests.corpus.module_imports import IMPORT_FORMS
 from tests.corpus.module_imports import ImportForm
+from tests.corpus.unusable_names import UNUSABLE_NAMES
+from tests.corpus.unusable_names import UnusableName
 
 generated_package(
     "generation_nested_inputs",
@@ -1048,6 +1051,29 @@ def test_variable_mapping_to_python_keyword_is_rejected(test_project: ProjectBui
     ]
 
 
+# The interpreter is the oracle for "not usable": every case's name either is
+# no identifier at all or is a keyword.
+@pytest.mark.parametrize(
+    "case", UNUSABLE_NAMES, ids=[case.id for case in UNUSABLE_NAMES]
+)
+def test_module_name_that_is_not_an_identifier_is_rejected(
+    test_project: ProjectBuilder, case: UnusableName
+):
+    assert not case.name.isidentifier() or keyword.iskeyword(case.name)
+    queries = (
+        f"from sample_app.gql.api import api_gql\n\nq = api_gql({case.statement!r})\n"
+    )
+    test_project.prepare(schema=case.schema, queries=queries)
+    with pytest.raises(GraphQLGenerationError) as exc:
+        test_project.render(**case.options)
+    assert exc.value.errors == [
+        (
+            f"Name '{case.name}' ({case.origin}) is not a usable Python identifier; "
+            "rename the GraphQL type, or change the generator option, it comes from"
+        )
+    ]
+
+
 def test_field_aliased_to_python_keyword_is_rejected(test_project: ProjectBuilder):
     test_project.prepare(
         schema="""
@@ -1201,7 +1227,11 @@ def test_unparseable_file_stops_generation_before_the_package_is_rewritten(
     with pytest.raises(SyntaxError) as oracle:
         _ = compile(broken.read_text(encoding="utf-8"), str(broken), "exec")
     assert exc.value.errors == [
-        f"Failed to parse {broken}: {oracle.value.msg} (line {oracle.value.lineno})"
+        (
+            f"Failed to parse {broken}: {oracle.value.msg} "
+            f"(line {oracle.value.lineno}); fix the syntax error -- the file "
+            "mentions 'api_gql' or 'bind', so the generator has to read it"
+        )
     ]
     assert isinstance(exc.value.__cause__, SyntaxError)
     assert (test_project.root / "sample_app/gql/api.py").read_text() == before

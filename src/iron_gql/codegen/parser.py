@@ -657,7 +657,8 @@ def validate_bind_templates(
         if bind.template not in operation_stmts:
             message = (
                 f"Bind at {bind.location}: template at {bind.template.location} "
-                "is not an operation"
+                "is not an operation; call bind on an operation statement with "
+                "a @slot field"
             )
             errors.append(message)
         elif bind.template in template_stmts:
@@ -695,7 +696,8 @@ def validate_bind_slot_args(
                     continue
                 message = (
                     f"Bind at {bind.location}: value for slot '{key}' at "
-                    f"{stmt.location} is not a single-fragment statement"
+                    f"{stmt.location} is not a single-fragment statement; pass a "
+                    "statement that holds exactly one fragment definition"
                 )
                 errors.append(message)
     return errors

@@ -105,6 +105,11 @@ class _NotOurs:
     # argument that lands here is a hard error, because the base already
     # proved that call ours. `reason` is written for the developer either way.
     reason: str
+    # What to change so the name resolves, appended to `reason` only where it
+    # becomes that hard error. A third-party `.bind()` left alone needs no fix,
+    # so `IgnoredBind` carries the reason alone. Written for a slot value, the
+    # one name whose failure to resolve is raised as it stands.
+    hint: str
     # Whether a binding inside the scanned tree gives the name its value where
     # the call site stands. A bound name is *answered*: the call site reads a
     # parameter, a plain object, a module, whatever that binding holds, and a
@@ -397,9 +402,32 @@ def _dotted(package: str, name: str) -> str:
     return f"{package}.{name}"
 
 
-def _unresolved_reason(name: str, location: str, mod: "_Module") -> str:
-    hint = "; star imports are not followed" if mod.star_imports else ""
-    return f"cannot resolve '{name}' at {location}{hint}"
+def _unbound(
+    reported: str, location: str, *, module: str, name: str, mod: "_Module"
+) -> "_NotOurs":
+    # Nothing in `module` binds `name`. The reason quotes the name as the call
+    # site spells it; the hint names the module and the name the lookup failed
+    # in, which an import chain makes a different pair.
+    if mod.star_imports:
+        return _NotOurs(
+            reason=(
+                f"cannot resolve '{reported}' at {location}; star imports are not "
+                "followed"
+            ),
+            hint=(
+                f"import '{name}' into module '{module}' by name instead of through `*`"
+            ),
+            bound=False,
+        )
+    return _NotOurs(
+        reason=f"cannot resolve '{reported}' at {location}",
+        hint=(
+            f"bind '{name}' in module '{module}' to the fragment statement: assign "
+            "it there, or import it by name (`from module import name`) from the "
+            "module that assigns it"
+        ),
+        bound=False,
+    )
 
 
 # The (module, name) pairs one resolution has already been through. Threaded
@@ -521,6 +549,10 @@ class _ModuleGraph:
                         f"cannot resolve '{name}' at {location}: an enclosing "
                         "function or class body binds that name to something "
                         "other than a single gql statement"
+                    ),
+                    hint=(
+                        "rename that binding, or pass the fragment under a "
+                        "name it does not shadow"
                     ),
                     bound=True,
                 )
@@ -671,6 +703,13 @@ class _ModuleGraph:
                         f"circular import chain while resolving "
                         f"'{reported}' at {location}"
                     ),
+                    # The ring holds no assignment, so the name the statement
+                    # is assigned under is unknown here: the hint names only
+                    # the one the call reads.
+                    hint=(
+                        f"bind '{reported}' by importing the fragment statement "
+                        "from the module that assigns it"
+                    ),
                     bound=True,
                 )
             seen.add((current_module, current_name))
@@ -680,7 +719,8 @@ class _ModuleGraph:
                 if failure is not None:
                     msg = (
                         f"cannot resolve '{reported}' at {location}: it leads "
-                        f"through a module that failed to parse. {failure.message}"
+                        f"through a module that failed to parse. {failure.message}; "
+                        "fix the syntax error in that module"
                     )
                     raise GraphQLGenerationError([msg]) from failure.error
                 return _NotOurs(
@@ -688,11 +728,16 @@ class _ModuleGraph:
                         f"cannot resolve '{reported}' at {location}: "
                         f"module '{current_module}' is outside the scanned tree"
                     ),
+                    hint=(
+                        "define the fragment inside the scanned tree, or import "
+                        "it from a module there"
+                    ),
                     # The chain leaves the tree, so nothing the scan read gives
                     # this name its value.
                     bound=False,
                 )
             occurrences = _module_bindings(
+                current_module,
                 mod,
                 current_name,
                 current_lineno,
@@ -717,7 +762,13 @@ class _ModuleGraph:
                     # so following it here would answer with a value the name
                     # may well not hold.
                     return _NotOurs(
-                        reason=_unresolved_reason(reported, location, mod), bound=True
+                        reason=(
+                            f"cannot resolve '{reported}' at {location}: module "
+                            f"'{current_module}' binds '{current_name}' to "
+                            "something other than a single gql statement"
+                        ),
+                        hint="pass a name bound to the fragment statement",
+                        bound=True,
                     )
 
     def resolve_attribute(
@@ -816,6 +867,10 @@ def _rebound_outward(reported: str, location: str) -> _NotOurs:
             "that name through a global or nonlocal declaration, so which "
             "value it holds depends on whether that function has run"
         ),
+        hint=(
+            "drop the assignment through `global`/`nonlocal`, or pass a name "
+            "no function rebinds"
+        ),
         bound=True,
     )
 
@@ -830,11 +885,13 @@ def _bound_below_call(reported: str, location: str) -> _NotOurs:
             "name visible here is written below the call, so the call runs "
             "before the name has a value"
         ),
+        hint="assign the fragment statement to that name above the call",
         bound=True,
     )
 
 
 def _module_bindings(
+    module: str,
     mod: _Module,
     name: str,
     lineno: int | None,
@@ -849,7 +906,7 @@ def _module_bindings(
         return _rebound_outward(reported, location)
     bindings = mod.scope.visible_at(name, lineno)
     if bindings is None:
-        return _NotOurs(reason=_unresolved_reason(reported, location, mod), bound=False)
+        return _unbound(reported, location, module=module, name=name, mod=mod)
     if not bindings:
         return _bound_below_call(reported, location)
     return bindings
@@ -1330,7 +1387,9 @@ def _slot_statement(
             match resolution:
                 case Statement():
                     return resolution
-                case _NotOurs(reason=reason) | _AmbiguousName(reason=reason):
+                case _NotOurs(reason=reason, hint=hint):
+                    raise GraphQLGenerationError([f"{reason}; {hint}"])
+                case _AmbiguousName(reason=reason):
                     raise GraphQLGenerationError([reason])
         case ast.Call(func=ast.Attribute(attr="with_args", value=base)):
             # A factory applied at the bind: `with_args`'s own arguments are
@@ -1494,8 +1553,13 @@ def _validated_bind(
 
 
 def _unreachable_here(
-    graph: _ModuleGraph, candidate: _BindCandidate, name: str, not_ours: _NotOurs
-) -> _NotOurs:
+    graph: _ModuleGraph,
+    candidate: _BindCandidate,
+    name: str,
+    *,
+    reason: str,
+    bound: bool,
+) -> IgnoredBind:
     # The last word on a base that did not resolve. "Did not resolve here" and
     # "is not ours" are different facts, and only the first one is what a failed
     # resolution establishes: a template held in a class body or brought in by a
@@ -1515,16 +1579,16 @@ def _unreachable_here(
     # is the deliberate cost: the statement's own address is in the message, so
     # the mistaken half is visible at a glance and the fix (rename either side)
     # is immediate.
-    if not_ours.bound:
-        return not_ours
+    if bound:
+        return IgnoredBind(location=candidate.location, reason=reason)
     statements = graph.statement_names.get(name)
     if statements is None:
-        return not_ours
+        return IgnoredBind(location=candidate.location, reason=reason)
     addresses = ", ".join(statement.location for statement in statements)
     msg = (
         f"'.bind(...)' at {candidate.location} reads '{name}', which the "
         f"scanned tree assigns a gql statement at {addresses} -- but not where "
-        f"this call stands: {not_ours.reason}. Import that name directly "
+        f"this call stands: {reason}. Import that name directly "
         "(`from module import name`) into the scope the bind is written in, or "
         "rename whichever of the two is not the template."
     )
@@ -1533,7 +1597,7 @@ def _unreachable_here(
 
 def _resolve_base(
     graph: _ModuleGraph, candidate: _BindCandidate
-) -> Statement | _NotOurs:
+) -> Statement | IgnoredBind:
     if isinstance(candidate.base, Statement):
         return candidate.base
     *prefix, base_name = candidate.base
@@ -1558,17 +1622,15 @@ def _resolve_base(
                 graph,
                 candidate,
                 base_name,
-                _NotOurs(
-                    reason=(
-                        f"'.bind(...)' at {candidate.location} hangs off "
-                        f"'{chain}', which names no module of the scanned tree"
-                    ),
-                    # Whatever the chain's head holds, the name behind the last
-                    # dot is not a name of this scope at all -- nothing here
-                    # binds it, so a statement the tree owns under that spelling
-                    # is the one thing the chain could have been reaching for.
-                    bound=False,
+                reason=(
+                    f"'.bind(...)' at {candidate.location} hangs off "
+                    f"'{chain}', which names no module of the scanned tree"
                 ),
+                # Whatever the chain's head holds, the name behind the last
+                # dot is not a name of this scope at all -- nothing here
+                # binds it, so a statement the tree owns under that spelling
+                # is the one thing the chain could have been reaching for.
+                bound=False,
             )
         match graph.resolve_attribute(
             target,
@@ -1588,7 +1650,13 @@ def _resolve_base(
                 )
                 raise GraphQLGenerationError([msg])
             case _NotOurs() as not_ours:
-                return _unreachable_here(graph, candidate, base_name, not_ours)
+                return _unreachable_here(
+                    graph,
+                    candidate,
+                    base_name,
+                    reason=not_ours.reason,
+                    bound=not_ours.bound,
+                )
     resolution = graph.resolve(
         candidate.module,
         base_name,
@@ -1610,7 +1678,13 @@ def _resolve_base(
             # travels with it into `DiscoveredModule.ignored` rather than being
             # dropped, so a test -- and a debug run -- can tell this outcome
             # from a bind that was ours and got lost.
-            return _unreachable_here(graph, candidate, base_name, not_ours)
+            return _unreachable_here(
+                graph,
+                candidate,
+                base_name,
+                reason=not_ours.reason,
+                bound=not_ours.bound,
+            )
 
 
 def _bind_resolution_mode(
@@ -1702,8 +1776,8 @@ def _resolve_binds(
                                 gql_fn_name=gql_fn_name,
                             )
                         )
-            case _NotOurs(reason=reason):
-                ignored.append(IgnoredBind(location=candidate.location, reason=reason))
+            case IgnoredBind() as left_alone:
+                ignored.append(left_alone)
     return binds, keyword_checks, ignored
 
 
@@ -1855,6 +1929,10 @@ def discover_module(
                 # a comment is caught too -- one false abort on a file that is
                 # already broken, against a whole module regenerated without
                 # the statements a real one holds.
+                msg += (
+                    f"; fix the syntax error -- the file mentions '{gql_fn_name}' "
+                    "or 'bind', so the generator has to read it"
+                )
                 raise GraphQLGenerationError([msg]) from exc
             # Names neither, so it owns nothing the module could lose. It is
             # still recorded rather than forgotten: a pure re-export module is

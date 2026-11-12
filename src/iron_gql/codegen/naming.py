@@ -607,9 +607,16 @@ def validate_module_names(
             errors.append(f"Name '{name}' is claimed by {claimants}; {hint}")
         # Every claim becomes a module-level binding of its own.
         if not _is_usable_identifier(name):
-            errors.append(
+            # Operation, template and fragment classes are capitalized and
+            # suffixed, so only a GraphQL type or a generator option reaches
+            # here unchanged.
+            hint = (
+                "rename the GraphQL type, or change the generator option, it comes from"
+            )
+            diagnosis = (
                 f"Name '{name}' ({origins[0]}) is not a usable Python identifier"
             )
+            errors.append(f"{diagnosis}; {hint}")
     return errors
 
 
