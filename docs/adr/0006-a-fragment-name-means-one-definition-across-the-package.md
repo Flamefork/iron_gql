@@ -1,0 +1,10 @@
+# A fragment name means one definition across the package
+
+A fragment definition written in one statement can be spread by name from any other statement of the package, so the generator resolves every spread through one package-wide index. It used to resolve a spread local-first: a statement could define a fragment under a name another statement also defined, with different text, and its own spreads used its own definition. That gave one name two meanings, and the stages disagreed about which one they saw: a fragment was validated and its model collected against one definition, while the document a binding sent carried the other, so a result field was silently missing at runtime. So a fragment name means one definition across the package: two different definitions of one name, in any statements — single-fragment statements, statements with several definitions, an operation's own fragments — are a `GraphQLGenerationError` naming every place, with a hint to rename one of them or make the texts agree. Two definitions are the same when their parsed GraphQL is the same: whitespace, line breaks and comments do not count, and every literal spelling still gets its entry in the module's statement table. The rule is checked in one place, with this one criterion. With one meaning per name, every stage resolves a spread through the same index and no stage has a local view to keep consistent with it.
+
+## Considered Options
+
+- **Keep local-first resolution and reject only a name that is spread across statements while defined differently** — the rule the operations already had. It keeps a supported feature but keeps two ways to resolve a name, and the disagreement between stages is a consequence of having two. Rejected.
+- **Pick one definition silently, such as the single-fragment statement's** — another hidden substitution. Rejected.
+
+Reason to revisit — a consumer needs two unrelated fragments under one name in one package, for example code it does not own that it cannot rename.

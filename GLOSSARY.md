@@ -5,7 +5,7 @@ A GraphQL to Python code generator and runtime: it reads a schema and the GraphQ
 ## Statements and modules
 
 **Statement**:
-A GraphQL text literal passed to a generated module's gql function in the package's source; one statement holds an operation or one or more fragment definitions.
+A GraphQL text literal passed to a generated module's gql function in the package's source; one statement holds one operation, with or without fragment definitions of its own, or one or more fragment definitions. A fragment name means one definition across the package (ADR 0006).
 _Avoid_: query string, document
 
 **Generated module**:
