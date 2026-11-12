@@ -52,6 +52,7 @@ dev = [
     # whether `just mutants-diff` runs at all a question about what PyPI
     # served that day.
     "mutmut>=3.7.0,<4",
+    "pytest-timeout>=2.4.0",
 ]
 
 [tool.basedpyright]
@@ -125,6 +126,15 @@ addopts = [
 ]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
+# A test that deadlocks fails with every thread's stack instead of hanging the
+# run. The thread method, because it ends the whole process: the signal method
+# only interrupts the main thread, and a test that then waits on a deadlocked
+# worker -- leaving a `ThreadPoolExecutor` does -- hangs again with no second
+# alarm. The cost is that the run stops at the first hang. faulthandler dumps
+# the stacks 5 s earlier from C, so they arrive even when a hang holds the GIL.
+timeout = 30
+faulthandler_timeout = 25
+timeout_method = "thread"
 
 [tool.coverage.run]
 branch = true
