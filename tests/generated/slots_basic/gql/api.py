@@ -62,48 +62,48 @@ class GQLSlotModel[TOffered](GQLOpenModel, slots.GQLSlotNode[TOffered]):
     pass
 
 
-class GetAttachmentResultPostAttachmentSlotImageAttachment[TSlotAttachment = Never](GQLSlotModel[TSlotAttachment]):
+class GetAttachmentQueryResultPostAttachmentSlotImageAttachment[TSlotAttachment = Never](GQLSlotModel[TSlotAttachment]):
     slot_name__: ClassVar[str] = "attachment"
     typename__: Annotated[Literal["ImageAttachment"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
 
 
-class GetAttachmentResultPostAttachmentSlotLinkAttachment[TSlotAttachment = Never](GQLSlotModel[TSlotAttachment]):
+class GetAttachmentQueryResultPostAttachmentSlotLinkAttachment[TSlotAttachment = Never](GQLSlotModel[TSlotAttachment]):
     slot_name__: ClassVar[str] = "attachment"
     typename__: Annotated[Literal["LinkAttachment"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
 
 
-type GetAttachmentResultPostAttachmentSlot[TSlotAttachment] = Annotated[GetAttachmentResultPostAttachmentSlotImageAttachment[TSlotAttachment] | GetAttachmentResultPostAttachmentSlotLinkAttachment[TSlotAttachment], pydantic.Field(discriminator="typename__")]
+type Attachment_2cdfa975[TSlotAttachment] = Annotated[GetAttachmentQueryResultPostAttachmentSlotImageAttachment[TSlotAttachment] | GetAttachmentQueryResultPostAttachmentSlotLinkAttachment[TSlotAttachment], pydantic.Field(discriminator="typename__")]
 
 
-class PostWithAttachmentId_Opt_GetAttachmentResultPostAttachmentSlotID[TSlotAttachment = Never](GQLModel):
+class PostWithAttachmentId_Opt_AttachmentID_ec562858[TSlotAttachment = Never](GQLModel):
     id: builtins.str
-    attachment: GetAttachmentResultPostAttachmentSlot[TSlotAttachment] | None
+    attachment: Attachment_2cdfa975[TSlotAttachment] | None
 
 
-class GetAttachmentResult[TSlotAttachment = Never](GQLModel):
-    post: PostWithAttachmentId_Opt_GetAttachmentResultPostAttachmentSlotID[TSlotAttachment] | None
+class GetAttachmentQueryResult[TSlotAttachment = Never](GQLModel):
+    post: PostWithAttachmentId_Opt_AttachmentID_ec562858[TSlotAttachment] | None
 
 
-class AttachResultAttachAttachmentSlotImageAttachment[TSlotAttachment = Never](GQLSlotModel[TSlotAttachment]):
+class AttachMutationResultAttachAttachmentSlotImageAttachment[TSlotAttachment = Never](GQLSlotModel[TSlotAttachment]):
     slot_name__: ClassVar[str] = "attachment"
     typename__: Annotated[Literal["ImageAttachment"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
 
 
-class AttachResultAttachAttachmentSlotLinkAttachment[TSlotAttachment = Never](GQLSlotModel[TSlotAttachment]):
+class AttachMutationResultAttachAttachmentSlotLinkAttachment[TSlotAttachment = Never](GQLSlotModel[TSlotAttachment]):
     slot_name__: ClassVar[str] = "attachment"
     typename__: Annotated[Literal["LinkAttachment"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
 
 
-type AttachResultAttachAttachmentSlot[TSlotAttachment] = Annotated[AttachResultAttachAttachmentSlotImageAttachment[TSlotAttachment] | AttachResultAttachAttachmentSlotLinkAttachment[TSlotAttachment], pydantic.Field(discriminator="typename__")]
+type Attachment_24c0f980[TSlotAttachment] = Annotated[AttachMutationResultAttachAttachmentSlotImageAttachment[TSlotAttachment] | AttachMutationResultAttachAttachmentSlotLinkAttachment[TSlotAttachment], pydantic.Field(discriminator="typename__")]
 
 
-class PostWithAttachmentId_Opt_AttachResultAttachAttachmentSlotID[TSlotAttachment = Never](GQLModel):
+class PostWithAttachmentId_Opt_AttachmentID_30a67da2[TSlotAttachment = Never](GQLModel):
     id: builtins.str
-    attachment: AttachResultAttachAttachmentSlot[TSlotAttachment] | None
+    attachment: Attachment_24c0f980[TSlotAttachment] | None
 
 
-class AttachResult[TSlotAttachment = Never](GQLModel):
-    attach: PostWithAttachmentId_Opt_AttachResultAttachAttachmentSlotID[TSlotAttachment] | None
+class AttachMutationResult[TSlotAttachment = Never](GQLModel):
+    attach: PostWithAttachmentId_Opt_AttachmentID_30a67da2[TSlotAttachment] | None
 
 
 class ImageUrlData(GQLOpenModel):
@@ -133,22 +133,22 @@ class OnImageAttachment(slots.GQLBindableFragment[TModel, TReads], ABC):
 
 
 @final
-class ImageUrl(OnImageAttachment[ImageUrlData, "ImageUrl"]):
+class ImageUrlFragment(OnImageAttachment[ImageUrlData, "ImageUrlFragment"]):
     adapter__: ClassVar[pydantic.TypeAdapter[ImageUrlData]] = pydantic.TypeAdapter(ImageUrlData)
 
     @override
     def __init__(self) -> None:
         super().__init__(
             fragment_name='ImageUrl',
-            definition_type=ImageUrl,
+            definition_type=ImageUrlFragment,
             adapter=self.adapter__,
         )
 
 
-class GetAttachmentBound[TResult: pydantic.BaseModel](runtime.GQLBoundOperation):
+class GetAttachmentQueryBound[TResult: pydantic.BaseModel](runtime.GQLBoundOperation):
     async def execute(self, *, id: builtins.str) -> TResult:
         return await _client.query(
-            typing.cast("type[TResult]", GetAttachmentResult),
+            typing.cast("type[TResult]", GetAttachmentQueryResult),
             self.exec_source,
             variables={"id": id, **self.fragment_args},
             headers=self.headers,
@@ -156,10 +156,10 @@ class GetAttachmentBound[TResult: pydantic.BaseModel](runtime.GQLBoundOperation)
         )
 
 
-class AttachBound[TResult: pydantic.BaseModel](runtime.GQLBoundOperation):
+class AttachMutationBound[TResult: pydantic.BaseModel](runtime.GQLBoundOperation):
     async def execute(self, *, id: builtins.str) -> TResult:
         return await _client.query(
-            typing.cast("type[TResult]", AttachResult),
+            typing.cast("type[TResult]", AttachMutationResult),
             self.exec_source,
             variables={"id": id, **self.fragment_args},
             headers=self.headers,
@@ -167,60 +167,60 @@ class AttachBound[TResult: pydantic.BaseModel](runtime.GQLBoundOperation):
         )
 
 
-class GetAttachment(runtime.GQLTemplate):
+class GetAttachmentQuery(runtime.GQLTemplate):
     _binding_specs: ClassVar[dict[slots.BindingKey, runtime.BoundSpec]] = {
         # See: queries.py:3
         (): ('query GetAttachment($id: ID!) {\n  post(id: $id) {\n    id\n    attachment {\n      __typename\n    }\n  }\n}', {"attachment": ()}),
         # See: queries.py:3, queries.py:25
-        (('attachment', (ImageUrl,)),): ('query GetAttachment($id: ID!) {\n  post(id: $id) {\n    id\n    attachment {\n      __typename\n      ...ImageUrl\n    }\n  }\n}\n\nfragment ImageUrl on ImageAttachment {\n  url\n}', {"attachment": ((ImageUrl, frozenset({'ImageAttachment'})),)}),
+        (('attachment', (ImageUrlFragment,)),): ('query GetAttachment($id: ID!) {\n  post(id: $id) {\n    id\n    attachment {\n      __typename\n      ...ImageUrl\n    }\n  }\n}\n\nfragment ImageUrl on ImageAttachment {\n  url\n}', {"attachment": ((ImageUrlFragment, frozenset({'ImageAttachment'})),)}),
     }
 
     @overload
-    def bind(self, *, attachment: Sequence[Never] = ()) -> GetAttachmentBound[GetAttachmentResult[Never]]: ...
+    def bind(self, *, attachment: Sequence[Never] = ()) -> GetAttachmentQueryBound[GetAttachmentQueryResult[Never]]: ...
     @overload
-    def bind[TModelAttachment: pydantic.BaseModel, TReadsAttachment](self, *, attachment: OnImageAttachment[TModelAttachment, TReadsAttachment]) -> GetAttachmentBound[GetAttachmentResult[OnImageAttachment[TModelAttachment, TReadsAttachment] | TReadsAttachment]]: ...
+    def bind[TModelAttachment: pydantic.BaseModel, TReadsAttachment](self, *, attachment: OnImageAttachment[TModelAttachment, TReadsAttachment]) -> GetAttachmentQueryBound[GetAttachmentQueryResult[OnImageAttachment[TModelAttachment, TReadsAttachment] | TReadsAttachment]]: ...
     def bind(self, *, attachment: slots.GQLBindableFragment[pydantic.BaseModel, Any] | Sequence[slots.GQLBindableFragment[pydantic.BaseModel, Any]] = ()) -> runtime.GQLBoundOperation:
         if slots.binding_key({'attachment': attachment}) not in self._binding_specs:
-            raise LookupError("unknown bind combination for GetAttachment; single-fragment and empty combinations are generated from the schema, so this is a tuple combination no call site writes literally - write it, then regenerate the module. A call whose template is an expression the scan cannot follow is never read either: those are listed, with the reason, in the debug run's ignored_binds.json")
-        return GetAttachmentBound[GetAttachmentResult].bound__(
+            raise LookupError("unknown bind combination for GetAttachmentQuery; single-fragment and empty combinations are generated from the schema, so this is a tuple combination no call site writes literally - write it, then regenerate the module. A call whose template is an expression the scan cannot follow is never read either: those are listed, with the reason, in the debug run's ignored_binds.json")
+        return GetAttachmentQueryBound[GetAttachmentQueryResult].bound__(
             self._binding_specs[slots.binding_key({'attachment': attachment})], {'attachment': slots.as_bindable_fragments(attachment)},
         )
 
 
-class Attach(runtime.GQLTemplate):
+class AttachMutation(runtime.GQLTemplate):
     _binding_specs: ClassVar[dict[slots.BindingKey, runtime.BoundSpec]] = {
         # See: queries.py:14
         (): ('mutation Attach($id: ID!) {\n  attach(id: $id) {\n    id\n    attachment {\n      __typename\n    }\n  }\n}', {"attachment": ()}),
         # See: queries.py:14, queries.py:25
-        (('attachment', (ImageUrl,)),): ('mutation Attach($id: ID!) {\n  attach(id: $id) {\n    id\n    attachment {\n      __typename\n      ...ImageUrl\n    }\n  }\n}\n\nfragment ImageUrl on ImageAttachment {\n  url\n}', {"attachment": ((ImageUrl, frozenset({'ImageAttachment'})),)}),
+        (('attachment', (ImageUrlFragment,)),): ('mutation Attach($id: ID!) {\n  attach(id: $id) {\n    id\n    attachment {\n      __typename\n      ...ImageUrl\n    }\n  }\n}\n\nfragment ImageUrl on ImageAttachment {\n  url\n}', {"attachment": ((ImageUrlFragment, frozenset({'ImageAttachment'})),)}),
     }
 
     @overload
-    def bind(self, *, attachment: Sequence[Never] = ()) -> AttachBound[AttachResult[Never]]: ...
+    def bind(self, *, attachment: Sequence[Never] = ()) -> AttachMutationBound[AttachMutationResult[Never]]: ...
     @overload
-    def bind[TModelAttachment: pydantic.BaseModel, TReadsAttachment](self, *, attachment: OnImageAttachment[TModelAttachment, TReadsAttachment]) -> AttachBound[AttachResult[OnImageAttachment[TModelAttachment, TReadsAttachment] | TReadsAttachment]]: ...
+    def bind[TModelAttachment: pydantic.BaseModel, TReadsAttachment](self, *, attachment: OnImageAttachment[TModelAttachment, TReadsAttachment]) -> AttachMutationBound[AttachMutationResult[OnImageAttachment[TModelAttachment, TReadsAttachment] | TReadsAttachment]]: ...
     def bind(self, *, attachment: slots.GQLBindableFragment[pydantic.BaseModel, Any] | Sequence[slots.GQLBindableFragment[pydantic.BaseModel, Any]] = ()) -> runtime.GQLBoundOperation:
         if slots.binding_key({'attachment': attachment}) not in self._binding_specs:
-            raise LookupError("unknown bind combination for Attach; single-fragment and empty combinations are generated from the schema, so this is a tuple combination no call site writes literally - write it, then regenerate the module. A call whose template is an expression the scan cannot follow is never read either: those are listed, with the reason, in the debug run's ignored_binds.json")
-        return AttachBound[AttachResult].bound__(
+            raise LookupError("unknown bind combination for AttachMutation; single-fragment and empty combinations are generated from the schema, so this is a tuple combination no call site writes literally - write it, then regenerate the module. A call whose template is an expression the scan cannot follow is never read either: those are listed, with the reason, in the debug run's ignored_binds.json")
+        return AttachMutationBound[AttachMutationResult].bound__(
             self._binding_specs[slots.binding_key({'attachment': attachment})], {'attachment': slots.as_bindable_fragments(attachment)},
         )
 
 
 @overload
-def api_gql(stmt: Literal['\n    fragment ImageUrl on ImageAttachment {\n        url\n    }\n    ']) -> ImageUrl: ...
+def api_gql(stmt: Literal['\n    fragment ImageUrl on ImageAttachment {\n        url\n    }\n    ']) -> ImageUrlFragment: ...
 @overload
-def api_gql(stmt: Literal['\n    query GetAttachment($id: ID!) {\n        post(id: $id) {\n            id\n            attachment @slot { __typename }\n        }\n    }\n    ']) -> GetAttachment: ...
+def api_gql(stmt: Literal['\n    query GetAttachment($id: ID!) {\n        post(id: $id) {\n            id\n            attachment @slot { __typename }\n        }\n    }\n    ']) -> GetAttachmentQuery: ...
 @overload
-def api_gql(stmt: Literal['\n    mutation Attach($id: ID!) {\n        attach(id: $id) {\n            id\n            attachment @slot { __typename }\n        }\n    }\n    ']) -> Attach: ...
+def api_gql(stmt: Literal['\n    mutation Attach($id: ID!) {\n        attach(id: $id) {\n            id\n            attachment @slot { __typename }\n        }\n    }\n    ']) -> AttachMutation: ...
 @overload
 def api_gql(stmt: str) -> runtime.GQLOperation | slots.GQLFragment[pydantic.BaseModel, Any] | runtime.GQLTemplate: ...
 
 
 _statement_factories: dict[str, Callable[[], runtime.GQLOperation | slots.GQLFragment[pydantic.BaseModel, Any] | runtime.GQLTemplate]] = {
-    '\n    fragment ImageUrl on ImageAttachment {\n        url\n    }\n    ': lambda: ImageUrl(),
-    '\n    query GetAttachment($id: ID!) {\n        post(id: $id) {\n            id\n            attachment @slot { __typename }\n        }\n    }\n    ': GetAttachment,
-    '\n    mutation Attach($id: ID!) {\n        attach(id: $id) {\n            id\n            attachment @slot { __typename }\n        }\n    }\n    ': Attach,
+    '\n    fragment ImageUrl on ImageAttachment {\n        url\n    }\n    ': lambda: ImageUrlFragment(),
+    '\n    query GetAttachment($id: ID!) {\n        post(id: $id) {\n            id\n            attachment @slot { __typename }\n        }\n    }\n    ': GetAttachmentQuery,
+    '\n    mutation Attach($id: ID!) {\n        attach(id: $id) {\n            id\n            attachment @slot { __typename }\n        }\n    }\n    ': AttachMutation,
 }
 
 

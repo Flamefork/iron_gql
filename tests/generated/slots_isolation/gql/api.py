@@ -62,74 +62,74 @@ class GQLSlotModel[TOffered](GQLOpenModel, slots.GQLSlotNode[TOffered]):
     pass
 
 
-class GetBoardResultBoardSlotOwner(GQLOpenModel):
+class GetBoardQueryResultBoardSlotOwner(GQLOpenModel):
     who: str
 
 
-class GetBoardResultBoardSlotCards(GQLOpenModel):
+class GetBoardQueryResultBoardSlotCards(GQLOpenModel):
     title: str
 
 
-class GetBoardResultBoardSlotActivityCommentAuthor(GQLOpenModel):
+class GetBoardQueryResultBoardSlotActivityCommentAuthor(GQLOpenModel):
     who: str
 
 
-class GetBoardResultBoardSlotActivityComment(GQLOpenModel):
+class GetBoardQueryResultBoardSlotActivityComment(GQLOpenModel):
     typename__: Annotated[Literal["Comment"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
     body: str
-    author: GetBoardResultBoardSlotActivityCommentAuthor
+    author: GetBoardQueryResultBoardSlotActivityCommentAuthor
 
 
-class GetBoardResultBoardSlotActivityMoveAuthor(GQLOpenModel):
+class GetBoardQueryResultBoardSlotActivityMoveAuthor(GQLOpenModel):
     id: builtins.str
 
 
-class GetBoardResultBoardSlotActivityMove(GQLOpenModel):
+class GetBoardQueryResultBoardSlotActivityMove(GQLOpenModel):
     typename__: Annotated[Literal["Move"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
     from_column: str
-    author: GetBoardResultBoardSlotActivityMoveAuthor
+    author: GetBoardQueryResultBoardSlotActivityMoveAuthor
 
 
-type GetBoardResultBoardSlotActivity = Annotated[GetBoardResultBoardSlotActivityComment | GetBoardResultBoardSlotActivityMove, pydantic.Field(discriminator="typename__")]
+type GetBoardQueryResultBoardSlotActivity = Annotated[GetBoardQueryResultBoardSlotActivityComment | GetBoardQueryResultBoardSlotActivityMove, pydantic.Field(discriminator="typename__")]
 
 
-class GetBoardResultBoardSlot[TSlotBoard = Never](GQLSlotModel[TSlotBoard]):
+class GetBoardQueryResultBoardSlot[TSlotBoard = Never](GQLSlotModel[TSlotBoard]):
     slot_name__: ClassVar[str] = "board"
     typename__: Annotated[Literal["Board"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
-    owner: GetBoardResultBoardSlotOwner | None
-    cards: list[GetBoardResultBoardSlotCards]
-    activity: GetBoardResultBoardSlotActivity | None
+    owner: GetBoardQueryResultBoardSlotOwner | None
+    cards: list[GetBoardQueryResultBoardSlotCards]
+    activity: GetBoardQueryResultBoardSlotActivity | None
 
 
-class GetBoardResult[TSlotBoard = Never](GQLModel):
-    board: GetBoardResultBoardSlot[TSlotBoard] | None
+class GetBoardQueryResult[TSlotBoard = Never](GQLModel):
+    board: GetBoardQueryResultBoardSlot[TSlotBoard] | None
 
 
-class PingBoardResultBoardSlot[TSlotBoard = Never](GQLSlotModel[TSlotBoard]):
+class PingBoardQueryResultBoardSlot[TSlotBoard = Never](GQLSlotModel[TSlotBoard]):
     slot_name__: ClassVar[str] = "board"
     typename__: Annotated[Literal["Board"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
 
 
-class PingBoardResult[TSlotBoard = Never](GQLModel):
-    board: PingBoardResultBoardSlot[TSlotBoard] | None
+class PingBoardQueryResult[TSlotBoard = Never](GQLModel):
+    board: PingBoardQueryResultBoardSlot[TSlotBoard] | None
 
 
-class PingMainResultMainSlot[TSlotMain = Never](GQLSlotModel[TSlotMain]):
+class PingMainQueryResultMainSlot[TSlotMain = Never](GQLSlotModel[TSlotMain]):
     slot_name__: ClassVar[str] = "main"
     typename__: Annotated[Literal["Board"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
 
 
-class PingMainResult[TSlotMain = Never](GQLModel):
-    main: PingMainResultMainSlot[TSlotMain] | None
+class PingMainQueryResult[TSlotMain = Never](GQLModel):
+    main: PingMainQueryResultMainSlot[TSlotMain] | None
 
 
-class MergedBoardResultMergedSlot[TSlotMerged = Never](GQLSlotModel[TSlotMerged]):
+class MergedBoardQueryResultMergedSlot[TSlotMerged = Never](GQLSlotModel[TSlotMerged]):
     slot_name__: ClassVar[str] = "merged"
     typename__: Annotated[Literal["Board"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
 
 
-class MergedBoardResult[TSlotMerged = Never](GQLModel):
-    merged: MergedBoardResultMergedSlot[TSlotMerged] | None
+class MergedBoardQueryResult[TSlotMerged = Never](GQLModel):
+    merged: MergedBoardQueryResultMergedSlot[TSlotMerged] | None
 
 
 class BoardIdData(GQLOpenModel):
@@ -159,22 +159,22 @@ class OnBoard(slots.GQLBindableFragment[TModel, TReads], ABC):
 
 
 @final
-class BoardId(OnBoard[BoardIdData, "BoardId"]):
+class BoardIdFragment(OnBoard[BoardIdData, "BoardIdFragment"]):
     adapter__: ClassVar[pydantic.TypeAdapter[BoardIdData]] = pydantic.TypeAdapter(BoardIdData)
 
     @override
     def __init__(self) -> None:
         super().__init__(
             fragment_name='BoardId',
-            definition_type=BoardId,
+            definition_type=BoardIdFragment,
             adapter=self.adapter__,
         )
 
 
-class GetBoardBound[TResult: pydantic.BaseModel](runtime.GQLBoundOperation):
+class GetBoardQueryBound[TResult: pydantic.BaseModel](runtime.GQLBoundOperation):
     async def execute(self, *, id: builtins.str) -> TResult:
         return await _client.query(
-            typing.cast("type[TResult]", GetBoardResult),
+            typing.cast("type[TResult]", GetBoardQueryResult),
             self.exec_source,
             variables={"id": id, **self.fragment_args},
             headers=self.headers,
@@ -182,10 +182,10 @@ class GetBoardBound[TResult: pydantic.BaseModel](runtime.GQLBoundOperation):
         )
 
 
-class PingBoardBound[TResult: pydantic.BaseModel](runtime.GQLBoundOperation):
+class PingBoardQueryBound[TResult: pydantic.BaseModel](runtime.GQLBoundOperation):
     async def execute(self, *, id: builtins.str) -> TResult:
         return await _client.query(
-            typing.cast("type[TResult]", PingBoardResult),
+            typing.cast("type[TResult]", PingBoardQueryResult),
             self.exec_source,
             variables={"id": id, **self.fragment_args},
             headers=self.headers,
@@ -193,10 +193,10 @@ class PingBoardBound[TResult: pydantic.BaseModel](runtime.GQLBoundOperation):
         )
 
 
-class PingMainBound[TResult: pydantic.BaseModel](runtime.GQLBoundOperation):
+class PingMainQueryBound[TResult: pydantic.BaseModel](runtime.GQLBoundOperation):
     async def execute(self, *, id: builtins.str) -> TResult:
         return await _client.query(
-            typing.cast("type[TResult]", PingMainResult),
+            typing.cast("type[TResult]", PingMainQueryResult),
             self.exec_source,
             variables={"id": id, **self.fragment_args},
             headers=self.headers,
@@ -204,10 +204,10 @@ class PingMainBound[TResult: pydantic.BaseModel](runtime.GQLBoundOperation):
         )
 
 
-class MergedBoardBound[TResult: pydantic.BaseModel](runtime.GQLBoundOperation):
+class MergedBoardQueryBound[TResult: pydantic.BaseModel](runtime.GQLBoundOperation):
     async def execute(self, *, id: builtins.str) -> TResult:
         return await _client.query(
-            typing.cast("type[TResult]", MergedBoardResult),
+            typing.cast("type[TResult]", MergedBoardQueryResult),
             self.exec_source,
             variables={"id": id, **self.fragment_args},
             headers=self.headers,
@@ -215,106 +215,106 @@ class MergedBoardBound[TResult: pydantic.BaseModel](runtime.GQLBoundOperation):
         )
 
 
-class GetBoard(runtime.GQLTemplate):
+class GetBoardQuery(runtime.GQLTemplate):
     _binding_specs: ClassVar[dict[slots.BindingKey, runtime.BoundSpec]] = {
         # See: queries.py:3
         (): ('query GetBoard($id: ID!) {\n  board(id: $id) {\n    __typename\n    owner {\n      who: fullName\n    }\n    cards {\n      title\n    }\n    activity {\n      __typename\n      ... on Comment {\n        body\n        author {\n          who: fullName\n        }\n      }\n      ... on Move {\n        fromColumn\n        author {\n          id\n        }\n      }\n    }\n  }\n}', {"board": ()}),
         # See: queries.py:3, queries.py:45
-        (('board', (BoardId,)),): ('query GetBoard($id: ID!) {\n  board(id: $id) {\n    __typename\n    owner {\n      who: fullName\n    }\n    cards {\n      title\n    }\n    activity {\n      __typename\n      ... on Comment {\n        body\n        author {\n          who: fullName\n        }\n      }\n      ... on Move {\n        fromColumn\n        author {\n          id\n        }\n      }\n    }\n    ...BoardId\n  }\n}\n\nfragment BoardId on Board {\n  id\n}', {"board": ((BoardId, frozenset({'Board'})),)}),
+        (('board', (BoardIdFragment,)),): ('query GetBoard($id: ID!) {\n  board(id: $id) {\n    __typename\n    owner {\n      who: fullName\n    }\n    cards {\n      title\n    }\n    activity {\n      __typename\n      ... on Comment {\n        body\n        author {\n          who: fullName\n        }\n      }\n      ... on Move {\n        fromColumn\n        author {\n          id\n        }\n      }\n    }\n    ...BoardId\n  }\n}\n\nfragment BoardId on Board {\n  id\n}', {"board": ((BoardIdFragment, frozenset({'Board'})),)}),
     }
 
     @overload
-    def bind(self, *, board: Sequence[Never] = ()) -> GetBoardBound[GetBoardResult[Never]]: ...
+    def bind(self, *, board: Sequence[Never] = ()) -> GetBoardQueryBound[GetBoardQueryResult[Never]]: ...
     @overload
-    def bind[TModelBoard: pydantic.BaseModel, TReadsBoard](self, *, board: OnBoard[TModelBoard, TReadsBoard]) -> GetBoardBound[GetBoardResult[OnBoard[TModelBoard, TReadsBoard] | TReadsBoard]]: ...
+    def bind[TModelBoard: pydantic.BaseModel, TReadsBoard](self, *, board: OnBoard[TModelBoard, TReadsBoard]) -> GetBoardQueryBound[GetBoardQueryResult[OnBoard[TModelBoard, TReadsBoard] | TReadsBoard]]: ...
     def bind(self, *, board: slots.GQLBindableFragment[pydantic.BaseModel, Any] | Sequence[slots.GQLBindableFragment[pydantic.BaseModel, Any]] = ()) -> runtime.GQLBoundOperation:
         if slots.binding_key({'board': board}) not in self._binding_specs:
-            raise LookupError("unknown bind combination for GetBoard; single-fragment and empty combinations are generated from the schema, so this is a tuple combination no call site writes literally - write it, then regenerate the module. A call whose template is an expression the scan cannot follow is never read either: those are listed, with the reason, in the debug run's ignored_binds.json")
-        return GetBoardBound[GetBoardResult].bound__(
+            raise LookupError("unknown bind combination for GetBoardQuery; single-fragment and empty combinations are generated from the schema, so this is a tuple combination no call site writes literally - write it, then regenerate the module. A call whose template is an expression the scan cannot follow is never read either: those are listed, with the reason, in the debug run's ignored_binds.json")
+        return GetBoardQueryBound[GetBoardQueryResult].bound__(
             self._binding_specs[slots.binding_key({'board': board})], {'board': slots.as_bindable_fragments(board)},
         )
 
 
-class PingBoard(runtime.GQLTemplate):
+class PingBoardQuery(runtime.GQLTemplate):
     _binding_specs: ClassVar[dict[slots.BindingKey, runtime.BoundSpec]] = {
         # See: queries.py:20
         (): ('query PingBoard($id: ID!) {\n  board(id: $id) {\n    __typename\n  }\n}', {"board": ()}),
         # See: queries.py:20, queries.py:45
-        (('board', (BoardId,)),): ('query PingBoard($id: ID!) {\n  board(id: $id) {\n    __typename\n    ...BoardId\n  }\n}\n\nfragment BoardId on Board {\n  id\n}', {"board": ((BoardId, frozenset({'Board'})),)}),
+        (('board', (BoardIdFragment,)),): ('query PingBoard($id: ID!) {\n  board(id: $id) {\n    __typename\n    ...BoardId\n  }\n}\n\nfragment BoardId on Board {\n  id\n}', {"board": ((BoardIdFragment, frozenset({'Board'})),)}),
     }
 
     @overload
-    def bind(self, *, board: Sequence[Never] = ()) -> PingBoardBound[PingBoardResult[Never]]: ...
+    def bind(self, *, board: Sequence[Never] = ()) -> PingBoardQueryBound[PingBoardQueryResult[Never]]: ...
     @overload
-    def bind[TModelBoard: pydantic.BaseModel, TReadsBoard](self, *, board: OnBoard[TModelBoard, TReadsBoard]) -> PingBoardBound[PingBoardResult[OnBoard[TModelBoard, TReadsBoard] | TReadsBoard]]: ...
+    def bind[TModelBoard: pydantic.BaseModel, TReadsBoard](self, *, board: OnBoard[TModelBoard, TReadsBoard]) -> PingBoardQueryBound[PingBoardQueryResult[OnBoard[TModelBoard, TReadsBoard] | TReadsBoard]]: ...
     def bind(self, *, board: slots.GQLBindableFragment[pydantic.BaseModel, Any] | Sequence[slots.GQLBindableFragment[pydantic.BaseModel, Any]] = ()) -> runtime.GQLBoundOperation:
         if slots.binding_key({'board': board}) not in self._binding_specs:
-            raise LookupError("unknown bind combination for PingBoard; single-fragment and empty combinations are generated from the schema, so this is a tuple combination no call site writes literally - write it, then regenerate the module. A call whose template is an expression the scan cannot follow is never read either: those are listed, with the reason, in the debug run's ignored_binds.json")
-        return PingBoardBound[PingBoardResult].bound__(
+            raise LookupError("unknown bind combination for PingBoardQuery; single-fragment and empty combinations are generated from the schema, so this is a tuple combination no call site writes literally - write it, then regenerate the module. A call whose template is an expression the scan cannot follow is never read either: those are listed, with the reason, in the debug run's ignored_binds.json")
+        return PingBoardQueryBound[PingBoardQueryResult].bound__(
             self._binding_specs[slots.binding_key({'board': board})], {'board': slots.as_bindable_fragments(board)},
         )
 
 
-class PingMain(runtime.GQLTemplate):
+class PingMainQuery(runtime.GQLTemplate):
     _binding_specs: ClassVar[dict[slots.BindingKey, runtime.BoundSpec]] = {
         # See: queries.py:28
         (): ('query PingMain($id: ID!) {\n  main: board(id: $id) {\n    __typename\n  }\n}', {"main": ()}),
         # See: queries.py:28, queries.py:45
-        (('main', (BoardId,)),): ('query PingMain($id: ID!) {\n  main: board(id: $id) {\n    __typename\n    ...BoardId\n  }\n}\n\nfragment BoardId on Board {\n  id\n}', {"main": ((BoardId, frozenset({'Board'})),)}),
+        (('main', (BoardIdFragment,)),): ('query PingMain($id: ID!) {\n  main: board(id: $id) {\n    __typename\n    ...BoardId\n  }\n}\n\nfragment BoardId on Board {\n  id\n}', {"main": ((BoardIdFragment, frozenset({'Board'})),)}),
     }
 
     @overload
-    def bind(self, *, main: Sequence[Never] = ()) -> PingMainBound[PingMainResult[Never]]: ...
+    def bind(self, *, main: Sequence[Never] = ()) -> PingMainQueryBound[PingMainQueryResult[Never]]: ...
     @overload
-    def bind[TModelMain: pydantic.BaseModel, TReadsMain](self, *, main: OnBoard[TModelMain, TReadsMain]) -> PingMainBound[PingMainResult[OnBoard[TModelMain, TReadsMain] | TReadsMain]]: ...
+    def bind[TModelMain: pydantic.BaseModel, TReadsMain](self, *, main: OnBoard[TModelMain, TReadsMain]) -> PingMainQueryBound[PingMainQueryResult[OnBoard[TModelMain, TReadsMain] | TReadsMain]]: ...
     def bind(self, *, main: slots.GQLBindableFragment[pydantic.BaseModel, Any] | Sequence[slots.GQLBindableFragment[pydantic.BaseModel, Any]] = ()) -> runtime.GQLBoundOperation:
         if slots.binding_key({'main': main}) not in self._binding_specs:
-            raise LookupError("unknown bind combination for PingMain; single-fragment and empty combinations are generated from the schema, so this is a tuple combination no call site writes literally - write it, then regenerate the module. A call whose template is an expression the scan cannot follow is never read either: those are listed, with the reason, in the debug run's ignored_binds.json")
-        return PingMainBound[PingMainResult].bound__(
+            raise LookupError("unknown bind combination for PingMainQuery; single-fragment and empty combinations are generated from the schema, so this is a tuple combination no call site writes literally - write it, then regenerate the module. A call whose template is an expression the scan cannot follow is never read either: those are listed, with the reason, in the debug run's ignored_binds.json")
+        return PingMainQueryBound[PingMainQueryResult].bound__(
             self._binding_specs[slots.binding_key({'main': main})], {'main': slots.as_bindable_fragments(main)},
         )
 
 
-class MergedBoard(runtime.GQLTemplate):
+class MergedBoardQuery(runtime.GQLTemplate):
     _binding_specs: ClassVar[dict[slots.BindingKey, runtime.BoundSpec]] = {
         # See: queries.py:36
         (): ('query MergedBoard($id: ID!) {\n  merged: board(id: $id) {\n    __typename\n  }\n  merged: board(id: $id) {\n    __typename\n  }\n}', {"merged": ()}),
         # See: queries.py:36, queries.py:45
-        (('merged', (BoardId,)),): ('query MergedBoard($id: ID!) {\n  merged: board(id: $id) {\n    __typename\n  }\n  merged: board(id: $id) {\n    __typename\n    ...BoardId\n  }\n}\n\nfragment BoardId on Board {\n  id\n}', {"merged": ((BoardId, frozenset({'Board'})),)}),
+        (('merged', (BoardIdFragment,)),): ('query MergedBoard($id: ID!) {\n  merged: board(id: $id) {\n    __typename\n  }\n  merged: board(id: $id) {\n    __typename\n    ...BoardId\n  }\n}\n\nfragment BoardId on Board {\n  id\n}', {"merged": ((BoardIdFragment, frozenset({'Board'})),)}),
     }
 
     @overload
-    def bind(self, *, merged: Sequence[Never] = ()) -> MergedBoardBound[MergedBoardResult[Never]]: ...
+    def bind(self, *, merged: Sequence[Never] = ()) -> MergedBoardQueryBound[MergedBoardQueryResult[Never]]: ...
     @overload
-    def bind[TModelMerged: pydantic.BaseModel, TReadsMerged](self, *, merged: OnBoard[TModelMerged, TReadsMerged]) -> MergedBoardBound[MergedBoardResult[OnBoard[TModelMerged, TReadsMerged] | TReadsMerged]]: ...
+    def bind[TModelMerged: pydantic.BaseModel, TReadsMerged](self, *, merged: OnBoard[TModelMerged, TReadsMerged]) -> MergedBoardQueryBound[MergedBoardQueryResult[OnBoard[TModelMerged, TReadsMerged] | TReadsMerged]]: ...
     def bind(self, *, merged: slots.GQLBindableFragment[pydantic.BaseModel, Any] | Sequence[slots.GQLBindableFragment[pydantic.BaseModel, Any]] = ()) -> runtime.GQLBoundOperation:
         if slots.binding_key({'merged': merged}) not in self._binding_specs:
-            raise LookupError("unknown bind combination for MergedBoard; single-fragment and empty combinations are generated from the schema, so this is a tuple combination no call site writes literally - write it, then regenerate the module. A call whose template is an expression the scan cannot follow is never read either: those are listed, with the reason, in the debug run's ignored_binds.json")
-        return MergedBoardBound[MergedBoardResult].bound__(
+            raise LookupError("unknown bind combination for MergedBoardQuery; single-fragment and empty combinations are generated from the schema, so this is a tuple combination no call site writes literally - write it, then regenerate the module. A call whose template is an expression the scan cannot follow is never read either: those are listed, with the reason, in the debug run's ignored_binds.json")
+        return MergedBoardQueryBound[MergedBoardQueryResult].bound__(
             self._binding_specs[slots.binding_key({'merged': merged})], {'merged': slots.as_bindable_fragments(merged)},
         )
 
 
 @overload
-def api_gql(stmt: Literal['\n    fragment BoardId on Board {\n        id\n    }\n    ']) -> BoardId: ...
+def api_gql(stmt: Literal['\n    fragment BoardId on Board {\n        id\n    }\n    ']) -> BoardIdFragment: ...
 @overload
-def api_gql(stmt: Literal['\n    query GetBoard($id: ID!) {\n        board(id: $id) @slot {\n            __typename\n            owner { who: fullName }\n            cards { title }\n            activity {\n                __typename\n                ... on Comment { body author { who: fullName } }\n                ... on Move { fromColumn author { id } }\n            }\n        }\n    }\n    ']) -> GetBoard: ...
+def api_gql(stmt: Literal['\n    query GetBoard($id: ID!) {\n        board(id: $id) @slot {\n            __typename\n            owner { who: fullName }\n            cards { title }\n            activity {\n                __typename\n                ... on Comment { body author { who: fullName } }\n                ... on Move { fromColumn author { id } }\n            }\n        }\n    }\n    ']) -> GetBoardQuery: ...
 @overload
-def api_gql(stmt: Literal['\n    query PingBoard($id: ID!) {\n        board(id: $id) @slot { __typename }\n    }\n    ']) -> PingBoard: ...
+def api_gql(stmt: Literal['\n    query PingBoard($id: ID!) {\n        board(id: $id) @slot { __typename }\n    }\n    ']) -> PingBoardQuery: ...
 @overload
-def api_gql(stmt: Literal['\n    query PingMain($id: ID!) {\n        main: board(id: $id) @slot { __typename }\n    }\n    ']) -> PingMain: ...
+def api_gql(stmt: Literal['\n    query PingMain($id: ID!) {\n        main: board(id: $id) @slot { __typename }\n    }\n    ']) -> PingMainQuery: ...
 @overload
-def api_gql(stmt: Literal['\n    query MergedBoard($id: ID!) {\n        merged: board(id: $id) { __typename }\n        merged: board(id: $id) @slot { __typename }\n    }\n    ']) -> MergedBoard: ...
+def api_gql(stmt: Literal['\n    query MergedBoard($id: ID!) {\n        merged: board(id: $id) { __typename }\n        merged: board(id: $id) @slot { __typename }\n    }\n    ']) -> MergedBoardQuery: ...
 @overload
 def api_gql(stmt: str) -> runtime.GQLOperation | slots.GQLFragment[pydantic.BaseModel, Any] | runtime.GQLTemplate: ...
 
 
 _statement_factories: dict[str, Callable[[], runtime.GQLOperation | slots.GQLFragment[pydantic.BaseModel, Any] | runtime.GQLTemplate]] = {
-    '\n    fragment BoardId on Board {\n        id\n    }\n    ': lambda: BoardId(),
-    '\n    query GetBoard($id: ID!) {\n        board(id: $id) @slot {\n            __typename\n            owner { who: fullName }\n            cards { title }\n            activity {\n                __typename\n                ... on Comment { body author { who: fullName } }\n                ... on Move { fromColumn author { id } }\n            }\n        }\n    }\n    ': GetBoard,
-    '\n    query PingBoard($id: ID!) {\n        board(id: $id) @slot { __typename }\n    }\n    ': PingBoard,
-    '\n    query PingMain($id: ID!) {\n        main: board(id: $id) @slot { __typename }\n    }\n    ': PingMain,
-    '\n    query MergedBoard($id: ID!) {\n        merged: board(id: $id) { __typename }\n        merged: board(id: $id) @slot { __typename }\n    }\n    ': MergedBoard,
+    '\n    fragment BoardId on Board {\n        id\n    }\n    ': lambda: BoardIdFragment(),
+    '\n    query GetBoard($id: ID!) {\n        board(id: $id) @slot {\n            __typename\n            owner { who: fullName }\n            cards { title }\n            activity {\n                __typename\n                ... on Comment { body author { who: fullName } }\n                ... on Move { fromColumn author { id } }\n            }\n        }\n    }\n    ': GetBoardQuery,
+    '\n    query PingBoard($id: ID!) {\n        board(id: $id) @slot { __typename }\n    }\n    ': PingBoardQuery,
+    '\n    query PingMain($id: ID!) {\n        main: board(id: $id) @slot { __typename }\n    }\n    ': PingMainQuery,
+    '\n    query MergedBoard($id: ID!) {\n        merged: board(id: $id) { __typename }\n        merged: board(id: $id) @slot { __typename }\n    }\n    ': MergedBoardQuery,
 }
 
 

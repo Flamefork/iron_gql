@@ -1,13 +1,13 @@
-"""Пакетный контракт вызова `bind()`.
+"""The package contract of a `bind()` call.
 
-`slots.combination_key` задаёт логическую идентичность комбинации, а
-`slots.binding_key` — nominal identity bindable fragment classes внутри template.
-Инвариант наблюдаем в одной точке: generated `bind()` обязан выбрать правильную
-entry.
+`slots.combination_key` sets the logical identity of a combination, and
+`slots.binding_key` the nominal identity of bindable fragment classes within a
+template. The invariant is observable at one point: the generated `bind()` must
+pick the right entry.
 
-Каждый вызов из `queries.py` должен выбрать entry своей комбинации. Опечатка в
-slot, пустое значение под ошибочным именем и повтор fragment должны отвергаться;
-перестановка keywords или fragments должна сохранять комбинацию.
+Each call from `queries.py` must pick the entry of its own combination. A
+misspelled slot, an empty value under a wrong name and a repeated fragment must be
+rejected; reordering keywords or fragments must keep the combination.
 """
 
 from collections.abc import Callable
@@ -87,12 +87,12 @@ generated_package(
 )
 
 from tests.generated.bind_contract import queries
-from tests.generated.bind_contract.gql.api import GetAttachment
-from tests.generated.bind_contract.gql.api import ImageParts
-from tests.generated.bind_contract.gql.api import LinkParts
+from tests.generated.bind_contract.gql.api import GetAttachmentQuery
+from tests.generated.bind_contract.gql.api import ImagePartsFragment
+from tests.generated.bind_contract.gql.api import LinkPartsFragment
 
-IMAGE_PARTS = ImageParts()
-LINK_PARTS = LinkParts()
+IMAGE_PARTS = ImagePartsFragment()
+LINK_PARTS = LinkPartsFragment()
 
 # Every call `queries.py` writes, as (the value it produced, the keywords it
 # wrote). The keywords are what the mutations below are derived from, so the
@@ -115,7 +115,7 @@ def _bind(passed: Passed) -> object:
     # The generated `bind()` reached the way a caller reaches it. Typed as
     # `object` because the point of each assertion below is *which* class comes
     # back, never what it can do.
-    bind = cast("Callable[..., object]", GetAttachment().bind)
+    bind = cast("Callable[..., object]", GetAttachmentQuery().bind)
     return bind(**passed)
 
 

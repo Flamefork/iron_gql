@@ -69,7 +69,7 @@ class PostWithIdPostTitle(GQLModel):
     post_title: str
 
 
-class GetPostResult(GQLModel):
+class GetPostQueryResult(GQLModel):
     post: PostWithIdPostTitle
 
 
@@ -83,73 +83,73 @@ class LinkAttachment(GQLModel):
     href: str
 
 
-type GetAttachmentResultPostAttachment = Annotated[ImageAttachment | LinkAttachment, pydantic.Field(discriminator="typename__")]
+type Attachment_fdb04dba = Annotated[ImageAttachment | LinkAttachment, pydantic.Field(discriminator="typename__")]
 
 
-class PostWithAttachment_GetAttachmentResultPostAttachment(GQLModel):
-    attachment: GetAttachmentResultPostAttachment
+class PostWithAttachment_Attachment_dda916ea(GQLModel):
+    attachment: Attachment_fdb04dba
 
 
-class GetAttachmentResult(GQLModel):
-    post: PostWithAttachment_GetAttachmentResultPostAttachment
+class GetAttachmentQueryResult(GQLModel):
+    post: PostWithAttachment_Attachment_dda916ea
 
 
-class CounterResult(GQLModel):
+class CounterSubscriptionResult(GQLModel):
     counter: int
 
 
-class GetSlottedResultPostAttachmentSlotImageAttachment[TSlotAttachment = Never](GQLSlotModel[TSlotAttachment]):
+class GetSlottedQueryResultPostAttachmentSlotImageAttachment[TSlotAttachment = Never](GQLSlotModel[TSlotAttachment]):
     slot_name__: ClassVar[str] = "attachment"
     typename__: Annotated[Literal["ImageAttachment"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
 
 
-class GetSlottedResultPostAttachmentSlotLinkAttachment[TSlotAttachment = Never](GQLSlotModel[TSlotAttachment]):
+class GetSlottedQueryResultPostAttachmentSlotLinkAttachment[TSlotAttachment = Never](GQLSlotModel[TSlotAttachment]):
     slot_name__: ClassVar[str] = "attachment"
     typename__: Annotated[Literal["LinkAttachment"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
 
 
-type GetSlottedResultPostAttachmentSlot[TSlotAttachment] = Annotated[GetSlottedResultPostAttachmentSlotImageAttachment[TSlotAttachment] | GetSlottedResultPostAttachmentSlotLinkAttachment[TSlotAttachment], pydantic.Field(discriminator="typename__")]
+type Attachment_2b4c8159[TSlotAttachment] = Annotated[GetSlottedQueryResultPostAttachmentSlotImageAttachment[TSlotAttachment] | GetSlottedQueryResultPostAttachmentSlotLinkAttachment[TSlotAttachment], pydantic.Field(discriminator="typename__")]
 
 
-class PostWithAttachment_GetSlottedResultPostAttachmentSlot[TSlotAttachment = Never](GQLModel):
-    attachment: GetSlottedResultPostAttachmentSlot[TSlotAttachment]
+class PostWithAttachment_Attachment_bfac7f66[TSlotAttachment = Never](GQLModel):
+    attachment: Attachment_2b4c8159[TSlotAttachment]
 
 
-class GetSlottedResult[TSlotAttachment = Never](GQLModel):
-    post: PostWithAttachment_GetSlottedResultPostAttachmentSlot[TSlotAttachment]
+class GetSlottedQueryResult[TSlotAttachment = Never](GQLModel):
+    post: PostWithAttachment_Attachment_bfac7f66[TSlotAttachment]
 
 
 class ImageUrlData(GQLOpenModel):
     url: str
 
 
-class GetPost(runtime.GQLOperation):
+class GetPostQuery(runtime.GQLOperation):
     # See: queries.py:3
-    def execute(self) -> GetPostResult:
+    def execute(self) -> GetPostQueryResult:
         return _client.query(
-            GetPostResult,
+            GetPostQueryResult,
             'query GetPost {\n  post {\n    id\n    postTitle\n  }\n}',
             variables={},
             headers=self.headers,
         )
 
 
-class GetAttachment(runtime.GQLOperation):
+class GetAttachmentQuery(runtime.GQLOperation):
     # See: queries.py:4
-    def execute(self) -> GetAttachmentResult:
+    def execute(self) -> GetAttachmentQueryResult:
         return _client.query(
-            GetAttachmentResult,
+            GetAttachmentQueryResult,
             'query GetAttachment {\n  post {\n    attachment {\n      __typename\n      ... on ImageAttachment {\n        url\n      }\n      ... on LinkAttachment {\n        href\n      }\n    }\n  }\n}',
             variables={},
             headers=self.headers,
         )
 
 
-class Counter(runtime.GQLOperation):
+class CounterSubscription(runtime.GQLOperation):
     # See: queries.py:20
-    def execute(self) -> AbstractContextManager[Generator[CounterResult]]:
+    def execute(self) -> AbstractContextManager[Generator[CounterSubscriptionResult]]:
         return _client.subscribe(
-            CounterResult,
+            CounterSubscriptionResult,
             'subscription Counter {\n  counter\n}',
             variables={},
             headers=self.headers,
@@ -179,22 +179,22 @@ class OnImageAttachment(slots.GQLBindableFragment[TModel, TReads], ABC):
 
 
 @final
-class ImageUrl(OnImageAttachment[ImageUrlData, "ImageUrl"]):
+class ImageUrlFragment(OnImageAttachment[ImageUrlData, "ImageUrlFragment"]):
     adapter__: ClassVar[pydantic.TypeAdapter[ImageUrlData]] = pydantic.TypeAdapter(ImageUrlData)
 
     @override
     def __init__(self) -> None:
         super().__init__(
             fragment_name='ImageUrl',
-            definition_type=ImageUrl,
+            definition_type=ImageUrlFragment,
             adapter=self.adapter__,
         )
 
 
-class GetSlottedBound[TResult: pydantic.BaseModel](runtime.GQLBoundOperation):
+class GetSlottedQueryBound[TResult: pydantic.BaseModel](runtime.GQLBoundOperation):
     def execute(self) -> TResult:
         return _client.query(
-            typing.cast("type[TResult]", GetSlottedResult),
+            typing.cast("type[TResult]", GetSlottedQueryResult),
             self.exec_source,
             variables={**self.fragment_args},
             headers=self.headers,
@@ -202,46 +202,46 @@ class GetSlottedBound[TResult: pydantic.BaseModel](runtime.GQLBoundOperation):
         )
 
 
-class GetSlotted(runtime.GQLTemplate):
+class GetSlottedQuery(runtime.GQLTemplate):
     _binding_specs: ClassVar[dict[slots.BindingKey, runtime.BoundSpec]] = {
         # See: queries.py:15
         (): ('query GetSlotted {\n  post {\n    attachment {\n      __typename\n    }\n  }\n}', {"attachment": ()}),
         # See: queries.py:15, queries.py:18
-        (('attachment', (ImageUrl,)),): ('query GetSlotted {\n  post {\n    attachment {\n      __typename\n      ...ImageUrl\n    }\n  }\n}\n\nfragment ImageUrl on ImageAttachment {\n  url\n}', {"attachment": ((ImageUrl, frozenset({'ImageAttachment'})),)}),
+        (('attachment', (ImageUrlFragment,)),): ('query GetSlotted {\n  post {\n    attachment {\n      __typename\n      ...ImageUrl\n    }\n  }\n}\n\nfragment ImageUrl on ImageAttachment {\n  url\n}', {"attachment": ((ImageUrlFragment, frozenset({'ImageAttachment'})),)}),
     }
 
     @overload
-    def bind(self, *, attachment: Sequence[Never] = ()) -> GetSlottedBound[GetSlottedResult[Never]]: ...
+    def bind(self, *, attachment: Sequence[Never] = ()) -> GetSlottedQueryBound[GetSlottedQueryResult[Never]]: ...
     @overload
-    def bind[TModelAttachment: pydantic.BaseModel, TReadsAttachment](self, *, attachment: OnImageAttachment[TModelAttachment, TReadsAttachment]) -> GetSlottedBound[GetSlottedResult[OnImageAttachment[TModelAttachment, TReadsAttachment] | TReadsAttachment]]: ...
+    def bind[TModelAttachment: pydantic.BaseModel, TReadsAttachment](self, *, attachment: OnImageAttachment[TModelAttachment, TReadsAttachment]) -> GetSlottedQueryBound[GetSlottedQueryResult[OnImageAttachment[TModelAttachment, TReadsAttachment] | TReadsAttachment]]: ...
     def bind(self, *, attachment: slots.GQLBindableFragment[pydantic.BaseModel, Any] | Sequence[slots.GQLBindableFragment[pydantic.BaseModel, Any]] = ()) -> runtime.GQLBoundOperation:
         if slots.binding_key({'attachment': attachment}) not in self._binding_specs:
-            raise LookupError("unknown bind combination for GetSlotted; single-fragment and empty combinations are generated from the schema, so this is a tuple combination no call site writes literally - write it, then regenerate the module. A call whose template is an expression the scan cannot follow is never read either: those are listed, with the reason, in the debug run's ignored_binds.json")
-        return GetSlottedBound[GetSlottedResult].bound__(
+            raise LookupError("unknown bind combination for GetSlottedQuery; single-fragment and empty combinations are generated from the schema, so this is a tuple combination no call site writes literally - write it, then regenerate the module. A call whose template is an expression the scan cannot follow is never read either: those are listed, with the reason, in the debug run's ignored_binds.json")
+        return GetSlottedQueryBound[GetSlottedQueryResult].bound__(
             self._binding_specs[slots.binding_key({'attachment': attachment})], {'attachment': slots.as_bindable_fragments(attachment)},
         )
 
 
 @overload
-def api_gql(stmt: Literal['query GetPost { post { id postTitle } }']) -> GetPost: ...
+def api_gql(stmt: Literal['query GetPost { post { id postTitle } }']) -> GetPostQuery: ...
 @overload
-def api_gql(stmt: Literal['\n    query GetAttachment {\n        post {\n            attachment {\n                __typename\n                ... on ImageAttachment { url }\n                ... on LinkAttachment { href }\n            }\n        }\n    }\n']) -> GetAttachment: ...
+def api_gql(stmt: Literal['\n    query GetAttachment {\n        post {\n            attachment {\n                __typename\n                ... on ImageAttachment { url }\n                ... on LinkAttachment { href }\n            }\n        }\n    }\n']) -> GetAttachmentQuery: ...
 @overload
-def api_gql(stmt: Literal['subscription Counter { counter }']) -> Counter: ...
+def api_gql(stmt: Literal['subscription Counter { counter }']) -> CounterSubscription: ...
 @overload
-def api_gql(stmt: Literal['fragment ImageUrl on ImageAttachment { url }']) -> ImageUrl: ...
+def api_gql(stmt: Literal['fragment ImageUrl on ImageAttachment { url }']) -> ImageUrlFragment: ...
 @overload
-def api_gql(stmt: Literal['\n    query GetSlotted { post { attachment @slot { __typename } } }\n']) -> GetSlotted: ...
+def api_gql(stmt: Literal['\n    query GetSlotted { post { attachment @slot { __typename } } }\n']) -> GetSlottedQuery: ...
 @overload
 def api_gql(stmt: str) -> runtime.GQLOperation | slots.GQLFragment[pydantic.BaseModel, Any] | runtime.GQLTemplate: ...
 
 
 _statement_factories: dict[str, Callable[[], runtime.GQLOperation | slots.GQLFragment[pydantic.BaseModel, Any] | runtime.GQLTemplate]] = {
-    'query GetPost { post { id postTitle } }': GetPost,
-    '\n    query GetAttachment {\n        post {\n            attachment {\n                __typename\n                ... on ImageAttachment { url }\n                ... on LinkAttachment { href }\n            }\n        }\n    }\n': GetAttachment,
-    'subscription Counter { counter }': Counter,
-    'fragment ImageUrl on ImageAttachment { url }': lambda: ImageUrl(),
-    '\n    query GetSlotted { post { attachment @slot { __typename } } }\n': GetSlotted,
+    'query GetPost { post { id postTitle } }': GetPostQuery,
+    '\n    query GetAttachment {\n        post {\n            attachment {\n                __typename\n                ... on ImageAttachment { url }\n                ... on LinkAttachment { href }\n            }\n        }\n    }\n': GetAttachmentQuery,
+    'subscription Counter { counter }': CounterSubscription,
+    'fragment ImageUrl on ImageAttachment { url }': lambda: ImageUrlFragment(),
+    '\n    query GetSlotted { post { attachment @slot { __typename } } }\n': GetSlottedQuery,
 }
 
 

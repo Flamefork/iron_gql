@@ -54,15 +54,15 @@ class GQLModel(pydantic.BaseModel):
     )
 
 
-class PingResult(GQLModel):
+class PingQueryResult(GQLModel):
     ping: str
 
 
-class FailResult(GQLModel):
+class FailQueryResult(GQLModel):
     fail: str
 
 
-class OkResult(GQLModel):
+class OkQueryResult(GQLModel):
     ok: str
 
 
@@ -71,20 +71,20 @@ class User(GQLModel):
     name: str
 
 
-class GetUserResult(GQLModel):
+class GetUserQueryResult(GQLModel):
     user: User | None
 
 
-class UpdateUserResult(GQLModel):
+class UpdateUserMutationResult(GQLModel):
     update_user: User | None
 
 
-class NumbersResult(GQLModel):
+class NumbersQueryResult(GQLModel):
     numbers_1: list[int | None]
     numbers_2: list[int] | None
 
 
-class GetPostsResult(GQLModel):
+class GetPostsQueryResult(GQLModel):
     posts: list[int]
 
 
@@ -93,19 +93,19 @@ class Event(GQLModel):
     started_at: datetime.datetime
 
 
-class GetEventsResult(GQLModel):
+class GetEventsQueryResult(GQLModel):
     events: list[Event]
 
 
-class SearchResult(GQLModel):
+class SearchQueryResult(GQLModel):
     search: str
 
 
-class UploadFileResult(GQLModel):
+class UploadFileMutationResult(GQLModel):
     upload_file: str
 
 
-class UploadResult(GQLModel):
+class UploadMutationResult(GQLModel):
     upload_file: str
 
 
@@ -125,121 +125,121 @@ class UpdateUserInput(GQLModel):
     name: str
 
 
-class Ping(runtime.GQLOperation):
+class PingQuery(runtime.GQLOperation):
     # See: queries.py:3
-    async def execute(self) -> PingResult:
+    async def execute(self) -> PingQueryResult:
         return await _client.query(
-            PingResult,
+            PingQueryResult,
             'query Ping {\n  ping\n}',
             variables={},
             headers=self.headers,
         )
 
 
-class Fail(runtime.GQLOperation):
+class FailQuery(runtime.GQLOperation):
     # See: queries.py:4
-    async def execute(self) -> FailResult:
+    async def execute(self) -> FailQueryResult:
         return await _client.query(
-            FailResult,
+            FailQueryResult,
             'query Fail {\n  fail\n}',
             variables={},
             headers=self.headers,
         )
 
 
-class Ok(runtime.GQLOperation):
+class OkQuery(runtime.GQLOperation):
     # See: queries.py:5
-    async def execute(self) -> OkResult:
+    async def execute(self) -> OkQueryResult:
         return await _client.query(
-            OkResult,
+            OkQueryResult,
             'query Ok {\n  ok\n}',
             variables={},
             headers=self.headers,
         )
 
 
-class GetUser(runtime.GQLOperation):
+class GetUserQuery(runtime.GQLOperation):
     # See: queries.py:7
-    async def execute(self, *, id: builtins.str) -> GetUserResult:
+    async def execute(self, *, id: builtins.str) -> GetUserQueryResult:
         return await _client.query(
-            GetUserResult,
+            GetUserQueryResult,
             'query GetUser($id: ID!) {\n  user(id: $id) {\n    id\n    name\n  }\n}',
             variables={"id": id},
             headers=self.headers,
         )
 
 
-class UpdateUser(runtime.GQLOperation):
+class UpdateUserMutation(runtime.GQLOperation):
     # See: queries.py:18
-    async def execute(self, *, input: UpdateUserInput) -> UpdateUserResult:
+    async def execute(self, *, input: UpdateUserInput) -> UpdateUserMutationResult:
         return await _client.query(
-            UpdateUserResult,
+            UpdateUserMutationResult,
             'mutation UpdateUser($input: UpdateUserInput!) {\n  updateUser(input: $input) {\n    id\n    name\n  }\n}',
             variables={"input": input},
             headers=self.headers,
         )
 
 
-class Numbers(runtime.GQLOperation):
+class NumbersQuery(runtime.GQLOperation):
     # See: queries.py:29
-    async def execute(self) -> NumbersResult:
+    async def execute(self) -> NumbersQueryResult:
         return await _client.query(
-            NumbersResult,
+            NumbersQueryResult,
             'query Numbers {\n  numbers1\n  numbers2\n}',
             variables={},
             headers=self.headers,
         )
 
 
-class GetPosts(runtime.GQLOperation):
+class GetPostsQuery(runtime.GQLOperation):
     # See: queries.py:38
-    async def execute(self, *, limit: int | None = 5) -> GetPostsResult:
+    async def execute(self, *, limit: int | None = 5) -> GetPostsQueryResult:
         return await _client.query(
-            GetPostsResult,
+            GetPostsQueryResult,
             'query GetPosts($limit: Int = 5) {\n  posts(limit: $limit)\n}',
             variables={"limit": limit},
             headers=self.headers,
         )
 
 
-class GetEvents(runtime.GQLOperation):
+class GetEventsQuery(runtime.GQLOperation):
     # See: queries.py:46
-    async def execute(self, *, since: datetime.datetime) -> GetEventsResult:
+    async def execute(self, *, since: datetime.datetime) -> GetEventsQueryResult:
         return await _client.query(
-            GetEventsResult,
+            GetEventsQueryResult,
             'query GetEvents($since: DateTime!) {\n  events(since: $since) {\n    name\n    startedAt\n  }\n}',
             variables={"since": since},
             headers=self.headers,
         )
 
 
-class Search(runtime.GQLOperation):
+class SearchQuery(runtime.GQLOperation):
     # See: queries.py:57
-    async def execute(self, *, criteria: SearchCriteria) -> SearchResult:
+    async def execute(self, *, criteria: SearchCriteria) -> SearchQueryResult:
         return await _client.query(
-            SearchResult,
+            SearchQueryResult,
             'query Search($criteria: SearchCriteria!) {\n  search(criteria: $criteria)\n}',
             variables={"criteria": criteria},
             headers=self.headers,
         )
 
 
-class UploadFile(runtime.GQLOperation):
+class UploadFileMutation(runtime.GQLOperation):
     # See: queries.py:65
-    async def execute(self, *, file: runtime.FileVar, label: str) -> UploadFileResult:
+    async def execute(self, *, file: runtime.FileVar, label: str) -> UploadFileMutationResult:
         return await _client.query(
-            UploadFileResult,
+            UploadFileMutationResult,
             'mutation UploadFile($file: Upload!, $label: String!) {\n  uploadFile(file: $file, label: $label)\n}',
             variables={"file": file, "label": label},
             headers=self.headers,
         )
 
 
-class Upload(runtime.GQLOperation):
+class UploadMutation(runtime.GQLOperation):
     # See: queries.py:73
-    async def execute(self, *, file: runtime.FileVar) -> UploadResult:
+    async def execute(self, *, file: runtime.FileVar) -> UploadMutationResult:
         return await _client.query(
-            UploadResult,
+            UploadMutationResult,
             'mutation Upload($file: Upload!) {\n  uploadFile(file: $file)\n}',
             variables={"file": file},
             headers=self.headers,
@@ -247,43 +247,43 @@ class Upload(runtime.GQLOperation):
 
 
 @overload
-def api_gql(stmt: Literal['query Ping { ping }']) -> Ping: ...
+def api_gql(stmt: Literal['query Ping { ping }']) -> PingQuery: ...
 @overload
-def api_gql(stmt: Literal['query Fail { fail }']) -> Fail: ...
+def api_gql(stmt: Literal['query Fail { fail }']) -> FailQuery: ...
 @overload
-def api_gql(stmt: Literal['query Ok { ok }']) -> Ok: ...
+def api_gql(stmt: Literal['query Ok { ok }']) -> OkQuery: ...
 @overload
-def api_gql(stmt: Literal['\n    query GetUser($id: ID!) {\n        user(id: $id) {\n            id\n            name\n        }\n    }\n    ']) -> GetUser: ...
+def api_gql(stmt: Literal['\n    query GetUser($id: ID!) {\n        user(id: $id) {\n            id\n            name\n        }\n    }\n    ']) -> GetUserQuery: ...
 @overload
-def api_gql(stmt: Literal['\n    mutation UpdateUser($input: UpdateUserInput!) {\n        updateUser(input: $input) {\n            id\n            name\n        }\n    }\n    ']) -> UpdateUser: ...
+def api_gql(stmt: Literal['\n    mutation UpdateUser($input: UpdateUserInput!) {\n        updateUser(input: $input) {\n            id\n            name\n        }\n    }\n    ']) -> UpdateUserMutation: ...
 @overload
-def api_gql(stmt: Literal['\n    query Numbers {\n        numbers1\n        numbers2\n    }\n    ']) -> Numbers: ...
+def api_gql(stmt: Literal['\n    query Numbers {\n        numbers1\n        numbers2\n    }\n    ']) -> NumbersQuery: ...
 @overload
-def api_gql(stmt: Literal['\n    query GetPosts($limit: Int = 5) {\n        posts(limit: $limit)\n    }\n    ']) -> GetPosts: ...
+def api_gql(stmt: Literal['\n    query GetPosts($limit: Int = 5) {\n        posts(limit: $limit)\n    }\n    ']) -> GetPostsQuery: ...
 @overload
-def api_gql(stmt: Literal['\n    query GetEvents($since: DateTime!) {\n        events(since: $since) {\n            name\n            startedAt\n        }\n    }\n    ']) -> GetEvents: ...
+def api_gql(stmt: Literal['\n    query GetEvents($since: DateTime!) {\n        events(since: $since) {\n            name\n            startedAt\n        }\n    }\n    ']) -> GetEventsQuery: ...
 @overload
-def api_gql(stmt: Literal['\n    query Search($criteria: SearchCriteria!) {\n        search(criteria: $criteria)\n    }\n    ']) -> Search: ...
+def api_gql(stmt: Literal['\n    query Search($criteria: SearchCriteria!) {\n        search(criteria: $criteria)\n    }\n    ']) -> SearchQuery: ...
 @overload
-def api_gql(stmt: Literal['\n    mutation UploadFile($file: Upload!, $label: String!) {\n        uploadFile(file: $file, label: $label)\n    }\n    ']) -> UploadFile: ...
+def api_gql(stmt: Literal['\n    mutation UploadFile($file: Upload!, $label: String!) {\n        uploadFile(file: $file, label: $label)\n    }\n    ']) -> UploadFileMutation: ...
 @overload
-def api_gql(stmt: Literal['\n    mutation Upload($file: Upload!) {\n        uploadFile(file: $file)\n    }\n    ']) -> Upload: ...
+def api_gql(stmt: Literal['\n    mutation Upload($file: Upload!) {\n        uploadFile(file: $file)\n    }\n    ']) -> UploadMutation: ...
 @overload
 def api_gql(stmt: str) -> runtime.GQLOperation: ...
 
 
 _statement_factories: dict[str, Callable[[], runtime.GQLOperation]] = {
-    'query Ping { ping }': Ping,
-    'query Fail { fail }': Fail,
-    'query Ok { ok }': Ok,
-    '\n    query GetUser($id: ID!) {\n        user(id: $id) {\n            id\n            name\n        }\n    }\n    ': GetUser,
-    '\n    mutation UpdateUser($input: UpdateUserInput!) {\n        updateUser(input: $input) {\n            id\n            name\n        }\n    }\n    ': UpdateUser,
-    '\n    query Numbers {\n        numbers1\n        numbers2\n    }\n    ': Numbers,
-    '\n    query GetPosts($limit: Int = 5) {\n        posts(limit: $limit)\n    }\n    ': GetPosts,
-    '\n    query GetEvents($since: DateTime!) {\n        events(since: $since) {\n            name\n            startedAt\n        }\n    }\n    ': GetEvents,
-    '\n    query Search($criteria: SearchCriteria!) {\n        search(criteria: $criteria)\n    }\n    ': Search,
-    '\n    mutation UploadFile($file: Upload!, $label: String!) {\n        uploadFile(file: $file, label: $label)\n    }\n    ': UploadFile,
-    '\n    mutation Upload($file: Upload!) {\n        uploadFile(file: $file)\n    }\n    ': Upload,
+    'query Ping { ping }': PingQuery,
+    'query Fail { fail }': FailQuery,
+    'query Ok { ok }': OkQuery,
+    '\n    query GetUser($id: ID!) {\n        user(id: $id) {\n            id\n            name\n        }\n    }\n    ': GetUserQuery,
+    '\n    mutation UpdateUser($input: UpdateUserInput!) {\n        updateUser(input: $input) {\n            id\n            name\n        }\n    }\n    ': UpdateUserMutation,
+    '\n    query Numbers {\n        numbers1\n        numbers2\n    }\n    ': NumbersQuery,
+    '\n    query GetPosts($limit: Int = 5) {\n        posts(limit: $limit)\n    }\n    ': GetPostsQuery,
+    '\n    query GetEvents($since: DateTime!) {\n        events(since: $since) {\n            name\n            startedAt\n        }\n    }\n    ': GetEventsQuery,
+    '\n    query Search($criteria: SearchCriteria!) {\n        search(criteria: $criteria)\n    }\n    ': SearchQuery,
+    '\n    mutation UploadFile($file: Upload!, $label: String!) {\n        uploadFile(file: $file, label: $label)\n    }\n    ': UploadFileMutation,
+    '\n    mutation Upload($file: Upload!) {\n        uploadFile(file: $file)\n    }\n    ': UploadMutation,
 }
 
 

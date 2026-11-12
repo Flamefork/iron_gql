@@ -17,6 +17,7 @@ from tests.conftest import ProjectBuilder
 from tests.conftest import generated_package
 from tests.conftest import gql_server
 from tests.corpus import module_imports
+from tests.corpus.generated_oracles import assert_builtins_read_are_claimed
 from tests.corpus.generated_oracles import assert_each_module_imported_once
 from tests.corpus.generated_oracles import assert_module_is_self_contained
 from tests.corpus.module_imports import IMPORT_FORMS
@@ -417,7 +418,7 @@ def test_unknown_scalar_warning(test_project: ProjectBuilder):
 
     api = test_project.import_api()
     # attributes of a dynamically imported module are Any
-    result = api.GetValueResult(custom_value={"raw": "value"})  # pyright: ignore[reportAny]
+    result = api.GetValueQueryResult(custom_value={"raw": "value"})  # pyright: ignore[reportAny]
     assert result.custom_value == {"raw": "value"}  # pyright: ignore[reportAny]
 
 
@@ -784,8 +785,8 @@ def test_duplicate_query_with_different_spelling_resolves_both(
         """,
     )
     api_module, queries_module = test_project.generate_and_import()
-    assert isinstance(queries_module.first, api_module.Ping)  # pyright: ignore[reportAny]
-    assert isinstance(queries_module.second, api_module.Ping)  # pyright: ignore[reportAny]
+    assert isinstance(queries_module.first, api_module.PingQuery)  # pyright: ignore[reportAny]
+    assert isinstance(queries_module.second, api_module.PingQuery)  # pyright: ignore[reportAny]
 
 
 def test_statically_empty_selection_is_rejected(test_project: ProjectBuilder):
@@ -821,8 +822,8 @@ def test_statically_empty_selection_is_rejected(test_project: ProjectBuilder):
 
 
 def test_enum_sharing_a_model_raw_name_is_rejected(test_project: ProjectBuilder):
-    # `q { child ... }` generates a model raw-named QResultChild; an enum with
-    # the same schema name makes every NamedRef('QResultChild') ambiguous —
+    # `q { child ... }` generates a model raw-named QQueryResultChild; an enum with
+    # the same schema name makes every NamedRef('QQueryResultChild') ambiguous —
     # the subtree walks recurse through the model where the enum was meant.
     test_project.prepare(
         schema="""
@@ -832,10 +833,10 @@ def test_enum_sharing_a_model_raw_name_is_rejected(test_project: ProjectBuilder)
 
         type Child {
             id: ID!
-            status: QResultChild
+            status: QQueryResultChild
         }
 
-        enum QResultChild {
+        enum QQueryResultChild {
             ACTIVE
             INACTIVE
         }
@@ -850,14 +851,14 @@ def test_enum_sharing_a_model_raw_name_is_rejected(test_project: ProjectBuilder)
         )
         """,
     )
-    with pytest.raises(GraphQLGenerationError, match="Enum 'QResultChild' shares"):
+    with pytest.raises(GraphQLGenerationError, match="Enum 'QQueryResultChild' shares"):
         test_project.generate()
 
 
 def test_colliding_paths_with_different_shapes_are_rejected(
     test_project: ProjectBuilder,
 ):
-    # `aB.c` and `a.bC` both concatenate to the raw name SResultABC; the
+    # `aB.c` and `a.bC` both concatenate to the raw name SQueryResultABC; the
     # rename map is keyed by name, so it cannot give the two shapes distinct
     # detailed names — the collision is the developer's to resolve.
     test_project.prepare(
@@ -1027,7 +1028,7 @@ def test_variable_named_after_the_client_binding_is_rejected(
     with pytest.raises(
         GraphQLGenerationError,
         match=(
-            r"Parameter '_client' of execute\(\) of operation 'GetUser'"
+            r"Parameter '_client' of execute\(\) of operation 'GetUserQuery'"
             r".*the generated client binding"
         ),
     ):
@@ -1291,11 +1292,11 @@ def test_sync_and_async_modules_coexist(test_project: ProjectBuilder):
     sync_source = (test_project.root / "sample_app/gql/api_sync.py").read_text()
 
     assert "runtime.AsyncGQLClient(" in async_source
-    assert "    async def execute(self) -> PingResult:" in async_source
+    assert "    async def execute(self) -> PingQueryResult:" in async_source
     assert "from collections.abc import AsyncGenerator" in async_source
 
     assert "runtime.GQLClient(" in sync_source
-    assert "    def execute(self) -> PingSyncResult:" in sync_source
+    assert "    def execute(self) -> PingSyncQueryResult:" in sync_source
     assert "async def" not in sync_source
     assert "await " not in sync_source
     assert "from collections.abc import Generator" in sync_source
@@ -1318,3 +1319,26 @@ def test_each_module_is_imported_once(test_project: ProjectBuilder, form: Import
 
     assert_each_module_imported_once(generated)
     assert_module_is_self_contained(generated)
+
+
+@pytest.mark.parametrize(
+    ("source", "problem"),
+    [
+        ("def f() -> int:\n    return len([])\n", "reads unclaimed builtins: len"),
+        (
+            "class str:\n    pass\n\nx: list[str] = []\n",
+            "rebinds the builtins it reads: str",
+        ),
+    ],
+)
+def test_the_builtin_oracle_catches_what_it_guards(
+    test_project: ProjectBuilder, source: str, problem: str
+):
+    # The oracle every generated module answers, shown to fail on the two
+    # regressions it exists for.
+    test_project.write_file(test_project.root / "sample_app/__init__.py", "")
+    test_project.write_file(test_project.root / "sample_app/probe.py", source)
+    test_project.clear_import_state()
+    module = importlib.import_module("sample_app.probe")
+    with pytest.raises(AssertionError, match=problem):
+        assert_builtins_read_are_claimed(module)

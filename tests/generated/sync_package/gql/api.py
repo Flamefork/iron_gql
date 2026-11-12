@@ -67,29 +67,29 @@ class UserWithIdName(GQLModel):
     name: str
 
 
-class GetUserResult(GQLModel):
+class GetUserQueryResult(GQLModel):
     user: UserWithIdName | None
 
 
-class RenameUserResult(GQLModel):
+class RenameUserMutationResult(GQLModel):
     rename_user: UserWithIdName
 
 
-class UserRenamedResult(GQLModel):
+class UserRenamedSubscriptionResult(GQLModel):
     user_renamed: UserWithIdName
 
 
-class GetUserWithManagerResultUserManagerSlot[TSlotManager = Never](GQLSlotModel[TSlotManager]):
+class GetUserWithManagerQueryResultUserManagerSlot[TSlotManager = Never](GQLSlotModel[TSlotManager]):
     slot_name__: ClassVar[str] = "manager"
     typename__: Annotated[Literal["User"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
 
 
 class UserWithIdManager[TSlotManager = Never](GQLModel):
     id: builtins.str
-    manager: GetUserWithManagerResultUserManagerSlot[TSlotManager] | None
+    manager: GetUserWithManagerQueryResultUserManagerSlot[TSlotManager] | None
 
 
-class GetUserWithManagerResult[TSlotManager = Never](GQLModel):
+class GetUserWithManagerQueryResult[TSlotManager = Never](GQLModel):
     user: UserWithIdManager[TSlotManager] | None
 
 
@@ -97,33 +97,33 @@ class ManagerNameData(GQLOpenModel):
     name: str
 
 
-class GetUser(runtime.GQLOperation):
+class GetUserQuery(runtime.GQLOperation):
     # See: queries.py:3
-    def execute(self, *, id: builtins.str) -> GetUserResult:
+    def execute(self, *, id: builtins.str) -> GetUserQueryResult:
         return _client.query(
-            GetUserResult,
+            GetUserQueryResult,
             'query GetUser($id: ID!) {\n  user(id: $id) {\n    id\n    name\n  }\n}',
             variables={"id": id},
             headers=self.headers,
         )
 
 
-class RenameUser(runtime.GQLOperation):
+class RenameUserMutation(runtime.GQLOperation):
     # See: queries.py:14
-    def execute(self, *, id: builtins.str, name: str) -> RenameUserResult:
+    def execute(self, *, id: builtins.str, name: str) -> RenameUserMutationResult:
         return _client.query(
-            RenameUserResult,
+            RenameUserMutationResult,
             'mutation RenameUser($id: ID!, $name: String!) {\n  renameUser(id: $id, name: $name) {\n    id\n    name\n  }\n}',
             variables={"id": id, "name": name},
             headers=self.headers,
         )
 
 
-class UserRenamed(runtime.GQLOperation):
+class UserRenamedSubscription(runtime.GQLOperation):
     # See: queries.py:25
-    def execute(self, *, id: builtins.str) -> AbstractContextManager[Generator[UserRenamedResult]]:
+    def execute(self, *, id: builtins.str) -> AbstractContextManager[Generator[UserRenamedSubscriptionResult]]:
         return _client.subscribe(
-            UserRenamedResult,
+            UserRenamedSubscriptionResult,
             'subscription UserRenamed($id: ID!) {\n  userRenamed(id: $id) {\n    id\n    name\n  }\n}',
             variables={"id": id},
             headers=self.headers,
@@ -153,22 +153,22 @@ class OnUser(slots.GQLBindableFragment[TModel, TReads], ABC):
 
 
 @final
-class ManagerName(OnUser[ManagerNameData, "ManagerName"]):
+class ManagerNameFragment(OnUser[ManagerNameData, "ManagerNameFragment"]):
     adapter__: ClassVar[pydantic.TypeAdapter[ManagerNameData]] = pydantic.TypeAdapter(ManagerNameData)
 
     @override
     def __init__(self) -> None:
         super().__init__(
             fragment_name='ManagerName',
-            definition_type=ManagerName,
+            definition_type=ManagerNameFragment,
             adapter=self.adapter__,
         )
 
 
-class GetUserWithManagerBound[TResult: pydantic.BaseModel](runtime.GQLBoundOperation):
+class GetUserWithManagerQueryBound[TResult: pydantic.BaseModel](runtime.GQLBoundOperation):
     def execute(self, *, id: builtins.str) -> TResult:
         return _client.query(
-            typing.cast("type[TResult]", GetUserWithManagerResult),
+            typing.cast("type[TResult]", GetUserWithManagerQueryResult),
             self.exec_source,
             variables={"id": id, **self.fragment_args},
             headers=self.headers,
@@ -176,46 +176,46 @@ class GetUserWithManagerBound[TResult: pydantic.BaseModel](runtime.GQLBoundOpera
         )
 
 
-class GetUserWithManager(runtime.GQLTemplate):
+class GetUserWithManagerQuery(runtime.GQLTemplate):
     _binding_specs: ClassVar[dict[slots.BindingKey, runtime.BoundSpec]] = {
         # See: queries.py:39
         (): ('query GetUserWithManager($id: ID!) {\n  user(id: $id) {\n    id\n    manager {\n      __typename\n    }\n  }\n}', {"manager": ()}),
         # See: queries.py:39, queries.py:50
-        (('manager', (ManagerName,)),): ('query GetUserWithManager($id: ID!) {\n  user(id: $id) {\n    id\n    manager {\n      __typename\n      ...ManagerName\n    }\n  }\n}\n\nfragment ManagerName on User {\n  name\n}', {"manager": ((ManagerName, frozenset({'User'})),)}),
+        (('manager', (ManagerNameFragment,)),): ('query GetUserWithManager($id: ID!) {\n  user(id: $id) {\n    id\n    manager {\n      __typename\n      ...ManagerName\n    }\n  }\n}\n\nfragment ManagerName on User {\n  name\n}', {"manager": ((ManagerNameFragment, frozenset({'User'})),)}),
     }
 
     @overload
-    def bind(self, *, manager: Sequence[Never] = ()) -> GetUserWithManagerBound[GetUserWithManagerResult[Never]]: ...
+    def bind(self, *, manager: Sequence[Never] = ()) -> GetUserWithManagerQueryBound[GetUserWithManagerQueryResult[Never]]: ...
     @overload
-    def bind[TModelManager: pydantic.BaseModel, TReadsManager](self, *, manager: OnUser[TModelManager, TReadsManager]) -> GetUserWithManagerBound[GetUserWithManagerResult[OnUser[TModelManager, TReadsManager] | TReadsManager]]: ...
+    def bind[TModelManager: pydantic.BaseModel, TReadsManager](self, *, manager: OnUser[TModelManager, TReadsManager]) -> GetUserWithManagerQueryBound[GetUserWithManagerQueryResult[OnUser[TModelManager, TReadsManager] | TReadsManager]]: ...
     def bind(self, *, manager: slots.GQLBindableFragment[pydantic.BaseModel, Any] | Sequence[slots.GQLBindableFragment[pydantic.BaseModel, Any]] = ()) -> runtime.GQLBoundOperation:
         if slots.binding_key({'manager': manager}) not in self._binding_specs:
-            raise LookupError("unknown bind combination for GetUserWithManager; single-fragment and empty combinations are generated from the schema, so this is a tuple combination no call site writes literally - write it, then regenerate the module. A call whose template is an expression the scan cannot follow is never read either: those are listed, with the reason, in the debug run's ignored_binds.json")
-        return GetUserWithManagerBound[GetUserWithManagerResult].bound__(
+            raise LookupError("unknown bind combination for GetUserWithManagerQuery; single-fragment and empty combinations are generated from the schema, so this is a tuple combination no call site writes literally - write it, then regenerate the module. A call whose template is an expression the scan cannot follow is never read either: those are listed, with the reason, in the debug run's ignored_binds.json")
+        return GetUserWithManagerQueryBound[GetUserWithManagerQueryResult].bound__(
             self._binding_specs[slots.binding_key({'manager': manager})], {'manager': slots.as_bindable_fragments(manager)},
         )
 
 
 @overload
-def api_gql(stmt: Literal['\n    query GetUser($id: ID!) {\n        user(id: $id) {\n            id\n            name\n        }\n    }\n    ']) -> GetUser: ...
+def api_gql(stmt: Literal['\n    query GetUser($id: ID!) {\n        user(id: $id) {\n            id\n            name\n        }\n    }\n    ']) -> GetUserQuery: ...
 @overload
-def api_gql(stmt: Literal['\n    mutation RenameUser($id: ID!, $name: String!) {\n        renameUser(id: $id, name: $name) {\n            id\n            name\n        }\n    }\n    ']) -> RenameUser: ...
+def api_gql(stmt: Literal['\n    mutation RenameUser($id: ID!, $name: String!) {\n        renameUser(id: $id, name: $name) {\n            id\n            name\n        }\n    }\n    ']) -> RenameUserMutation: ...
 @overload
-def api_gql(stmt: Literal['\n    subscription UserRenamed($id: ID!) {\n        userRenamed(id: $id) {\n            id\n            name\n        }\n    }\n    ']) -> UserRenamed: ...
+def api_gql(stmt: Literal['\n    subscription UserRenamed($id: ID!) {\n        userRenamed(id: $id) {\n            id\n            name\n        }\n    }\n    ']) -> UserRenamedSubscription: ...
 @overload
-def api_gql(stmt: Literal['\n    fragment ManagerName on User {\n        name\n    }\n    ']) -> ManagerName: ...
+def api_gql(stmt: Literal['\n    fragment ManagerName on User {\n        name\n    }\n    ']) -> ManagerNameFragment: ...
 @overload
-def api_gql(stmt: Literal['\n    query GetUserWithManager($id: ID!) {\n        user(id: $id) {\n            id\n            manager @slot { __typename }\n        }\n    }\n    ']) -> GetUserWithManager: ...
+def api_gql(stmt: Literal['\n    query GetUserWithManager($id: ID!) {\n        user(id: $id) {\n            id\n            manager @slot { __typename }\n        }\n    }\n    ']) -> GetUserWithManagerQuery: ...
 @overload
 def api_gql(stmt: str) -> runtime.GQLOperation | slots.GQLFragment[pydantic.BaseModel, Any] | runtime.GQLTemplate: ...
 
 
 _statement_factories: dict[str, Callable[[], runtime.GQLOperation | slots.GQLFragment[pydantic.BaseModel, Any] | runtime.GQLTemplate]] = {
-    '\n    query GetUser($id: ID!) {\n        user(id: $id) {\n            id\n            name\n        }\n    }\n    ': GetUser,
-    '\n    mutation RenameUser($id: ID!, $name: String!) {\n        renameUser(id: $id, name: $name) {\n            id\n            name\n        }\n    }\n    ': RenameUser,
-    '\n    subscription UserRenamed($id: ID!) {\n        userRenamed(id: $id) {\n            id\n            name\n        }\n    }\n    ': UserRenamed,
-    '\n    fragment ManagerName on User {\n        name\n    }\n    ': lambda: ManagerName(),
-    '\n    query GetUserWithManager($id: ID!) {\n        user(id: $id) {\n            id\n            manager @slot { __typename }\n        }\n    }\n    ': GetUserWithManager,
+    '\n    query GetUser($id: ID!) {\n        user(id: $id) {\n            id\n            name\n        }\n    }\n    ': GetUserQuery,
+    '\n    mutation RenameUser($id: ID!, $name: String!) {\n        renameUser(id: $id, name: $name) {\n            id\n            name\n        }\n    }\n    ': RenameUserMutation,
+    '\n    subscription UserRenamed($id: ID!) {\n        userRenamed(id: $id) {\n            id\n            name\n        }\n    }\n    ': UserRenamedSubscription,
+    '\n    fragment ManagerName on User {\n        name\n    }\n    ': lambda: ManagerNameFragment(),
+    '\n    query GetUserWithManager($id: ID!) {\n        user(id: $id) {\n            id\n            manager @slot { __typename }\n        }\n    }\n    ': GetUserWithManagerQuery,
 }
 
 

@@ -54,7 +54,7 @@ class GQLModel(pydantic.BaseModel):
     )
 
 
-class UpdateUserResult(GQLModel):
+class UpdateUserMutationResult(GQLModel):
     update_user: bool | None
 
 
@@ -67,11 +67,11 @@ class UpdateUserInput(GQLModel):
     address: AddressInput | None = None
 
 
-class UpdateUser(runtime.GQLOperation):
+class UpdateUserMutation(runtime.GQLOperation):
     # See: queries.py:3
-    async def execute(self, *, input: UpdateUserInput) -> UpdateUserResult:
+    async def execute(self, *, input: UpdateUserInput) -> UpdateUserMutationResult:
         return await _client.query(
-            UpdateUserResult,
+            UpdateUserMutationResult,
             'mutation UpdateUser($input: UpdateUserInput!) {\n  updateUser(input: $input)\n}',
             variables={"input": input},
             headers=self.headers,
@@ -79,13 +79,13 @@ class UpdateUser(runtime.GQLOperation):
 
 
 @overload
-def api_gql(stmt: Literal['\n    mutation UpdateUser($input: UpdateUserInput!) {\n        updateUser(input: $input)\n    }\n    ']) -> UpdateUser: ...
+def api_gql(stmt: Literal['\n    mutation UpdateUser($input: UpdateUserInput!) {\n        updateUser(input: $input)\n    }\n    ']) -> UpdateUserMutation: ...
 @overload
 def api_gql(stmt: str) -> runtime.GQLOperation: ...
 
 
 _statement_factories: dict[str, Callable[[], runtime.GQLOperation]] = {
-    '\n    mutation UpdateUser($input: UpdateUserInput!) {\n        updateUser(input: $input)\n    }\n    ': UpdateUser,
+    '\n    mutation UpdateUser($input: UpdateUserInput!) {\n        updateUser(input: $input)\n    }\n    ': UpdateUserMutation,
 }
 
 

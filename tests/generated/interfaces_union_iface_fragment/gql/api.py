@@ -66,18 +66,18 @@ class User(GQLModel):
     name: str
 
 
-type GetActorResultActor = Annotated[Admin | User, pydantic.Field(discriminator="typename__")]
+type Actor = Annotated[Admin | User, pydantic.Field(discriminator="typename__")]
 
 
-class GetActorResult(GQLModel):
-    actor: GetActorResultActor | None
+class GetActorQueryResult(GQLModel):
+    actor: Actor | None
 
 
-class GetActor(runtime.GQLOperation):
+class GetActorQuery(runtime.GQLOperation):
     # See: queries.py:3
-    async def execute(self, *, id: builtins.str) -> GetActorResult:
+    async def execute(self, *, id: builtins.str) -> GetActorQueryResult:
         return await _client.query(
-            GetActorResult,
+            GetActorQueryResult,
             'query GetActor($id: ID!) {\n  actor(id: $id) {\n    __typename\n    ... on Node {\n      id\n    }\n    ... on User {\n      name\n    }\n    ... on Admin {\n      permissions\n    }\n  }\n}',
             variables={"id": id},
             headers=self.headers,
@@ -85,13 +85,13 @@ class GetActor(runtime.GQLOperation):
 
 
 @overload
-def api_gql(stmt: Literal['\n    query GetActor($id: ID!) {\n        actor(id: $id) {\n            __typename\n            ... on Node {\n                id\n            }\n            ... on User {\n                name\n            }\n            ... on Admin {\n                permissions\n            }\n        }\n    }\n    ']) -> GetActor: ...
+def api_gql(stmt: Literal['\n    query GetActor($id: ID!) {\n        actor(id: $id) {\n            __typename\n            ... on Node {\n                id\n            }\n            ... on User {\n                name\n            }\n            ... on Admin {\n                permissions\n            }\n        }\n    }\n    ']) -> GetActorQuery: ...
 @overload
 def api_gql(stmt: str) -> runtime.GQLOperation: ...
 
 
 _statement_factories: dict[str, Callable[[], runtime.GQLOperation]] = {
-    '\n    query GetActor($id: ID!) {\n        actor(id: $id) {\n            __typename\n            ... on Node {\n                id\n            }\n            ... on User {\n                name\n            }\n            ... on Admin {\n                permissions\n            }\n        }\n    }\n    ': GetActor,
+    '\n    query GetActor($id: ID!) {\n        actor(id: $id) {\n            __typename\n            ... on Node {\n                id\n            }\n            ... on User {\n                name\n            }\n            ... on Admin {\n                permissions\n            }\n        }\n    }\n    ': GetActorQuery,
 }
 
 

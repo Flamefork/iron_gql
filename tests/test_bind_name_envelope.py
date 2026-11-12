@@ -151,7 +151,7 @@ def test_an_empty_bind_answers_alike_whatever_shape_the_template_has(
     #
     # `bind` is reached as `object` because the point is what happens at
     # runtime, and the two templates' signatures differ.
-    owner = getattr(api, template.capitalize())()  # pyright: ignore[reportAny]
+    owner = getattr(api, f"{template.capitalize()}Query")()  # pyright: ignore[reportAny]
     bound = owner.bind(**call)  # pyright: ignore[reportAny]
     assert bound.slot_readers == dict.fromkeys(  # pyright: ignore[reportAny]
         COLLIDING_SLOTS if template == "overloaded" else ["cls"], ()
@@ -165,11 +165,11 @@ def test_a_template_nothing_can_be_bound_into_renders_one_plain_signature():
     # needs two, and a second stub standing for a call that can never happen
     # is a signature standing for nothing.
     source = generated_source("bind_name_envelope")
-    body = source.split("class Inline(runtime.GQLTemplate):")[1].split("\n\n\n")[0]
+    body = source.split("class InlineQuery(runtime.GQLTemplate):")[1].split("\n\n\n")[0]
     assert "@overload" not in body
     assert (
         "def bind(self, *, cls: Sequence[Never] = ()) "
-        "-> InlineBound[InlineResult[Never]]:"
+        "-> InlineQueryBound[InlineQueryResult[Never]]:"
     ) in body
 
 

@@ -58,15 +58,15 @@ class Node(GQLModel):
     id: builtins.str
 
 
-class GetNodeResult(GQLModel):
+class GetNodeQueryResult(GQLModel):
     node: Node | None
 
 
-class GetNode(runtime.GQLOperation):
+class GetNodeQuery(runtime.GQLOperation):
     # See: queries.py:3
-    async def execute(self, *, id: builtins.str) -> GetNodeResult:
+    async def execute(self, *, id: builtins.str) -> GetNodeQueryResult:
         return await _client.query(
-            GetNodeResult,
+            GetNodeQueryResult,
             'query GetNode($id: ID!) {\n  node(id: $id) {\n    id\n  }\n}',
             variables={"id": id},
             headers=self.headers,
@@ -74,13 +74,13 @@ class GetNode(runtime.GQLOperation):
 
 
 @overload
-def api_gql(stmt: Literal['\n    query GetNode($id: ID!) {\n        node(id: $id) {\n            id\n        }\n    }\n    ']) -> GetNode: ...
+def api_gql(stmt: Literal['\n    query GetNode($id: ID!) {\n        node(id: $id) {\n            id\n        }\n    }\n    ']) -> GetNodeQuery: ...
 @overload
 def api_gql(stmt: str) -> runtime.GQLOperation: ...
 
 
 _statement_factories: dict[str, Callable[[], runtime.GQLOperation]] = {
-    '\n    query GetNode($id: ID!) {\n        node(id: $id) {\n            id\n        }\n    }\n    ': GetNode,
+    '\n    query GetNode($id: ID!) {\n        node(id: $id) {\n            id\n        }\n    }\n    ': GetNodeQuery,
 }
 
 

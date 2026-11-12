@@ -48,7 +48,7 @@ def parse_var(
         raise ValueError(msg)
     default_value: object = graphql.Undefined
     if var_def.default_value is not None:
-        # `value_from_ast_untyped` намеренно типизирован как Any.
+        # `value_from_ast_untyped` is deliberately typed as Any.
         default_value = value_from_ast_untyped(var_def.default_value)  # pyright: ignore[reportAny]
     return GQLVar(name=var_name, gql_type=gql_type, default_value=default_value)
 
@@ -76,11 +76,19 @@ class Query:
     def name(self) -> str:
         if self.operation_def.name:
             return self.operation_def.name.value
-        return f"query{capitalize_first(self.stmt.hash_str)}"
+        # ADR 0004: one base for every kind -- the class's suffix already names
+        # the kind, and `anonymous` says where the hash comes from.
+        return f"anonymous{capitalize_first(self.stmt.hash_str)}"
 
     @property
     def class_name(self) -> str:
-        return capitalize_first(self.name)
+        # ADR 0004: the kind suffix keeps a developer-written name out of the
+        # names the module's shapes claim -- `query Post` next to a model of
+        # type `Post`. Applied without exceptions, `query GetUserQuery`
+        # included: an exception would make the class name depend on how the
+        # operation happens to be spelled.
+        kind = capitalize_first(self.operation_def.operation.value)
+        return f"{capitalize_first(self.name)}{kind}"
 
     @property
     def is_subscription(self) -> bool:
@@ -154,11 +162,11 @@ class FragmentStatement:
 
     @functools.cached_property
     def kind(self) -> Literal["plain", "factory"]:
-        # Factory — это fragment, чей document closure (он сам и все
-        # transitively spread fragments на любой глубине) использует GraphQL
-        # variable. `document` уже является этим closure, поэтому для различия
-        # `plain` и `factory` достаточно синтаксически найти `$name`; schema не
-        # нужна.
+        # A factory is a fragment whose document closure (the fragment itself
+        # and all transitively spread fragments at any depth) uses a GraphQL
+        # variable. `document` already is that closure, so finding `$name`
+        # syntactically is enough to tell `plain` from `factory`; no schema is
+        # needed.
         return "factory" if _uses_a_variable(self.document) else "plain"
 
 
@@ -170,13 +178,13 @@ class ParseResult:
     # step that means only one of them.
     operations: list[Operation]
     templates: list[Template]
-    # Single-fragment statements становятся fragment definitions, если пакет
-    # содержит хотя бы один template. Combinations выводятся из
-    # schema, поэтому enumeration может достичь fragment без явного `.bind()`.
-    # Даже несовместимый ни с одним slot fragment получает class: `bind()`
-    # отклоняет его отсутствием overload для on-type base, а не отсутствием
-    # type. Пакет без template ничего не bind-ит, и его fragments сохраняют
-    # прежнюю семантику: spread по имени и untyped catch-all на call site.
+    # Single-fragment statements become fragment definitions if the package
+    # contains at least one template. Combinations are derived from the schema,
+    # so enumeration can reach a fragment without an explicit `.bind()`. Even a
+    # fragment compatible with no slot gets a class: `bind()` rejects it by
+    # having no overload for its on-type base, not by a missing type. A package
+    # without a template binds nothing, and its fragments keep the old
+    # semantics: spread by name and the untyped catch-all at the call site.
     bindable_statements: list[FragmentStatement]
     errors: list[str]
 
@@ -226,8 +234,8 @@ def collect_fragment_statements(
 ) -> list[FragmentStatement]:
     statements: list[FragmentStatement] = []
     for stmt, doc in docs:
-        # Typed definition создаётся только для statement ровно с одним
-        # fragment. Operation и bundle сохраняют прежнюю семантику.
+        # A typed definition is created only for a statement with exactly one
+        # fragment. Operations and bundles keep the old semantics.
         match doc.definitions:
             case [graphql.FragmentDefinitionNode() as definition]:
                 statements.append(
@@ -626,15 +634,16 @@ def bindable_statements(
     templates: list[Template],
     statements: list[FragmentStatement],
 ) -> tuple[list[FragmentStatement], list[str]]:
-    # При наличии template каждый single-fragment statement становится
-    # bindable — см. `ParseResult.bindable_statements`.
+    # When a template is present, every single-fragment statement becomes
+    # bindable -- see `ParseResult.bindable_statements`.
     #
-    # Spread closure каждого definition обходится только по таким statements:
-    # именно их видит bind. Fragment внутри multi-definition statement доступен
-    # для spread по имени, но не может стать bindable definition, поэтому ошибка
-    # разрешения диагностируется здесь. `expand_binding` затем обходит тот же
-    # closure по возвращённому набору. Обход идёт по statements, а не по bind,
-    # поэтому fragment без явного `.bind()` всё равно участвует в enumeration.
+    # Each definition's spread closure is walked over such statements only: they
+    # are what bind sees. A fragment inside a multi-definition statement is
+    # available for spread by name but cannot become a bindable definition, so
+    # the resolution error is diagnosed here. `expand_binding` then walks the
+    # same closure over the returned set. The walk goes over statements, not
+    # binds, so a fragment without an explicit `.bind()` still takes part in
+    # enumeration.
     if not templates:
         return [], []
     bindable_definitions = {

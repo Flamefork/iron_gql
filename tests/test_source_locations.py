@@ -92,6 +92,6 @@ def test_operations_sorted_by_source_location(test_project: ProjectBuilder):
     )
     test_project.generate_and_import()
     generated = (test_project.root / "sample_app/gql/api.py").read_text()
-    pong_pos = generated.index("class Pong(")
-    ping_pos = generated.index("class Ping(")
+    pong_pos = generated.index("class PongQuery(")
+    ping_pos = generated.index("class PingQuery(")
     assert pong_pos < ping_pos

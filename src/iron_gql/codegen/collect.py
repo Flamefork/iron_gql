@@ -58,6 +58,7 @@ from iron_gql.codegen.ir import ScalarRef
 from iron_gql.codegen.ir import StrTransform
 from iron_gql.codegen.ir import TypeRef
 from iron_gql.codegen.ir import applied_fragment_class_name
+from iron_gql.codegen.ir import fragment_class_name
 from iron_gql.codegen.ir import make_optional
 from iron_gql.codegen.ir import on_type_base_name
 from iron_gql.codegen.ir import result_model_name
@@ -636,8 +637,17 @@ class ModuleCollector:
 
         if fallback_objects:
             fallback_name = base_name + require_typename_for
+            # The literal is what tells two fallbacks of one interface apart,
+            # and it is determined by the types spelled out beside it: the
+            # hint names those, so the detailed model name says which types
+            # this fallback stands for by the ones it excludes.
+            excluded = "".join(
+                obj.name for obj in possible_types if obj in explicit_types
+            )
+            literal = ", ".join(repr(obj.name) for obj in fallback_objects)
             fallback_typename = ScalarRef(
-                expr=f"Literal[{', '.join(repr(obj.name) for obj in fallback_objects)}]"
+                expr=f"Literal[{literal}]",
+                name_hint=f"Except{excluded}",
             )
             child_models.extend(
                 self._collect_object_model(
@@ -657,6 +667,7 @@ class ModuleCollector:
             *child_models,
             CollectedUnionAlias(
                 name=base_name,
+                graphql_type_name=require_typename_for,
                 variants=tuple(NamedRef(name=name) for name in union_types),
                 discriminator="typename__",
             ),
@@ -791,11 +802,12 @@ class _ExpandedCombination:
     # arg_vars`, built per fragment rather than per combination, is what
     # `with_args`'s own keywords come from).
     arg_gql_vars: list[GQLVar]
-    # Места, редактирование которых создаёт или удаляет combination. Для явно
-    # записанного combination это call sites `.bind(...)`; для полученного из
-    # schema enumeration — statement template и statements всех spread
-    # fragments. Диагностика должна указывать на фактический источник, иначе
-    # разработчика отправит к template, который он не менял.
+    # The places whose editing creates or removes a combination. For an
+    # explicitly written combination these are the `.bind(...)` call sites; for
+    # one obtained from schema enumeration, the template statement and the
+    # statements of all spread fragments. The diagnostic has to point at the
+    # actual source, otherwise it would send the developer to a template they
+    # did not change.
     locations: tuple[str, ...]
 
 
@@ -806,11 +818,11 @@ def _literal_combinations(
     fragment_by_stmt: dict[Statement, FragmentStatement],
     template_by_name: dict[str, CollectedTemplate],
 ) -> dict[Combination, tuple[str, ...]]:
-    # Каждый call site `.bind(...)` как combination вместе с записавшими его
-    # locations. Только multi-fragment tuple добавляет то, чего не создаёт
-    # enumeration. Но каждый bind сохраняется и для `expand_binding`, где
-    # диагностируется keyword без соответствующего slot, а явно записанный
-    # combination хранит locations для точной диагностики.
+    # Every `.bind(...)` call site as a combination together with the locations
+    # that wrote it. Only a multi-fragment tuple adds something enumeration does
+    # not create. But every bind is also kept for `expand_binding`, which
+    # diagnoses a keyword without a matching slot, and an explicitly written
+    # combination keeps its locations for precise diagnostics.
     #
     # Keyed by the combination, so two call sites spelling one combination
     # (`bind(a=x)` and `bind(a=x, b=[])`) meet on one entry carrying both
@@ -873,9 +885,9 @@ def _enumerate_and_expand(
     fragment_defs: dict[str, graphql.FragmentDefinitionNode],
     binds: list[BindDecl],
 ) -> list[_ExpandedCombination]:
-    # Определяет существующие combinations и document каждого из них. Это один
-    # шаг: enumeration решает, что разворачивать, а expansion запускает
-    # validations отдельно для каждой пары, а не для каждого call site.
+    # Determines the existing combinations and the document of each. This is one
+    # step: enumeration decides what to expand, and expansion runs validations
+    # separately for each pair, not for each call site.
     #
     # Everything here keys templates by their GraphQL operation name, which
     # `_dedup_statements` has already made injective -- unlike `class_name`,
@@ -1074,8 +1086,8 @@ def collect_module_ir(
 ) -> CollectedModuleIR:
     prepared = _prepare_module(operations, templates, fragment_statements)
     collector = ModuleCollector(schema=schema, scalars=scalars, to_snake_fn=to_snake_fn)
-    # `fragment_closure` внутри `_collect_fragments` использует полный набор
-    # slot types ещё до построения template IR.
+    # `fragment_closure` inside `_collect_fragments` uses the full set of slot
+    # types before the template IR is built.
     slot_type_names = frozenset(
         slot.type_name for query in prepared.template_queries for slot in query.slots
     )
@@ -1173,9 +1185,9 @@ def collect_module_ir(
 
 
 def parametrize_slot_paths(ir: CollectedModuleIR) -> CollectedModuleIR:
-    # Один generic по slots набор result models на template вместо копии на
-    # каждый binding. Readable fragments передаются как type argument result,
-    # поэтому generic-код сохраняет форму result и может читать slot через
+    # One slot-generic set of result models per template instead of a copy per
+    # binding. Readable fragments are passed as the result's type argument, so
+    # generic code keeps the result's shape and can read a slot through a
     # type-erased fragment reader.
     #
     # Parametrised are exactly the artifacts a slot node is reachable from, the
@@ -1321,25 +1333,25 @@ def _collect_fragments(
     schema: graphql.GraphQLSchema,
     slot_type_names: frozenset[str],
 ) -> tuple[list[CollectedFragment], list[GQLVar]]:
-    # Полное пространство имён фрагментов пакета для обхода в
-    # `fragment_closure`. Оно строится из тех же statements, что и копия в
-    # `_expand_binds`, но раньше чтения bind: общий параметр только связал бы
-    # два независимых и дешёвых lookup.
+    # The full namespace of the package's fragments for the walk in
+    # `fragment_closure`. It is built from the same statements as the copy in
+    # `_expand_binds`, but before binds are read: a shared parameter would only
+    # couple two independent and cheap lookups.
     fragment_defs = {statement.name: statement.definition for statement in statements}
     reader_class_names = {
         statement.name: (
-            applied_fragment_class_name(capitalize_first(statement.name))
+            applied_fragment_class_name(fragment_class_name(statement.name))
             if statement.kind == "factory"
-            else capitalize_first(statement.name)
+            else fragment_class_name(statement.name)
         )
         for statement in statements
     }
     fragments: list[CollectedFragment] = []
-    # Собственные variables каждой factory возвращаются отдельно, чтобы
-    # `collect_module_ir` включил их input-типы в closure артефактов. Это
-    # требуется и для factory, несовместимой ни с одним slot: она не попадает
-    # ни в одну combination, но её `with_args` всё равно должен ссылаться на
-    # определённые в модуле типы.
+    # Each factory's own variables are returned separately so that
+    # `collect_module_ir` includes their input types in the artifacts' closure.
+    # This is needed even for a factory compatible with no slot: it lands in no
+    # combination, but its `with_args` still has to refer to types defined in
+    # the module.
     fragment_gql_vars: list[GQLVar] = []
     errors: list[str] = []
     for statement in statements:
@@ -1349,17 +1361,18 @@ def _collect_fragments(
             slot_types=slot_type_names,
             fragments=fragment_defs,
         )
-        # Первым идёт собственный класс фрагмента, затем остальной closure по
-        # алфавиту: base expression читается как «он сам плюс всё, что он
-        # предлагает». `fragment_closure` всегда включает имя самого фрагмента.
+        # The fragment's own class goes first, then the rest of the closure
+        # alphabetically: the base expression reads as "the fragment itself plus
+        # everything it offers". `fragment_closure` always includes the
+        # fragment's own name.
         rest = sorted(
             reader_class_names[name] for name in closure_names if name != statement.name
         )
-        class_name = capitalize_first(statement.name)
+        class_name = fragment_class_name(statement.name)
         match statement.kind:
             case "factory":
-                # Параметры `with_args` принадлежат document closure самой
-                # factory и не зависят от достигающих её combination.
+                # `with_args` parameters belong to the factory's own document
+                # closure and do not depend on the combinations that reach it.
                 synthesized, var_errors = fragment_own_vars(
                     fragment=statement.definition,
                     dependencies=statement.dependencies,
@@ -1632,9 +1645,9 @@ def _collect_bindings(
             )
             for template_slot in template.slots
         )
-        # Каноническая логическая идентичность комбинации. Runtime binding key
-        # отдельно использует generated definition classes, потому что строки
-        # не доказывают происхождение fragment из сгенерированного API.
+        # The canonical logical identity of a combination. The runtime binding
+        # key separately uses generated definition classes, because strings do
+        # not prove that a fragment came from the generated API.
         collected_combination_key = combination_key(
             template.class_name,
             (

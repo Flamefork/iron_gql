@@ -57,31 +57,31 @@ class GQLModel(pydantic.BaseModel):
 type Status = Literal['ACTIVE', 'INACTIVE']
 
 
-class SearchResult(GQLModel):
+class SearchMutationResult(GQLModel):
     search: bool | None
 
 
-class UpdateResult(GQLModel):
+class UpdateMutationResult(GQLModel):
     update: bool | None
 
 
-class DoSearchResult(GQLModel):
+class DoSearchMutationResult(GQLModel):
     do_search: bool | None
 
 
-class ActResult(GQLModel):
+class ActMutationResult(GQLModel):
     act: bool | None
 
 
-class FilterResult(GQLModel):
+class FilterMutationResult(GQLModel):
     filter: bool | None
 
 
-class ListSearchResult(GQLModel):
+class ListSearchMutationResult(GQLModel):
     search_by: bool | None
 
 
-class ActNestedResult(GQLModel):
+class ActNestedMutationResult(GQLModel):
     act_nested: bool | None
 
 
@@ -172,77 +172,77 @@ class WrapperInput(GQLModel):
     limit: int | None = None
 
 
-class Search(runtime.GQLOperation):
+class SearchMutation(runtime.GQLOperation):
     # See: queries.py:3
-    async def execute(self, *, criteria: SearchCriteria) -> SearchResult:
+    async def execute(self, *, criteria: SearchCriteria) -> SearchMutationResult:
         return await _client.query(
-            SearchResult,
+            SearchMutationResult,
             'mutation Search($criteria: SearchCriteria!) {\n  search(criteria: $criteria)\n}',
             variables={"criteria": criteria},
             headers=self.headers,
         )
 
 
-class Update(runtime.GQLOperation):
+class UpdateMutation(runtime.GQLOperation):
     # See: queries.py:11
-    async def execute(self, *, input: UpdateAction) -> UpdateResult:
+    async def execute(self, *, input: UpdateAction) -> UpdateMutationResult:
         return await _client.query(
-            UpdateResult,
+            UpdateMutationResult,
             'mutation Update($input: UpdateAction!) {\n  update(input: $input)\n}',
             variables={"input": input},
             headers=self.headers,
         )
 
 
-class DoSearch(runtime.GQLOperation):
+class DoSearchMutation(runtime.GQLOperation):
     # See: queries.py:19
-    async def execute(self, *, input: WrapperInput) -> DoSearchResult:
+    async def execute(self, *, input: WrapperInput) -> DoSearchMutationResult:
         return await _client.query(
-            DoSearchResult,
+            DoSearchMutationResult,
             'mutation DoSearch($input: WrapperInput!) {\n  doSearch(input: $input)\n}',
             variables={"input": input},
             headers=self.headers,
         )
 
 
-class Act(runtime.GQLOperation):
+class ActMutation(runtime.GQLOperation):
     # See: queries.py:27
-    async def execute(self, *, input: SingleChoice) -> ActResult:
+    async def execute(self, *, input: SingleChoice) -> ActMutationResult:
         return await _client.query(
-            ActResult,
+            ActMutationResult,
             'mutation Act($input: SingleChoice!) {\n  act(input: $input)\n}',
             variables={"input": input},
             headers=self.headers,
         )
 
 
-class Filter(runtime.GQLOperation):
+class FilterMutation(runtime.GQLOperation):
     # See: queries.py:35
-    async def execute(self, *, by: FilterBy) -> FilterResult:
+    async def execute(self, *, by: FilterBy) -> FilterMutationResult:
         return await _client.query(
-            FilterResult,
+            FilterMutationResult,
             'mutation Filter($by: FilterBy!) {\n  filter(by: $by)\n}',
             variables={"by": by},
             headers=self.headers,
         )
 
 
-class ListSearch(runtime.GQLOperation):
+class ListSearchMutation(runtime.GQLOperation):
     # See: queries.py:43
-    async def execute(self, *, by: SearchBy) -> ListSearchResult:
+    async def execute(self, *, by: SearchBy) -> ListSearchMutationResult:
         return await _client.query(
-            ListSearchResult,
+            ListSearchMutationResult,
             'mutation ListSearch($by: SearchBy!) {\n  searchBy(by: $by)\n}',
             variables={"by": by},
             headers=self.headers,
         )
 
 
-class ActNested(runtime.GQLOperation):
+class ActNestedMutation(runtime.GQLOperation):
     # See: queries.py:51
-    async def execute(self, *, input: OuterChoice) -> ActNestedResult:
+    async def execute(self, *, input: OuterChoice) -> ActNestedMutationResult:
         return await _client.query(
-            ActNestedResult,
+            ActNestedMutationResult,
             'mutation ActNested($input: OuterChoice!) {\n  actNested(input: $input)\n}',
             variables={"input": input},
             headers=self.headers,
@@ -250,31 +250,31 @@ class ActNested(runtime.GQLOperation):
 
 
 @overload
-def api_gql(stmt: Literal['\n    mutation Search($criteria: SearchCriteria!) {\n        search(criteria: $criteria)\n    }\n    ']) -> Search: ...
+def api_gql(stmt: Literal['\n    mutation Search($criteria: SearchCriteria!) {\n        search(criteria: $criteria)\n    }\n    ']) -> SearchMutation: ...
 @overload
-def api_gql(stmt: Literal['\n    mutation Update($input: UpdateAction!) {\n        update(input: $input)\n    }\n    ']) -> Update: ...
+def api_gql(stmt: Literal['\n    mutation Update($input: UpdateAction!) {\n        update(input: $input)\n    }\n    ']) -> UpdateMutation: ...
 @overload
-def api_gql(stmt: Literal['\n    mutation DoSearch($input: WrapperInput!) {\n        doSearch(input: $input)\n    }\n    ']) -> DoSearch: ...
+def api_gql(stmt: Literal['\n    mutation DoSearch($input: WrapperInput!) {\n        doSearch(input: $input)\n    }\n    ']) -> DoSearchMutation: ...
 @overload
-def api_gql(stmt: Literal['\n    mutation Act($input: SingleChoice!) {\n        act(input: $input)\n    }\n    ']) -> Act: ...
+def api_gql(stmt: Literal['\n    mutation Act($input: SingleChoice!) {\n        act(input: $input)\n    }\n    ']) -> ActMutation: ...
 @overload
-def api_gql(stmt: Literal['\n    mutation Filter($by: FilterBy!) {\n        filter(by: $by)\n    }\n    ']) -> Filter: ...
+def api_gql(stmt: Literal['\n    mutation Filter($by: FilterBy!) {\n        filter(by: $by)\n    }\n    ']) -> FilterMutation: ...
 @overload
-def api_gql(stmt: Literal['\n    mutation ListSearch($by: SearchBy!) {\n        searchBy(by: $by)\n    }\n    ']) -> ListSearch: ...
+def api_gql(stmt: Literal['\n    mutation ListSearch($by: SearchBy!) {\n        searchBy(by: $by)\n    }\n    ']) -> ListSearchMutation: ...
 @overload
-def api_gql(stmt: Literal['\n    mutation ActNested($input: OuterChoice!) {\n        actNested(input: $input)\n    }\n    ']) -> ActNested: ...
+def api_gql(stmt: Literal['\n    mutation ActNested($input: OuterChoice!) {\n        actNested(input: $input)\n    }\n    ']) -> ActNestedMutation: ...
 @overload
 def api_gql(stmt: str) -> runtime.GQLOperation: ...
 
 
 _statement_factories: dict[str, Callable[[], runtime.GQLOperation]] = {
-    '\n    mutation Search($criteria: SearchCriteria!) {\n        search(criteria: $criteria)\n    }\n    ': Search,
-    '\n    mutation Update($input: UpdateAction!) {\n        update(input: $input)\n    }\n    ': Update,
-    '\n    mutation DoSearch($input: WrapperInput!) {\n        doSearch(input: $input)\n    }\n    ': DoSearch,
-    '\n    mutation Act($input: SingleChoice!) {\n        act(input: $input)\n    }\n    ': Act,
-    '\n    mutation Filter($by: FilterBy!) {\n        filter(by: $by)\n    }\n    ': Filter,
-    '\n    mutation ListSearch($by: SearchBy!) {\n        searchBy(by: $by)\n    }\n    ': ListSearch,
-    '\n    mutation ActNested($input: OuterChoice!) {\n        actNested(input: $input)\n    }\n    ': ActNested,
+    '\n    mutation Search($criteria: SearchCriteria!) {\n        search(criteria: $criteria)\n    }\n    ': SearchMutation,
+    '\n    mutation Update($input: UpdateAction!) {\n        update(input: $input)\n    }\n    ': UpdateMutation,
+    '\n    mutation DoSearch($input: WrapperInput!) {\n        doSearch(input: $input)\n    }\n    ': DoSearchMutation,
+    '\n    mutation Act($input: SingleChoice!) {\n        act(input: $input)\n    }\n    ': ActMutation,
+    '\n    mutation Filter($by: FilterBy!) {\n        filter(by: $by)\n    }\n    ': FilterMutation,
+    '\n    mutation ListSearch($by: SearchBy!) {\n        searchBy(by: $by)\n    }\n    ': ListSearchMutation,
+    '\n    mutation ActNested($input: OuterChoice!) {\n        actNested(input: $input)\n    }\n    ': ActNestedMutation,
 }
 
 

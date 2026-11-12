@@ -59,15 +59,15 @@ class Event(GQLModel):
     message: str
 
 
-class EventsResult(GQLModel):
+class EventsSubscriptionResult(GQLModel):
     events: Event
 
 
-class Events(runtime.GQLOperation):
+class EventsSubscription(runtime.GQLOperation):
     # See: queries.py:3
-    def execute(self, *, channel: str) -> AbstractAsyncContextManager[AsyncGenerator[EventsResult]]:
+    def execute(self, *, channel: str) -> AbstractAsyncContextManager[AsyncGenerator[EventsSubscriptionResult]]:
         return _client.subscribe(
-            EventsResult,
+            EventsSubscriptionResult,
             'subscription Events($channel: String!) {\n  events(channel: $channel) {\n    id\n    message\n  }\n}',
             variables={"channel": channel},
             headers=self.headers,
@@ -75,13 +75,13 @@ class Events(runtime.GQLOperation):
 
 
 @overload
-def api_gql(stmt: Literal['\n    subscription Events($channel: String!) {\n        events(channel: $channel) {\n            id\n            message\n        }\n    }\n    ']) -> Events: ...
+def api_gql(stmt: Literal['\n    subscription Events($channel: String!) {\n        events(channel: $channel) {\n            id\n            message\n        }\n    }\n    ']) -> EventsSubscription: ...
 @overload
 def api_gql(stmt: str) -> runtime.GQLOperation: ...
 
 
 _statement_factories: dict[str, Callable[[], runtime.GQLOperation]] = {
-    '\n    subscription Events($channel: String!) {\n        events(channel: $channel) {\n            id\n            message\n        }\n    }\n    ': Events,
+    '\n    subscription Events($channel: String!) {\n        events(channel: $channel) {\n            id\n            message\n        }\n    }\n    ': EventsSubscription,
 }
 
 

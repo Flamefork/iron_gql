@@ -59,7 +59,7 @@ class User(GQLModel):
     name: str
 
 
-class GetUserResult(GQLModel):
+class GetUserQueryResult(GQLModel):
     user: User | None
 
 
@@ -68,26 +68,26 @@ class Post(GQLModel):
     title: str
 
 
-class GetPostResult(GQLModel):
+class GetPostQueryResult(GQLModel):
     post: Post | None
 
 
-class GetUser(runtime.GQLOperation):
+class GetUserQuery(runtime.GQLOperation):
     # See: queries.py:21
-    async def execute(self, *, id: builtins.str) -> GetUserResult:
+    async def execute(self, *, id: builtins.str) -> GetUserQueryResult:
         return await _client.query(
-            GetUserResult,
+            GetUserQueryResult,
             'query GetUser($id: ID!) {\n  user(id: $id) {\n    ...UserFields\n  }\n}\n\nfragment UserFields on User {\n  id\n  name\n}',
             variables={"id": id},
             headers=self.headers,
         )
 
 
-class GetPost(runtime.GQLOperation):
+class GetPostQuery(runtime.GQLOperation):
     # See: queries.py:31
-    async def execute(self, *, id: builtins.str) -> GetPostResult:
+    async def execute(self, *, id: builtins.str) -> GetPostQueryResult:
         return await _client.query(
-            GetPostResult,
+            GetPostQueryResult,
             'query GetPost($id: ID!) {\n  post(id: $id) {\n    ...PostFields\n  }\n}\n\nfragment PostFields on Post {\n  id\n  title\n}',
             variables={"id": id},
             headers=self.headers,
@@ -95,9 +95,9 @@ class GetPost(runtime.GQLOperation):
 
 
 @overload
-def api_gql(stmt: Literal['\n    query GetUser($id: ID!) {\n        user(id: $id) {\n            ...UserFields\n        }\n    }\n    ']) -> GetUser: ...
+def api_gql(stmt: Literal['\n    query GetUser($id: ID!) {\n        user(id: $id) {\n            ...UserFields\n        }\n    }\n    ']) -> GetUserQuery: ...
 @overload
-def api_gql(stmt: Literal['\n    query GetPost($id: ID!) {\n        post(id: $id) {\n            ...PostFields\n        }\n    }\n    ']) -> GetPost: ...
+def api_gql(stmt: Literal['\n    query GetPost($id: ID!) {\n        post(id: $id) {\n            ...PostFields\n        }\n    }\n    ']) -> GetPostQuery: ...
 @overload
 def api_gql(stmt: Literal['\n    fragment UserFields on User {\n        id\n        name\n    }\n    ']) -> runtime.GQLOperation: ...
 @overload
@@ -107,8 +107,8 @@ def api_gql(stmt: str) -> runtime.GQLOperation: ...
 
 
 _statement_factories: dict[str, Callable[[], runtime.GQLOperation]] = {
-    '\n    query GetUser($id: ID!) {\n        user(id: $id) {\n            ...UserFields\n        }\n    }\n    ': GetUser,
-    '\n    query GetPost($id: ID!) {\n        post(id: $id) {\n            ...PostFields\n        }\n    }\n    ': GetPost,
+    '\n    query GetUser($id: ID!) {\n        user(id: $id) {\n            ...UserFields\n        }\n    }\n    ': GetUserQuery,
+    '\n    query GetPost($id: ID!) {\n        post(id: $id) {\n            ...PostFields\n        }\n    }\n    ': GetPostQuery,
     '\n    fragment UserFields on User {\n        id\n        name\n    }\n    ': runtime.GQLOperation,
     '\n    fragment PostFields on Post {\n        id\n        title\n    }\n    ': runtime.GQLOperation,
 }

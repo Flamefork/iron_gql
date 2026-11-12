@@ -62,39 +62,39 @@ class GQLSlotModel[TOffered](GQLOpenModel, slots.GQLSlotNode[TOffered]):
     pass
 
 
-class GetAttachmentResultPostAttachmentSlotImageAttachment[TSlotAttachment = Never](GQLSlotModel[TSlotAttachment]):
+class GetAttachmentQueryResultPostAttachmentSlotImageAttachment[TSlotAttachment = Never](GQLSlotModel[TSlotAttachment]):
     slot_name__: ClassVar[str] = "attachment"
     typename__: Annotated[Literal["ImageAttachment"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
 
 
-class GetAttachmentResultPostAttachmentSlotLinkAttachment[TSlotAttachment = Never](GQLSlotModel[TSlotAttachment]):
+class GetAttachmentQueryResultPostAttachmentSlotLinkAttachment[TSlotAttachment = Never](GQLSlotModel[TSlotAttachment]):
     slot_name__: ClassVar[str] = "attachment"
     typename__: Annotated[Literal["LinkAttachment"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
 
 
-type GetAttachmentResultPostAttachmentSlot[TSlotAttachment] = Annotated[GetAttachmentResultPostAttachmentSlotImageAttachment[TSlotAttachment] | GetAttachmentResultPostAttachmentSlotLinkAttachment[TSlotAttachment], pydantic.Field(discriminator="typename__")]
+type Attachment_2cdfa975[TSlotAttachment] = Annotated[GetAttachmentQueryResultPostAttachmentSlotImageAttachment[TSlotAttachment] | GetAttachmentQueryResultPostAttachmentSlotLinkAttachment[TSlotAttachment], pydantic.Field(discriminator="typename__")]
 
 
-class GetAttachmentResultPostPreviewSlotImageAttachment[TSlotPreview = Never](GQLSlotModel[TSlotPreview]):
+class GetAttachmentQueryResultPostPreviewSlotImageAttachment[TSlotPreview = Never](GQLSlotModel[TSlotPreview]):
     slot_name__: ClassVar[str] = "preview"
     typename__: Annotated[Literal["ImageAttachment"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
 
 
-class GetAttachmentResultPostPreviewSlotLinkAttachment[TSlotPreview = Never](GQLSlotModel[TSlotPreview]):
+class GetAttachmentQueryResultPostPreviewSlotLinkAttachment[TSlotPreview = Never](GQLSlotModel[TSlotPreview]):
     slot_name__: ClassVar[str] = "preview"
     typename__: Annotated[Literal["LinkAttachment"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
 
 
-type GetAttachmentResultPostPreviewSlot[TSlotPreview] = Annotated[GetAttachmentResultPostPreviewSlotImageAttachment[TSlotPreview] | GetAttachmentResultPostPreviewSlotLinkAttachment[TSlotPreview], pydantic.Field(discriminator="typename__")]
+type Attachment_f628f230[TSlotPreview] = Annotated[GetAttachmentQueryResultPostPreviewSlotImageAttachment[TSlotPreview] | GetAttachmentQueryResultPostPreviewSlotLinkAttachment[TSlotPreview], pydantic.Field(discriminator="typename__")]
 
 
 class Post[TSlotAttachment = Never, TSlotPreview = Never](GQLModel):
     id: builtins.str
-    attachment: GetAttachmentResultPostAttachmentSlot[TSlotAttachment] | None
-    preview: GetAttachmentResultPostPreviewSlot[TSlotPreview] | None
+    attachment: Attachment_2cdfa975[TSlotAttachment] | None
+    preview: Attachment_f628f230[TSlotPreview] | None
 
 
-class GetAttachmentResult[TSlotAttachment = Never, TSlotPreview = Never](GQLModel):
+class GetAttachmentQueryResult[TSlotAttachment = Never, TSlotPreview = Never](GQLModel):
     post: Post[TSlotAttachment, TSlotPreview] | None
 
 
@@ -147,35 +147,35 @@ class OnLinkAttachment(slots.GQLBindableFragment[TModel, TReads], ABC):
 
 
 @final
-class ImageParts(OnImageAttachment[ImagePartsData, "ImageParts"]):
+class ImagePartsFragment(OnImageAttachment[ImagePartsData, "ImagePartsFragment"]):
     adapter__: ClassVar[pydantic.TypeAdapter[ImagePartsData]] = pydantic.TypeAdapter(ImagePartsData)
 
     @override
     def __init__(self) -> None:
         super().__init__(
             fragment_name='ImageParts',
-            definition_type=ImageParts,
+            definition_type=ImagePartsFragment,
             adapter=self.adapter__,
         )
 
 
 @final
-class LinkParts(OnLinkAttachment[LinkPartsData, "LinkParts"]):
+class LinkPartsFragment(OnLinkAttachment[LinkPartsData, "LinkPartsFragment"]):
     adapter__: ClassVar[pydantic.TypeAdapter[LinkPartsData]] = pydantic.TypeAdapter(LinkPartsData)
 
     @override
     def __init__(self) -> None:
         super().__init__(
             fragment_name='LinkParts',
-            definition_type=LinkParts,
+            definition_type=LinkPartsFragment,
             adapter=self.adapter__,
         )
 
 
-class GetAttachmentBound[TResult: pydantic.BaseModel](runtime.GQLBoundOperation):
+class GetAttachmentQueryBound[TResult: pydantic.BaseModel](runtime.GQLBoundOperation):
     async def execute(self, *, id: builtins.str) -> TResult:
         return await _client.query(
-            typing.cast("type[TResult]", GetAttachmentResult),
+            typing.cast("type[TResult]", GetAttachmentQueryResult),
             self.exec_source,
             variables={"id": id, **self.fragment_args},
             headers=self.headers,
@@ -183,76 +183,76 @@ class GetAttachmentBound[TResult: pydantic.BaseModel](runtime.GQLBoundOperation)
         )
 
 
-class GetAttachment(runtime.GQLTemplate):
+class GetAttachmentQuery(runtime.GQLTemplate):
     _binding_specs: ClassVar[dict[slots.BindingKey, runtime.BoundSpec]] = {
         # See: queries.py:3
         (): ('query GetAttachment($id: ID!) {\n  post(id: $id) {\n    id\n    attachment {\n      __typename\n    }\n    preview {\n      __typename\n    }\n  }\n}', {"attachment": (), "preview": ()}),
         # See: queries.py:3, queries.py:15
-        (('preview', (ImageParts,)),): ('query GetAttachment($id: ID!) {\n  post(id: $id) {\n    id\n    attachment {\n      __typename\n    }\n    preview {\n      __typename\n      ...ImageParts\n    }\n  }\n}\n\nfragment ImageParts on ImageAttachment {\n  url\n}', {"attachment": (), "preview": ((ImageParts, frozenset({'ImageAttachment'})),)}),
+        (('preview', (ImagePartsFragment,)),): ('query GetAttachment($id: ID!) {\n  post(id: $id) {\n    id\n    attachment {\n      __typename\n    }\n    preview {\n      __typename\n      ...ImageParts\n    }\n  }\n}\n\nfragment ImageParts on ImageAttachment {\n  url\n}', {"attachment": (), "preview": ((ImagePartsFragment, frozenset({'ImageAttachment'})),)}),
         # See: queries.py:3, queries.py:23
-        (('preview', (LinkParts,)),): ('query GetAttachment($id: ID!) {\n  post(id: $id) {\n    id\n    attachment {\n      __typename\n    }\n    preview {\n      __typename\n      ...LinkParts\n    }\n  }\n}\n\nfragment LinkParts on LinkAttachment {\n  href\n}', {"attachment": (), "preview": ((LinkParts, frozenset({'LinkAttachment'})),)}),
+        (('preview', (LinkPartsFragment,)),): ('query GetAttachment($id: ID!) {\n  post(id: $id) {\n    id\n    attachment {\n      __typename\n    }\n    preview {\n      __typename\n      ...LinkParts\n    }\n  }\n}\n\nfragment LinkParts on LinkAttachment {\n  href\n}', {"attachment": (), "preview": ((LinkPartsFragment, frozenset({'LinkAttachment'})),)}),
         # See: queries.py:3, queries.py:15
-        (('attachment', (ImageParts,)),): ('query GetAttachment($id: ID!) {\n  post(id: $id) {\n    id\n    attachment {\n      __typename\n      ...ImageParts\n    }\n    preview {\n      __typename\n    }\n  }\n}\n\nfragment ImageParts on ImageAttachment {\n  url\n}', {"attachment": ((ImageParts, frozenset({'ImageAttachment'})),), "preview": ()}),
+        (('attachment', (ImagePartsFragment,)),): ('query GetAttachment($id: ID!) {\n  post(id: $id) {\n    id\n    attachment {\n      __typename\n      ...ImageParts\n    }\n    preview {\n      __typename\n    }\n  }\n}\n\nfragment ImageParts on ImageAttachment {\n  url\n}', {"attachment": ((ImagePartsFragment, frozenset({'ImageAttachment'})),), "preview": ()}),
         # See: queries.py:3, queries.py:15
-        (('attachment', (ImageParts,)), ('preview', (ImageParts,))): ('query GetAttachment($id: ID!) {\n  post(id: $id) {\n    id\n    attachment {\n      __typename\n      ...ImageParts\n    }\n    preview {\n      __typename\n      ...ImageParts\n    }\n  }\n}\n\nfragment ImageParts on ImageAttachment {\n  url\n}', {"attachment": ((ImageParts, frozenset({'ImageAttachment'})),), "preview": ((ImageParts, frozenset({'ImageAttachment'})),)}),
+        (('attachment', (ImagePartsFragment,)), ('preview', (ImagePartsFragment,))): ('query GetAttachment($id: ID!) {\n  post(id: $id) {\n    id\n    attachment {\n      __typename\n      ...ImageParts\n    }\n    preview {\n      __typename\n      ...ImageParts\n    }\n  }\n}\n\nfragment ImageParts on ImageAttachment {\n  url\n}', {"attachment": ((ImagePartsFragment, frozenset({'ImageAttachment'})),), "preview": ((ImagePartsFragment, frozenset({'ImageAttachment'})),)}),
         # See: queries.py:3, queries.py:15, queries.py:23
-        (('attachment', (ImageParts,)), ('preview', (LinkParts,))): ('query GetAttachment($id: ID!) {\n  post(id: $id) {\n    id\n    attachment {\n      __typename\n      ...ImageParts\n    }\n    preview {\n      __typename\n      ...LinkParts\n    }\n  }\n}\n\nfragment ImageParts on ImageAttachment {\n  url\n}\n\nfragment LinkParts on LinkAttachment {\n  href\n}', {"attachment": ((ImageParts, frozenset({'ImageAttachment'})),), "preview": ((LinkParts, frozenset({'LinkAttachment'})),)}),
+        (('attachment', (ImagePartsFragment,)), ('preview', (LinkPartsFragment,))): ('query GetAttachment($id: ID!) {\n  post(id: $id) {\n    id\n    attachment {\n      __typename\n      ...ImageParts\n    }\n    preview {\n      __typename\n      ...LinkParts\n    }\n  }\n}\n\nfragment ImageParts on ImageAttachment {\n  url\n}\n\nfragment LinkParts on LinkAttachment {\n  href\n}', {"attachment": ((ImagePartsFragment, frozenset({'ImageAttachment'})),), "preview": ((LinkPartsFragment, frozenset({'LinkAttachment'})),)}),
         # See: queries.py:3, queries.py:23
-        (('attachment', (LinkParts,)),): ('query GetAttachment($id: ID!) {\n  post(id: $id) {\n    id\n    attachment {\n      __typename\n      ...LinkParts\n    }\n    preview {\n      __typename\n    }\n  }\n}\n\nfragment LinkParts on LinkAttachment {\n  href\n}', {"attachment": ((LinkParts, frozenset({'LinkAttachment'})),), "preview": ()}),
+        (('attachment', (LinkPartsFragment,)),): ('query GetAttachment($id: ID!) {\n  post(id: $id) {\n    id\n    attachment {\n      __typename\n      ...LinkParts\n    }\n    preview {\n      __typename\n    }\n  }\n}\n\nfragment LinkParts on LinkAttachment {\n  href\n}', {"attachment": ((LinkPartsFragment, frozenset({'LinkAttachment'})),), "preview": ()}),
         # See: queries.py:3, queries.py:23, queries.py:15
-        (('attachment', (LinkParts,)), ('preview', (ImageParts,))): ('query GetAttachment($id: ID!) {\n  post(id: $id) {\n    id\n    attachment {\n      __typename\n      ...LinkParts\n    }\n    preview {\n      __typename\n      ...ImageParts\n    }\n  }\n}\n\nfragment ImageParts on ImageAttachment {\n  url\n}\n\nfragment LinkParts on LinkAttachment {\n  href\n}', {"attachment": ((LinkParts, frozenset({'LinkAttachment'})),), "preview": ((ImageParts, frozenset({'ImageAttachment'})),)}),
+        (('attachment', (LinkPartsFragment,)), ('preview', (ImagePartsFragment,))): ('query GetAttachment($id: ID!) {\n  post(id: $id) {\n    id\n    attachment {\n      __typename\n      ...LinkParts\n    }\n    preview {\n      __typename\n      ...ImageParts\n    }\n  }\n}\n\nfragment ImageParts on ImageAttachment {\n  url\n}\n\nfragment LinkParts on LinkAttachment {\n  href\n}', {"attachment": ((LinkPartsFragment, frozenset({'LinkAttachment'})),), "preview": ((ImagePartsFragment, frozenset({'ImageAttachment'})),)}),
         # See: queries.py:3, queries.py:23
-        (('attachment', (LinkParts,)), ('preview', (LinkParts,))): ('query GetAttachment($id: ID!) {\n  post(id: $id) {\n    id\n    attachment {\n      __typename\n      ...LinkParts\n    }\n    preview {\n      __typename\n      ...LinkParts\n    }\n  }\n}\n\nfragment LinkParts on LinkAttachment {\n  href\n}', {"attachment": ((LinkParts, frozenset({'LinkAttachment'})),), "preview": ((LinkParts, frozenset({'LinkAttachment'})),)}),
+        (('attachment', (LinkPartsFragment,)), ('preview', (LinkPartsFragment,))): ('query GetAttachment($id: ID!) {\n  post(id: $id) {\n    id\n    attachment {\n      __typename\n      ...LinkParts\n    }\n    preview {\n      __typename\n      ...LinkParts\n    }\n  }\n}\n\nfragment LinkParts on LinkAttachment {\n  href\n}', {"attachment": ((LinkPartsFragment, frozenset({'LinkAttachment'})),), "preview": ((LinkPartsFragment, frozenset({'LinkAttachment'})),)}),
         # See: queries.py:33
-        (('attachment', (ImageParts, LinkParts)),): ('query GetAttachment($id: ID!) {\n  post(id: $id) {\n    id\n    attachment {\n      __typename\n      ...ImageParts\n      ...LinkParts\n    }\n    preview {\n      __typename\n    }\n  }\n}\n\nfragment ImageParts on ImageAttachment {\n  url\n}\n\nfragment LinkParts on LinkAttachment {\n  href\n}', {"attachment": ((ImageParts, frozenset({'ImageAttachment'})), (LinkParts, frozenset({'LinkAttachment'}))), "preview": ()}),
+        (('attachment', (ImagePartsFragment, LinkPartsFragment)),): ('query GetAttachment($id: ID!) {\n  post(id: $id) {\n    id\n    attachment {\n      __typename\n      ...ImageParts\n      ...LinkParts\n    }\n    preview {\n      __typename\n    }\n  }\n}\n\nfragment ImageParts on ImageAttachment {\n  url\n}\n\nfragment LinkParts on LinkAttachment {\n  href\n}', {"attachment": ((ImagePartsFragment, frozenset({'ImageAttachment'})), (LinkPartsFragment, frozenset({'LinkAttachment'}))), "preview": ()}),
     }
 
     @overload
-    def bind(self, *, attachment: Sequence[Never] = (), preview: Sequence[Never] = ()) -> GetAttachmentBound[GetAttachmentResult[Never, Never]]: ...
+    def bind(self, *, attachment: Sequence[Never] = (), preview: Sequence[Never] = ()) -> GetAttachmentQueryBound[GetAttachmentQueryResult[Never, Never]]: ...
     @overload
-    def bind[TModelPreview: pydantic.BaseModel, TReadsPreview](self, *, attachment: Sequence[Never] = (), preview: OnImageAttachment[TModelPreview, TReadsPreview]) -> GetAttachmentBound[GetAttachmentResult[Never, OnImageAttachment[TModelPreview, TReadsPreview] | TReadsPreview]]: ...
+    def bind[TModelPreview: pydantic.BaseModel, TReadsPreview](self, *, attachment: Sequence[Never] = (), preview: OnImageAttachment[TModelPreview, TReadsPreview]) -> GetAttachmentQueryBound[GetAttachmentQueryResult[Never, OnImageAttachment[TModelPreview, TReadsPreview] | TReadsPreview]]: ...
     @overload
-    def bind[TModelPreview: pydantic.BaseModel, TReadsPreview](self, *, attachment: Sequence[Never] = (), preview: OnLinkAttachment[TModelPreview, TReadsPreview]) -> GetAttachmentBound[GetAttachmentResult[Never, OnLinkAttachment[TModelPreview, TReadsPreview] | TReadsPreview]]: ...
+    def bind[TModelPreview: pydantic.BaseModel, TReadsPreview](self, *, attachment: Sequence[Never] = (), preview: OnLinkAttachment[TModelPreview, TReadsPreview]) -> GetAttachmentQueryBound[GetAttachmentQueryResult[Never, OnLinkAttachment[TModelPreview, TReadsPreview] | TReadsPreview]]: ...
     @overload
-    def bind[TModelAttachment: pydantic.BaseModel, TReadsAttachment](self, *, attachment: OnImageAttachment[TModelAttachment, TReadsAttachment], preview: Sequence[Never] = ()) -> GetAttachmentBound[GetAttachmentResult[OnImageAttachment[TModelAttachment, TReadsAttachment] | TReadsAttachment, Never]]: ...
+    def bind[TModelAttachment: pydantic.BaseModel, TReadsAttachment](self, *, attachment: OnImageAttachment[TModelAttachment, TReadsAttachment], preview: Sequence[Never] = ()) -> GetAttachmentQueryBound[GetAttachmentQueryResult[OnImageAttachment[TModelAttachment, TReadsAttachment] | TReadsAttachment, Never]]: ...
     @overload
-    def bind[TModelAttachment: pydantic.BaseModel, TReadsAttachment](self, *, attachment: OnLinkAttachment[TModelAttachment, TReadsAttachment], preview: Sequence[Never] = ()) -> GetAttachmentBound[GetAttachmentResult[OnLinkAttachment[TModelAttachment, TReadsAttachment] | TReadsAttachment, Never]]: ...
+    def bind[TModelAttachment: pydantic.BaseModel, TReadsAttachment](self, *, attachment: OnLinkAttachment[TModelAttachment, TReadsAttachment], preview: Sequence[Never] = ()) -> GetAttachmentQueryBound[GetAttachmentQueryResult[OnLinkAttachment[TModelAttachment, TReadsAttachment] | TReadsAttachment, Never]]: ...
     @overload
-    def bind[TModelAttachment: pydantic.BaseModel, TReadsAttachment, TModelPreview: pydantic.BaseModel, TReadsPreview](self, *, attachment: OnImageAttachment[TModelAttachment, TReadsAttachment], preview: OnImageAttachment[TModelPreview, TReadsPreview]) -> GetAttachmentBound[GetAttachmentResult[OnImageAttachment[TModelAttachment, TReadsAttachment] | TReadsAttachment, OnImageAttachment[TModelPreview, TReadsPreview] | TReadsPreview]]: ...
+    def bind[TModelAttachment: pydantic.BaseModel, TReadsAttachment, TModelPreview: pydantic.BaseModel, TReadsPreview](self, *, attachment: OnImageAttachment[TModelAttachment, TReadsAttachment], preview: OnImageAttachment[TModelPreview, TReadsPreview]) -> GetAttachmentQueryBound[GetAttachmentQueryResult[OnImageAttachment[TModelAttachment, TReadsAttachment] | TReadsAttachment, OnImageAttachment[TModelPreview, TReadsPreview] | TReadsPreview]]: ...
     @overload
-    def bind[TModelAttachment: pydantic.BaseModel, TReadsAttachment, TModelPreview: pydantic.BaseModel, TReadsPreview](self, *, attachment: OnImageAttachment[TModelAttachment, TReadsAttachment], preview: OnLinkAttachment[TModelPreview, TReadsPreview]) -> GetAttachmentBound[GetAttachmentResult[OnImageAttachment[TModelAttachment, TReadsAttachment] | TReadsAttachment, OnLinkAttachment[TModelPreview, TReadsPreview] | TReadsPreview]]: ...
+    def bind[TModelAttachment: pydantic.BaseModel, TReadsAttachment, TModelPreview: pydantic.BaseModel, TReadsPreview](self, *, attachment: OnImageAttachment[TModelAttachment, TReadsAttachment], preview: OnLinkAttachment[TModelPreview, TReadsPreview]) -> GetAttachmentQueryBound[GetAttachmentQueryResult[OnImageAttachment[TModelAttachment, TReadsAttachment] | TReadsAttachment, OnLinkAttachment[TModelPreview, TReadsPreview] | TReadsPreview]]: ...
     @overload
-    def bind[TModelAttachment: pydantic.BaseModel, TReadsAttachment, TModelPreview: pydantic.BaseModel, TReadsPreview](self, *, attachment: OnLinkAttachment[TModelAttachment, TReadsAttachment], preview: OnImageAttachment[TModelPreview, TReadsPreview]) -> GetAttachmentBound[GetAttachmentResult[OnLinkAttachment[TModelAttachment, TReadsAttachment] | TReadsAttachment, OnImageAttachment[TModelPreview, TReadsPreview] | TReadsPreview]]: ...
+    def bind[TModelAttachment: pydantic.BaseModel, TReadsAttachment, TModelPreview: pydantic.BaseModel, TReadsPreview](self, *, attachment: OnLinkAttachment[TModelAttachment, TReadsAttachment], preview: OnImageAttachment[TModelPreview, TReadsPreview]) -> GetAttachmentQueryBound[GetAttachmentQueryResult[OnLinkAttachment[TModelAttachment, TReadsAttachment] | TReadsAttachment, OnImageAttachment[TModelPreview, TReadsPreview] | TReadsPreview]]: ...
     @overload
-    def bind[TModelAttachment: pydantic.BaseModel, TReadsAttachment, TModelPreview: pydantic.BaseModel, TReadsPreview](self, *, attachment: OnLinkAttachment[TModelAttachment, TReadsAttachment], preview: OnLinkAttachment[TModelPreview, TReadsPreview]) -> GetAttachmentBound[GetAttachmentResult[OnLinkAttachment[TModelAttachment, TReadsAttachment] | TReadsAttachment, OnLinkAttachment[TModelPreview, TReadsPreview] | TReadsPreview]]: ...
+    def bind[TModelAttachment: pydantic.BaseModel, TReadsAttachment, TModelPreview: pydantic.BaseModel, TReadsPreview](self, *, attachment: OnLinkAttachment[TModelAttachment, TReadsAttachment], preview: OnLinkAttachment[TModelPreview, TReadsPreview]) -> GetAttachmentQueryBound[GetAttachmentQueryResult[OnLinkAttachment[TModelAttachment, TReadsAttachment] | TReadsAttachment, OnLinkAttachment[TModelPreview, TReadsPreview] | TReadsPreview]]: ...
     @overload
-    def bind[TFillAttachment1: (ImageParts, LinkParts), TFillAttachment2: (ImageParts, LinkParts)](self, *, attachment: tuple[TFillAttachment1, TFillAttachment2], preview: Sequence[Never] = ()) -> GetAttachmentBound[GetAttachmentResult[TFillAttachment1 | TFillAttachment2, Never]]: ...
+    def bind[TFillAttachment1: (ImagePartsFragment, LinkPartsFragment), TFillAttachment2: (ImagePartsFragment, LinkPartsFragment)](self, *, attachment: tuple[TFillAttachment1, TFillAttachment2], preview: Sequence[Never] = ()) -> GetAttachmentQueryBound[GetAttachmentQueryResult[TFillAttachment1 | TFillAttachment2, Never]]: ...
     @overload
-    def bind[TFillAttachment1: (ImageParts, LinkParts), TFillAttachment2: (ImageParts, LinkParts), TModelPreview: pydantic.BaseModel, TReadsPreview](self, *, attachment: tuple[TFillAttachment1, TFillAttachment2], preview: OnImageAttachment[TModelPreview, TReadsPreview]) -> GetAttachmentBound[GetAttachmentResult[TFillAttachment1 | TFillAttachment2, OnImageAttachment[TModelPreview, TReadsPreview] | TReadsPreview]]: ...
+    def bind[TFillAttachment1: (ImagePartsFragment, LinkPartsFragment), TFillAttachment2: (ImagePartsFragment, LinkPartsFragment), TModelPreview: pydantic.BaseModel, TReadsPreview](self, *, attachment: tuple[TFillAttachment1, TFillAttachment2], preview: OnImageAttachment[TModelPreview, TReadsPreview]) -> GetAttachmentQueryBound[GetAttachmentQueryResult[TFillAttachment1 | TFillAttachment2, OnImageAttachment[TModelPreview, TReadsPreview] | TReadsPreview]]: ...
     @overload
-    def bind[TFillAttachment1: (ImageParts, LinkParts), TFillAttachment2: (ImageParts, LinkParts), TModelPreview: pydantic.BaseModel, TReadsPreview](self, *, attachment: tuple[TFillAttachment1, TFillAttachment2], preview: OnLinkAttachment[TModelPreview, TReadsPreview]) -> GetAttachmentBound[GetAttachmentResult[TFillAttachment1 | TFillAttachment2, OnLinkAttachment[TModelPreview, TReadsPreview] | TReadsPreview]]: ...
+    def bind[TFillAttachment1: (ImagePartsFragment, LinkPartsFragment), TFillAttachment2: (ImagePartsFragment, LinkPartsFragment), TModelPreview: pydantic.BaseModel, TReadsPreview](self, *, attachment: tuple[TFillAttachment1, TFillAttachment2], preview: OnLinkAttachment[TModelPreview, TReadsPreview]) -> GetAttachmentQueryBound[GetAttachmentQueryResult[TFillAttachment1 | TFillAttachment2, OnLinkAttachment[TModelPreview, TReadsPreview] | TReadsPreview]]: ...
     def bind(self, *, attachment: slots.GQLBindableFragment[pydantic.BaseModel, Any] | Sequence[slots.GQLBindableFragment[pydantic.BaseModel, Any]] = (), preview: slots.GQLBindableFragment[pydantic.BaseModel, Any] | Sequence[slots.GQLBindableFragment[pydantic.BaseModel, Any]] = ()) -> runtime.GQLBoundOperation:
         if slots.binding_key({'attachment': attachment, 'preview': preview}) not in self._binding_specs:
-            raise LookupError("unknown bind combination for GetAttachment; single-fragment and empty combinations are generated from the schema, so this is a tuple combination no call site writes literally - write it, then regenerate the module. A call whose template is an expression the scan cannot follow is never read either: those are listed, with the reason, in the debug run's ignored_binds.json")
-        return GetAttachmentBound[GetAttachmentResult].bound__(
+            raise LookupError("unknown bind combination for GetAttachmentQuery; single-fragment and empty combinations are generated from the schema, so this is a tuple combination no call site writes literally - write it, then regenerate the module. A call whose template is an expression the scan cannot follow is never read either: those are listed, with the reason, in the debug run's ignored_binds.json")
+        return GetAttachmentQueryBound[GetAttachmentQueryResult].bound__(
             self._binding_specs[slots.binding_key({'attachment': attachment, 'preview': preview})], {'attachment': slots.as_bindable_fragments(attachment), 'preview': slots.as_bindable_fragments(preview)},
         )
 
 
 @overload
-def api_gql(stmt: Literal['\n    fragment ImageParts on ImageAttachment {\n        url\n    }\n    ']) -> ImageParts: ...
+def api_gql(stmt: Literal['\n    fragment ImageParts on ImageAttachment {\n        url\n    }\n    ']) -> ImagePartsFragment: ...
 @overload
-def api_gql(stmt: Literal['\n    fragment LinkParts on LinkAttachment {\n        href\n    }\n    ']) -> LinkParts: ...
+def api_gql(stmt: Literal['\n    fragment LinkParts on LinkAttachment {\n        href\n    }\n    ']) -> LinkPartsFragment: ...
 @overload
-def api_gql(stmt: Literal['\n    query GetAttachment($id: ID!) {\n        post(id: $id) {\n            id\n            attachment @slot { __typename }\n            preview @slot { __typename }\n        }\n    }\n    ']) -> GetAttachment: ...
+def api_gql(stmt: Literal['\n    query GetAttachment($id: ID!) {\n        post(id: $id) {\n            id\n            attachment @slot { __typename }\n            preview @slot { __typename }\n        }\n    }\n    ']) -> GetAttachmentQuery: ...
 @overload
 def api_gql(stmt: str) -> runtime.GQLOperation | slots.GQLFragment[pydantic.BaseModel, Any] | runtime.GQLTemplate: ...
 
 
 _statement_factories: dict[str, Callable[[], runtime.GQLOperation | slots.GQLFragment[pydantic.BaseModel, Any] | runtime.GQLTemplate]] = {
-    '\n    fragment ImageParts on ImageAttachment {\n        url\n    }\n    ': lambda: ImageParts(),
-    '\n    fragment LinkParts on LinkAttachment {\n        href\n    }\n    ': lambda: LinkParts(),
-    '\n    query GetAttachment($id: ID!) {\n        post(id: $id) {\n            id\n            attachment @slot { __typename }\n            preview @slot { __typename }\n        }\n    }\n    ': GetAttachment,
+    '\n    fragment ImageParts on ImageAttachment {\n        url\n    }\n    ': lambda: ImagePartsFragment(),
+    '\n    fragment LinkParts on LinkAttachment {\n        href\n    }\n    ': lambda: LinkPartsFragment(),
+    '\n    query GetAttachment($id: ID!) {\n        post(id: $id) {\n            id\n            attachment @slot { __typename }\n            preview @slot { __typename }\n        }\n    }\n    ': GetAttachmentQuery,
 }
 
 

@@ -62,25 +62,25 @@ class GQLSlotModel[TOffered](GQLOpenModel, slots.GQLSlotNode[TOffered]):
     pass
 
 
-class GetPostAttachmentResultPostAttachmentSlotImageAttachment[TSlotAttachment = Never](GQLSlotModel[TSlotAttachment]):
+class GetPostAttachmentQueryResultPostAttachmentSlotImageAttachment[TSlotAttachment = Never](GQLSlotModel[TSlotAttachment]):
     slot_name__: ClassVar[str] = "attachment"
     typename__: Annotated[Literal["ImageAttachment"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
 
 
-class GetPostAttachmentResultPostAttachmentSlotLinkAttachment[TSlotAttachment = Never](GQLSlotModel[TSlotAttachment]):
+class GetPostAttachmentQueryResultPostAttachmentSlotLinkAttachment[TSlotAttachment = Never](GQLSlotModel[TSlotAttachment]):
     slot_name__: ClassVar[str] = "attachment"
     typename__: Annotated[Literal["LinkAttachment"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
 
 
-type GetPostAttachmentResultPostAttachmentSlot[TSlotAttachment] = Annotated[GetPostAttachmentResultPostAttachmentSlotImageAttachment[TSlotAttachment] | GetPostAttachmentResultPostAttachmentSlotLinkAttachment[TSlotAttachment], pydantic.Field(discriminator="typename__")]
+type Attachment[TSlotAttachment] = Annotated[GetPostAttachmentQueryResultPostAttachmentSlotImageAttachment[TSlotAttachment] | GetPostAttachmentQueryResultPostAttachmentSlotLinkAttachment[TSlotAttachment], pydantic.Field(discriminator="typename__")]
 
 
 class Post[TSlotAttachment = Never](GQLModel):
     id: builtins.str
-    attachment: GetPostAttachmentResultPostAttachmentSlot[TSlotAttachment] | None
+    attachment: Attachment[TSlotAttachment] | None
 
 
-class GetPostAttachmentResult[TSlotAttachment = Never](GQLModel):
+class GetPostAttachmentQueryResult[TSlotAttachment = Never](GQLModel):
     post: Post[TSlotAttachment] | None
 
 
@@ -145,89 +145,89 @@ class OnLinkAttachment(slots.GQLBindableFragment[TModel, TReads], ABC):
 
 
 @final
-class ImageUrl(OnImageAttachment[ImageUrlData, "ImageUrl"]):
+class ImageUrlFragment(OnImageAttachment[ImageUrlData, "ImageUrlFragment"]):
     adapter__: ClassVar[pydantic.TypeAdapter[ImageUrlData]] = pydantic.TypeAdapter(ImageUrlData)
 
     @override
     def __init__(self) -> None:
         super().__init__(
             fragment_name='ImageUrl',
-            definition_type=ImageUrl,
+            definition_type=ImageUrlFragment,
             adapter=self.adapter__,
         )
 
 
 @final
-class LinkUrl(OnLinkAttachment[LinkUrlData, "LinkUrl"]):
+class LinkUrlFragment(OnLinkAttachment[LinkUrlData, "LinkUrlFragment"]):
     adapter__: ClassVar[pydantic.TypeAdapter[LinkUrlData]] = pydantic.TypeAdapter(LinkUrlData)
 
     @override
     def __init__(self) -> None:
         super().__init__(
             fragment_name='LinkUrl',
-            definition_type=LinkUrl,
+            definition_type=LinkUrlFragment,
             adapter=self.adapter__,
         )
 
 
 @final
-class ImageCaption(OnImageAttachment[ImageCaptionData, "ImageCaption"]):
+class ImageCaptionFragment(OnImageAttachment[ImageCaptionData, "ImageCaptionFragment"]):
     adapter__: ClassVar[pydantic.TypeAdapter[ImageCaptionData]] = pydantic.TypeAdapter(ImageCaptionData)
 
     @override
     def __init__(self) -> None:
         super().__init__(
             fragment_name='ImageCaption',
-            definition_type=ImageCaption,
+            definition_type=ImageCaptionFragment,
             adapter=self.adapter__,
         )
 
 
 @final
-class LinkSummary(OnLinkAttachment[LinkSummaryData, "LinkSummary"]):
+class LinkSummaryFragment(OnLinkAttachment[LinkSummaryData, "LinkSummaryFragment"]):
     adapter__: ClassVar[pydantic.TypeAdapter[LinkSummaryData]] = pydantic.TypeAdapter(LinkSummaryData)
 
     @override
     def __init__(self) -> None:
         super().__init__(
             fragment_name='LinkSummary',
-            definition_type=LinkSummary,
+            definition_type=LinkSummaryFragment,
             adapter=self.adapter__,
         )
 
 
 @final
-class ImageThumbnail(slots.GQLFragment[ImageThumbnailData, "_ImageThumbnailApplied"]):
+class ImageThumbnailFragment(slots.GQLFragment[ImageThumbnailData, "_ImageThumbnailFragmentApplied"]):
     adapter__: ClassVar[pydantic.TypeAdapter[ImageThumbnailData]] = pydantic.TypeAdapter(ImageThumbnailData)
 
     @override
     def __init__(self) -> None:
         super().__init__(
             fragment_name='ImageThumbnail',
-            definition_type=ImageThumbnail,
+            definition_type=ImageThumbnailFragment,
             adapter=self.adapter__,
         )
 
-    def with_args(self, *, width: int) -> _ImageThumbnailApplied:
-        return _ImageThumbnailApplied({"width": width})
+    def with_args(self, *, width: int) -> _ImageThumbnailFragmentApplied:
+        return _ImageThumbnailFragmentApplied({"width": width})
 
 
 @final
-class _ImageThumbnailApplied(OnImageAttachment[ImageThumbnailData, "_ImageThumbnailApplied"]):
+class _ImageThumbnailFragmentApplied(OnImageAttachment[ImageThumbnailData, "_ImageThumbnailFragmentApplied"]):
     @override
     def __init__(self, fragment_args: dict[str, object], /) -> None:
         super().__init__(
             fragment_name='ImageThumbnail',
-            definition_type=ImageThumbnail,
-            adapter=ImageThumbnail.adapter__,
+            definition_type=ImageThumbnailFragment,
+            adapter=ImageThumbnailFragment.adapter__,
         )
         self._set_fragment_args(fragment_args)
 
 
-class GetPostAttachmentBound[TResult: pydantic.BaseModel](runtime.GQLBoundOperation):
+class GetPostAttachmentQueryBound[TResult: pydantic.BaseModel](runtime.GQLBoundOperation):
     async def execute(self, *, id: builtins.str) -> TResult:
         return await _client.query(
-            typing.cast("type[TResult]", GetPostAttachmentResult),
+            typing.cast("type[TResult]", GetPostAttachmentQueryResult),
             self.exec_source,
             variables={"id": id, **self.fragment_args},
             headers=self.headers,
@@ -235,63 +235,63 @@ class GetPostAttachmentBound[TResult: pydantic.BaseModel](runtime.GQLBoundOperat
         )
 
 
-class GetPostAttachment(runtime.GQLTemplate):
+class GetPostAttachmentQuery(runtime.GQLTemplate):
     _binding_specs: ClassVar[dict[slots.BindingKey, runtime.BoundSpec]] = {
         # See: queries.py:3
         (): ('query GetPostAttachment($id: ID!) {\n  post(id: $id) {\n    id\n    attachment {\n      __typename\n    }\n  }\n}', {"attachment": ()}),
         # See: queries.py:3, queries.py:27
-        (('attachment', (ImageCaption,)),): ('query GetPostAttachment($id: ID!) {\n  post(id: $id) {\n    id\n    attachment {\n      __typename\n      ...ImageCaption\n    }\n  }\n}\n\nfragment ImageCaption on ImageAttachment {\n  caption\n}', {"attachment": ((ImageCaption, frozenset({'ImageAttachment'})),)}),
+        (('attachment', (ImageCaptionFragment,)),): ('query GetPostAttachment($id: ID!) {\n  post(id: $id) {\n    id\n    attachment {\n      __typename\n      ...ImageCaption\n    }\n  }\n}\n\nfragment ImageCaption on ImageAttachment {\n  caption\n}', {"attachment": ((ImageCaptionFragment, frozenset({'ImageAttachment'})),)}),
         # See: queries.py:3, queries.py:43
-        (('attachment', (_ImageThumbnailApplied,)),): ('query GetPostAttachment($id: ID!, $width: Int!) {\n  post(id: $id) {\n    id\n    attachment {\n      __typename\n      ...ImageThumbnail\n    }\n  }\n}\n\nfragment ImageThumbnail on ImageAttachment {\n  thumbnail(width: $width)\n}', {"attachment": ((ImageThumbnail, frozenset({'ImageAttachment'})),)}),
+        (('attachment', (_ImageThumbnailFragmentApplied,)),): ('query GetPostAttachment($id: ID!, $width: Int!) {\n  post(id: $id) {\n    id\n    attachment {\n      __typename\n      ...ImageThumbnail\n    }\n  }\n}\n\nfragment ImageThumbnail on ImageAttachment {\n  thumbnail(width: $width)\n}', {"attachment": ((ImageThumbnailFragment, frozenset({'ImageAttachment'})),)}),
         # See: queries.py:3, queries.py:12
-        (('attachment', (ImageUrl,)),): ('query GetPostAttachment($id: ID!) {\n  post(id: $id) {\n    id\n    attachment {\n      __typename\n      ...ImageUrl\n    }\n  }\n}\n\nfragment ImageUrl on ImageAttachment {\n  url\n}', {"attachment": ((ImageUrl, frozenset({'ImageAttachment'})),)}),
+        (('attachment', (ImageUrlFragment,)),): ('query GetPostAttachment($id: ID!) {\n  post(id: $id) {\n    id\n    attachment {\n      __typename\n      ...ImageUrl\n    }\n  }\n}\n\nfragment ImageUrl on ImageAttachment {\n  url\n}', {"attachment": ((ImageUrlFragment, frozenset({'ImageAttachment'})),)}),
         # See: queries.py:3, queries.py:33
-        (('attachment', (LinkSummary,)),): ('query GetPostAttachment($id: ID!) {\n  post(id: $id) {\n    id\n    attachment {\n      __typename\n      ...LinkSummary\n    }\n  }\n}\n\nfragment LinkSummary on LinkAttachment {\n  href\n}', {"attachment": ((LinkSummary, frozenset({'LinkAttachment'})),)}),
+        (('attachment', (LinkSummaryFragment,)),): ('query GetPostAttachment($id: ID!) {\n  post(id: $id) {\n    id\n    attachment {\n      __typename\n      ...LinkSummary\n    }\n  }\n}\n\nfragment LinkSummary on LinkAttachment {\n  href\n}', {"attachment": ((LinkSummaryFragment, frozenset({'LinkAttachment'})),)}),
         # See: queries.py:3, queries.py:18
-        (('attachment', (LinkUrl,)),): ('query GetPostAttachment($id: ID!) {\n  post(id: $id) {\n    id\n    attachment {\n      __typename\n      ...LinkUrl\n    }\n  }\n}\n\nfragment LinkUrl on LinkAttachment {\n  href\n}', {"attachment": ((LinkUrl, frozenset({'LinkAttachment'})),)}),
+        (('attachment', (LinkUrlFragment,)),): ('query GetPostAttachment($id: ID!) {\n  post(id: $id) {\n    id\n    attachment {\n      __typename\n      ...LinkUrl\n    }\n  }\n}\n\nfragment LinkUrl on LinkAttachment {\n  href\n}', {"attachment": ((LinkUrlFragment, frozenset({'LinkAttachment'})),)}),
         # See: queries.py:39
-        (('attachment', (ImageCaption, LinkSummary)),): ('query GetPostAttachment($id: ID!) {\n  post(id: $id) {\n    id\n    attachment {\n      __typename\n      ...ImageCaption\n      ...LinkSummary\n    }\n  }\n}\n\nfragment ImageCaption on ImageAttachment {\n  caption\n}\n\nfragment LinkSummary on LinkAttachment {\n  href\n}', {"attachment": ((ImageCaption, frozenset({'ImageAttachment'})), (LinkSummary, frozenset({'LinkAttachment'})))}),
+        (('attachment', (ImageCaptionFragment, LinkSummaryFragment)),): ('query GetPostAttachment($id: ID!) {\n  post(id: $id) {\n    id\n    attachment {\n      __typename\n      ...ImageCaption\n      ...LinkSummary\n    }\n  }\n}\n\nfragment ImageCaption on ImageAttachment {\n  caption\n}\n\nfragment LinkSummary on LinkAttachment {\n  href\n}', {"attachment": ((ImageCaptionFragment, frozenset({'ImageAttachment'})), (LinkSummaryFragment, frozenset({'LinkAttachment'})))}),
     }
 
     @overload
-    def bind(self, *, attachment: Sequence[Never] = ()) -> GetPostAttachmentBound[GetPostAttachmentResult[Never]]: ...
+    def bind(self, *, attachment: Sequence[Never] = ()) -> GetPostAttachmentQueryBound[GetPostAttachmentQueryResult[Never]]: ...
     @overload
-    def bind[TModelAttachment: pydantic.BaseModel, TReadsAttachment](self, *, attachment: OnImageAttachment[TModelAttachment, TReadsAttachment]) -> GetPostAttachmentBound[GetPostAttachmentResult[OnImageAttachment[TModelAttachment, TReadsAttachment] | TReadsAttachment]]: ...
+    def bind[TModelAttachment: pydantic.BaseModel, TReadsAttachment](self, *, attachment: OnImageAttachment[TModelAttachment, TReadsAttachment]) -> GetPostAttachmentQueryBound[GetPostAttachmentQueryResult[OnImageAttachment[TModelAttachment, TReadsAttachment] | TReadsAttachment]]: ...
     @overload
-    def bind[TModelAttachment: pydantic.BaseModel, TReadsAttachment](self, *, attachment: OnLinkAttachment[TModelAttachment, TReadsAttachment]) -> GetPostAttachmentBound[GetPostAttachmentResult[OnLinkAttachment[TModelAttachment, TReadsAttachment] | TReadsAttachment]]: ...
+    def bind[TModelAttachment: pydantic.BaseModel, TReadsAttachment](self, *, attachment: OnLinkAttachment[TModelAttachment, TReadsAttachment]) -> GetPostAttachmentQueryBound[GetPostAttachmentQueryResult[OnLinkAttachment[TModelAttachment, TReadsAttachment] | TReadsAttachment]]: ...
     @overload
-    def bind[TFillAttachment1: (ImageCaption, LinkSummary), TFillAttachment2: (ImageCaption, LinkSummary)](self, *, attachment: tuple[TFillAttachment1, TFillAttachment2]) -> GetPostAttachmentBound[GetPostAttachmentResult[TFillAttachment1 | TFillAttachment2]]: ...
+    def bind[TFillAttachment1: (ImageCaptionFragment, LinkSummaryFragment), TFillAttachment2: (ImageCaptionFragment, LinkSummaryFragment)](self, *, attachment: tuple[TFillAttachment1, TFillAttachment2]) -> GetPostAttachmentQueryBound[GetPostAttachmentQueryResult[TFillAttachment1 | TFillAttachment2]]: ...
     def bind(self, *, attachment: slots.GQLBindableFragment[pydantic.BaseModel, Any] | Sequence[slots.GQLBindableFragment[pydantic.BaseModel, Any]] = ()) -> runtime.GQLBoundOperation:
         if slots.binding_key({'attachment': attachment}) not in self._binding_specs:
-            raise LookupError("unknown bind combination for GetPostAttachment; single-fragment and empty combinations are generated from the schema, so this is a tuple combination no call site writes literally - write it, then regenerate the module. A call whose template is an expression the scan cannot follow is never read either: those are listed, with the reason, in the debug run's ignored_binds.json")
-        return GetPostAttachmentBound[GetPostAttachmentResult].bound__(
+            raise LookupError("unknown bind combination for GetPostAttachmentQuery; single-fragment and empty combinations are generated from the schema, so this is a tuple combination no call site writes literally - write it, then regenerate the module. A call whose template is an expression the scan cannot follow is never read either: those are listed, with the reason, in the debug run's ignored_binds.json")
+        return GetPostAttachmentQueryBound[GetPostAttachmentQueryResult].bound__(
             self._binding_specs[slots.binding_key({'attachment': attachment})], {'attachment': slots.as_bindable_fragments(attachment)},
         )
 
 
 @overload
-def api_gql(stmt: Literal['\n    fragment ImageUrl on ImageAttachment {\n        url\n    }\n']) -> ImageUrl: ...
+def api_gql(stmt: Literal['\n    fragment ImageUrl on ImageAttachment {\n        url\n    }\n']) -> ImageUrlFragment: ...
 @overload
-def api_gql(stmt: Literal['\n    fragment LinkUrl on LinkAttachment {\n        href\n    }\n']) -> LinkUrl: ...
+def api_gql(stmt: Literal['\n    fragment LinkUrl on LinkAttachment {\n        href\n    }\n']) -> LinkUrlFragment: ...
 @overload
-def api_gql(stmt: Literal['\n    fragment ImageCaption on ImageAttachment {\n        caption\n    }\n']) -> ImageCaption: ...
+def api_gql(stmt: Literal['\n    fragment ImageCaption on ImageAttachment {\n        caption\n    }\n']) -> ImageCaptionFragment: ...
 @overload
-def api_gql(stmt: Literal['\n    fragment LinkSummary on LinkAttachment {\n        href\n    }\n']) -> LinkSummary: ...
+def api_gql(stmt: Literal['\n    fragment LinkSummary on LinkAttachment {\n        href\n    }\n']) -> LinkSummaryFragment: ...
 @overload
-def api_gql(stmt: Literal['\n    fragment ImageThumbnail on ImageAttachment {\n        thumbnail(width: $width)\n    }\n']) -> ImageThumbnail: ...
+def api_gql(stmt: Literal['\n    fragment ImageThumbnail on ImageAttachment {\n        thumbnail(width: $width)\n    }\n']) -> ImageThumbnailFragment: ...
 @overload
-def api_gql(stmt: Literal['\n    query GetPostAttachment($id: ID!) {\n        post(id: $id) {\n            id\n            attachment @slot { __typename }\n        }\n    }\n']) -> GetPostAttachment: ...
+def api_gql(stmt: Literal['\n    query GetPostAttachment($id: ID!) {\n        post(id: $id) {\n            id\n            attachment @slot { __typename }\n        }\n    }\n']) -> GetPostAttachmentQuery: ...
 @overload
 def api_gql(stmt: str) -> runtime.GQLOperation | slots.GQLFragment[pydantic.BaseModel, Any] | runtime.GQLTemplate: ...
 
 
 _statement_factories: dict[str, Callable[[], runtime.GQLOperation | slots.GQLFragment[pydantic.BaseModel, Any] | runtime.GQLTemplate]] = {
-    '\n    fragment ImageUrl on ImageAttachment {\n        url\n    }\n': lambda: ImageUrl(),
-    '\n    fragment LinkUrl on LinkAttachment {\n        href\n    }\n': lambda: LinkUrl(),
-    '\n    fragment ImageCaption on ImageAttachment {\n        caption\n    }\n': lambda: ImageCaption(),
-    '\n    fragment LinkSummary on LinkAttachment {\n        href\n    }\n': lambda: LinkSummary(),
-    '\n    fragment ImageThumbnail on ImageAttachment {\n        thumbnail(width: $width)\n    }\n': lambda: ImageThumbnail(),
-    '\n    query GetPostAttachment($id: ID!) {\n        post(id: $id) {\n            id\n            attachment @slot { __typename }\n        }\n    }\n': GetPostAttachment,
+    '\n    fragment ImageUrl on ImageAttachment {\n        url\n    }\n': lambda: ImageUrlFragment(),
+    '\n    fragment LinkUrl on LinkAttachment {\n        href\n    }\n': lambda: LinkUrlFragment(),
+    '\n    fragment ImageCaption on ImageAttachment {\n        caption\n    }\n': lambda: ImageCaptionFragment(),
+    '\n    fragment LinkSummary on LinkAttachment {\n        href\n    }\n': lambda: LinkSummaryFragment(),
+    '\n    fragment ImageThumbnail on ImageAttachment {\n        thumbnail(width: $width)\n    }\n': lambda: ImageThumbnailFragment(),
+    '\n    query GetPostAttachment($id: ID!) {\n        post(id: $id) {\n            id\n            attachment @slot { __typename }\n        }\n    }\n': GetPostAttachmentQuery,
 }
 
 

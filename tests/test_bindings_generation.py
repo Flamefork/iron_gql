@@ -73,7 +73,7 @@ get_image_attachment = get_attachment.bind(attachment=image_parts)
 '''
 
 
-def _binding_specs_block(generated: str, template: str = "GetAttachment") -> str:
+def _binding_specs_block(generated: str, template: str = "GetAttachmentQuery") -> str:
     # Every combination's exec_source now lives as data inside
     # its template's `_binding_specs`, not a per-combination `exec_source__ = ...`
     # line -- scoped text search over just this block keeps a raw-statement
@@ -189,7 +189,7 @@ def test_generated_source_strips_slot_and_renders_binding(test_project: ProjectB
     # -- must be free of the directive; mirrors
     # `test_slot_directive_is_stripped_and_split_in_exec_source` in
     # tests/test_slots.py.
-    binding_key = "(('attachment', (ImageParts,)),)"
+    binding_key = "(('attachment', (ImagePartsFragment,)),)"
     [binding_line] = [
         line for line in generated.splitlines() if line.strip().startswith(binding_key)
     ]
@@ -203,7 +203,7 @@ def test_generated_source_strips_slot_and_renders_binding(test_project: ProjectB
     assert (
         "def bind[TModelAttachment: pydantic.BaseModel, TReadsAttachment]"
         "(self, *, attachment: OnImageAttachment[TModelAttachment, "
-        "TReadsAttachment]) -> GetAttachmentBound[GetAttachmentResult["
+        "TReadsAttachment]) -> GetAttachmentQueryBound[GetAttachmentQueryResult["
         "OnImageAttachment[TModelAttachment, TReadsAttachment] "
         "| TReadsAttachment]]: ..."
     ) in generated
@@ -305,10 +305,10 @@ generated_package(
     # on the generated module -- see
     # test_two_tuple_binds_of_one_slot_share_a_form.
     image_and_other = get_attachment.bind(attachment=(image_parts, other_parts))
-    # Другая arity означает другой overload namespace. Первые два positional
-    # parameters намеренно повторяют TFillAttachment1/2; generated module и этот
-    # call site проходят BasedPyright, закрепляя разделение на public typing
-    # boundary.
+    # A different arity means a different overload namespace. The first two
+    # positional parameters deliberately repeat TFillAttachment1/2; the
+    # generated module and this call site pass BasedPyright, pinning the
+    # separation at the public typing boundary.
     all_three = get_attachment.bind(attachment=(image_parts, other_parts, link_parts))
     ''',
 )
@@ -348,7 +348,7 @@ def test_unfilled_slot_renders_never_and_the_partial_overload():
     # definition no bind offered raises instead of returning None. Each slot's
     # node is generic in that slot's own phantom, and the binding fills both
     # in when it names its result -- `Never` for the one it left unfilled.
-    node = "GetAttachmentResultPost"
+    node = "GetAttachmentQueryResultPost"
     slots = (("Preview", "TSlotPreview"), ("Attachment", "TSlotAttachment"))
     for slot, param in slots:
         header = f"class {node}{slot}SlotImageAttachment[{param} = Never]"
@@ -365,19 +365,19 @@ def test_unfilled_slot_renders_never_and_the_partial_overload():
         "def bind[TModelAttachment: pydantic.BaseModel, TReadsAttachment]"
         "(self, *, attachment: OnImageAttachment[TModelAttachment, "
         "TReadsAttachment], preview: Sequence[Never] = ()) "
-        "-> GetAttachmentBound[GetAttachmentResult["
+        "-> GetAttachmentQueryBound[GetAttachmentQueryResult["
         "OnImageAttachment[TModelAttachment, TReadsAttachment] "
         "| TReadsAttachment, Never]]: ..."
     ) in generated
     # The reader table for that same combination, in the template binding specs:
     # entry's own data now, keyed by the same `BindingKey` the overload's
     # signature type-checks against.
-    binding_key = "(('attachment', (ImageParts,)),)"
+    binding_key = "(('attachment', (ImagePartsFragment,)),)"
     [binding_line] = [
         line for line in generated.splitlines() if line.strip().startswith(binding_key)
     ]
     assert (
-        "{\"attachment\": ((ImageParts, frozenset({'ImageAttachment'})),), "
+        "{\"attachment\": ((ImagePartsFragment, frozenset({'ImageAttachment'})),), "
         '"preview": ()}'
     ) in binding_line
 
@@ -394,17 +394,17 @@ def test_all_unfilled_binding_renders_an_all_defaulted_overload():
     assert (
         "def bind(self, *, attachment: Sequence[Never] = (), "
         "preview: Sequence[Never] = ()) "
-        "-> GetAttachmentBound[GetAttachmentResult[Never, Never]]: ..."
+        "-> GetAttachmentQueryBound[GetAttachmentQueryResult[Never, Never]]: ..."
     ) in generated
 
 
 def test_zero_kwarg_and_partial_bindings_resolve_at_runtime():
     bare = shapes_queries.get_attachment.bind()
-    assert isinstance(bare, shapes_api.GetAttachmentBound)
+    assert isinstance(bare, shapes_api.GetAttachmentQueryBound)
     assert bare.slot_readers == {"attachment": (), "preview": ()}
 
     bound = shapes_queries.get_attachment.bind(attachment=shapes_queries.image_parts)
-    assert isinstance(bound, shapes_api.GetAttachmentBound)
+    assert isinstance(bound, shapes_api.GetAttachmentQueryBound)
     assert [
         reader.definition.fragment_name__ for reader in bound.slot_readers["attachment"]
     ] == ["ImageParts"]
@@ -468,22 +468,23 @@ def test_bind_reusing_a_solo_fragment_inside_a_tuple_resolves_independently():
 
 
 def test_two_tuple_binds_of_one_slot_share_a_form():
-    # Две combinations одного slot и одной arity — две строки binding specs,
-    # но одна форма signature. Отдельные формы пересеклись бы на
-    # `(image_parts, image_parts)`, возвращая разные phantoms. Один constrained
-    # form на arity не пересекается с другим form той же arity и сохраняет
-    # precision: phantom собирается из constraint каждой фактической позиции.
+    # Two combinations of one slot and one arity are two binding spec rows, but
+    # one signature form. Separate forms would overlap on `(image_parts,
+    # image_parts)`, returning different phantoms. One constrained form per
+    # arity does not overlap another form of the same arity and keeps precision:
+    # the phantom is assembled from the constraint of each actual position.
     source = generated_source("bindings_shapes")
-    body = source.split("class GetAttachment(runtime.GQLTemplate):")[1]
+    body = source.split("class GetAttachmentQuery(runtime.GQLTemplate):")[1]
     arity_two_signatures = [
         line
         for line in body.splitlines()
         if "attachment: tuple[TFillAttachment1, TFillAttachment2], preview:" in line
     ]
     assert len(arity_two_signatures) == 4
+    constraints = "(ImagePartsFragment, LinkPartsFragment, OtherPartsFragment)"
     assert all(
-        "TFillAttachment1: (ImageParts, LinkParts, OtherParts)" in signature
-        and "TFillAttachment2: (ImageParts, LinkParts, OtherParts)" in signature
+        f"TFillAttachment1: {constraints}" in signature
+        and f"TFillAttachment2: {constraints}" in signature
         for signature in arity_two_signatures
     )
 
@@ -607,8 +608,8 @@ def test_every_compatible_pair_is_generated_without_a_call_site():
     assert "'ImageParts'" in source
     assert "'LinkParts'" in source
     # the fragment on a type no slot can hold gets a class but no combination
-    assert "class AlbumSummary(" in source
-    assert "'AlbumSummary'" not in _binding_specs_block(source)
+    assert "class AlbumSummaryFragment(" in source
+    assert "'AlbumSummaryFragment'" not in _binding_specs_block(source)
     # ...and no overload accepts it either: `OnAlbum` is not among the bases
     # the slot's signature names, which is what rejects an incompatible
     # fragment now that every fragment of the module is typed (its class
@@ -676,11 +677,11 @@ def _many_slot_queries(count: int) -> str:
 
 
 def test_a_one_element_tuple_reaches_the_bare_runtime_combination():
-    # Slot с одним fragment принимается через on-type base этого фрагмента;
-    # тот же base нельзя ещё раз представить tuple. One-element tuple называет
-    # combination, уже представленный bare fragment, и создал бы второй overload
-    # для одного call. Поэтому `slot=(fragment,)` нигде не type-checks:
-    # `enumeration` не записывает literal tuple bind,
+    # A slot with one fragment is accepted through that fragment's on-type base;
+    # the same base cannot be represented again by a tuple. A one-element tuple
+    # names a combination the bare fragment already represents and would create
+    # a second overload for one call. So `slot=(fragment,)` type-checks nowhere:
+    # `enumeration` does not record a literal tuple bind,
     # and where one is written the tuple form names its own arity, never a
     # shorter one (`test_bindings_tuple_scope`).
     #
@@ -766,7 +767,7 @@ def test_a_template_one_slot_under_the_limit_still_generates(
     test_project.prepare(schema=_many_slot_schema(5), queries=_many_slot_queries(5))
     test_project.generate()
     generated = (test_project.root / "sample_app/gql/api.py").read_text()
-    assert _binding_specs_block(generated, "Many").count("# See:") == 243
+    assert _binding_specs_block(generated, "ManyQuery").count("# See:") == 243
 
 
 CONDITIONAL_SCHEMA = """
@@ -1137,12 +1138,12 @@ def test_a_wide_tuple_bind_stays_importable(test_project: ProjectBuilder):
     # Each position carries the same constraints -- every fragment written in
     # a tuple of this arity, once each -- so the annotation grows with the
     # square of the arity at worst, never with its factorial.
-    constraints = ", ".join(f"Frag{i}" for i in range(WIDE_TUPLE_ARITY))
+    constraints = ", ".join(f"Frag{i}Fragment" for i in range(WIDE_TUPLE_ARITY))
     [tuple_overload] = [
         line for line in generated.splitlines() if f"tuple[{positions}]" in line
     ]
     assert tuple_overload.count(f"({constraints})") == WIDE_TUPLE_ARITY
-    assert api_module.GetAttachment is not None  # pyright: ignore[reportAny]
+    assert api_module.GetAttachmentQuery is not None  # pyright: ignore[reportAny]
 
 
 def test_a_literal_tuple_bind_types_a_factory_by_its_applied_class(
@@ -1211,32 +1212,34 @@ def test_a_literal_tuple_bind_types_a_factory_by_its_applied_class(
     )
     test_project.generate()
     generated = (test_project.root / "sample_app/gql/api.py").read_text()
-    constraints = "(_ImageThumbnailApplied, ImageUrl)"
+    constraints = "(_ImageThumbnailFragmentApplied, ImageUrlFragment)"
     assert f"TFillAttachment1: {constraints}" in generated
     assert f"TFillAttachment2: {constraints}" in generated
-    binding_key = "(('attachment', (ImageUrl, _ImageThumbnailApplied)),)"
+    binding_key = (
+        "(('attachment', (ImageUrlFragment, _ImageThumbnailFragmentApplied)),)"
+    )
     [binding_entry] = [
         line for line in generated.splitlines() if line.strip().startswith(binding_key)
     ]
-    assert "((ImageThumbnail, frozenset({'ImageAttachment'}))," in binding_entry
+    assert "((ImageThumbnailFragment, frozenset({'ImageAttachment'}))," in binding_entry
     # The bare factory nowhere among them: it is not a bindable application.
     [tuple_overload] = [
         line
         for line in generated.splitlines()
         if "tuple[TFillAttachment1, TFillAttachment2]" in line
     ]
-    assert "ImageThumbnail," not in tuple_overload
-    assert "ImageThumbnail)" not in tuple_overload
+    assert "ImageThumbnailFragment," not in tuple_overload
+    assert "ImageThumbnailFragment)" not in tuple_overload
 
 
-def test_a_fragment_named_like_another_ones_applied_class_is_rejected(
+def test_a_fragment_named_like_another_ones_applied_class_keeps_both(
     test_project: ProjectBuilder,
 ):
-    # `SizedImage`'s own factory generates a private `_SizedImageApplied` class
-    # alongside it (`ir.applied_fragment_class_name`) -- a second, unrelated
-    # fragment that happens to be named that exact same thing would silently
-    # rebind it, the same collision class `naming._fixed_name_claims` already
-    # catches for every generated class name.
+    # `SizedImage`'s own factory generates a private `_SizedImageFragmentApplied`
+    # class alongside it (`ir.applied_fragment_class_name`). A second,
+    # unrelated fragment named `_SizedImageApplied` once took that exact name
+    # and silently rebound it; its class now carries the kind suffix
+    # (ADR 0004), so the two names cannot meet.
     test_project.prepare(
         schema="""
             type Query {
@@ -1290,10 +1293,9 @@ def test_a_fragment_named_like_another_ones_applied_class_is_rejected(
         )
         """,
     )
-    with pytest.raises(
-        GraphQLGenerationError, match="Name '_SizedImageApplied' is claimed by"
-    ):
-        test_project.generate()
+    api_module, _queries = test_project.generate_and_import()
+    assert hasattr(api_module, "_SizedImageFragmentApplied")
+    assert hasattr(api_module, "_SizedImageAppliedFragment")
 
 
 def test_a_fragment_may_use_the_old_private_concrete_class_name(
@@ -1322,8 +1324,8 @@ def test_a_fragment_may_use_the_old_private_concrete_class_name(
     )
     api_module, _queries_module = test_project.generate_and_import()
     module_globals = vars(api_module)
-    image_parts_class = cast("type[object]", module_globals["ImageParts"])
-    colliding_class = cast("type[object]", module_globals["_ImageParts"])
+    image_parts_class = cast("type[object]", module_globals["ImagePartsFragment"])
+    colliding_class = cast("type[object]", module_globals["_ImagePartsFragment"])
     assert image_parts_class is not colliding_class
 
 
@@ -1433,7 +1435,7 @@ async def test_unread_slot_of_a_binding_still_validates_eagerly(
     )
 
 
-# --- Согласованность logical combination и runtime binding ------------------
+# --- Consistency of the logical combination and the runtime binding ----------
 
 
 def test_omitted_slot_and_explicit_empty_list_are_one_combination(
@@ -1441,10 +1443,10 @@ def test_omitted_slot_and_explicit_empty_list_are_one_combination(
 ):
     # README: "Omitting a slot and passing it an explicit empty list mean the
     # same thing." Two binds spelling it both ways are therefore the *same*
-    # combination, and one combination is one binding entry -- the two
-    # spellings meet in the `BindingKey` both produce. Runtime key и rendered
-    # literal должны одинаково исключать empty slots; discovery сводит эти
-    # spellings к одной logical combination раньше.
+    # combination, and one combination is one binding entry -- the two spellings
+    # meet in the `BindingKey` both produce. The runtime key and the rendered
+    # literal must exclude empty slots the same way; discovery reduces these
+    # spellings to one logical combination earlier.
     test_project.prepare(
         schema=SHAPES_SCHEMA,
         queries="""
@@ -1477,7 +1479,7 @@ def test_omitted_slot_and_explicit_empty_list_are_one_combination(
     generated = (test_project.root / "sample_app/gql/api.py").read_text(
         encoding="utf-8"
     )
-    key = "(('attachment', (ImageParts,)),)"
+    key = "(('attachment', (ImagePartsFragment,)),)"
     assert _binding_specs_block(generated).count(key) == 1
     # Both spellings also meet the *enumerated* combination of the same shape:
     # the product produces `attachment=ImageParts, preview=nothing` whether or
@@ -1558,8 +1560,8 @@ def _slot_name_queries(slot: str, *, binds: str) -> str:
 CLAIMED_BIND_NAMES = (
     ("self", "the method receiver"),
     *bind_body_fixed_names(),
-    ("GetAttachmentBound", "the bound base of template 'GetAttachment'"),
-    ("GetAttachmentResult", "the result class of template 'GetAttachment'"),
+    ("GetAttachmentQueryBound", "the bound base of template 'GetAttachment'"),
+    ("GetAttachmentQueryResult", "the result class of template 'GetAttachment'"),
 )
 
 # Both shapes `bind()` is rendered in, as the binds a call site writes. The
@@ -1602,7 +1604,7 @@ def test_a_slot_named_after_a_claimed_name_is_rejected(
     with pytest.raises(
         GraphQLGenerationError,
         match=(
-            rf"Parameter '{name}' of bind\(\) of template 'GetAttachment'"
+            rf"Parameter '{name}' of bind\(\) of template 'GetAttachmentQuery'"
             rf".*{re.escape(origin)}"
         ),
     ):
@@ -1614,15 +1616,16 @@ def test_a_slot_named_after_a_claimed_name_is_rejected(
 WIDTH_ARG_SCHEMA = SLOT_NAME_SCHEMA.replace("url: String!", "url(width: Int!): String!")
 
 
-# Ещё два namespace, покрытые тем же правилом: template `execute` читает client,
-# typing module и result class, а factory `with_args` — только свой Applied class.
+# Two more namespaces covered by the same rule: a template's `execute` reads the
+# client, the typing module and the result class, and a factory's `with_args`
+# reads only its own Applied class.
 CLAIMED_TEMPLATE_EXECUTE_NAMES = (
     *template_execute_fixed_names(),
-    ("GetAttachmentResult", "the result class this execute() validates against"),
+    ("GetAttachmentQueryResult", "the result class this execute() validates against"),
 )
 
 CLAIMED_WITH_ARGS_NAMES = (
-    (applied_fragment_class_name("ImageParts"), "the applied fragment class"),
+    (applied_fragment_class_name("ImagePartsFragment"), "the applied fragment class"),
 )
 
 
@@ -1684,7 +1687,7 @@ def test_a_template_variable_named_after_a_claimed_name_is_rejected(
     with pytest.raises(
         GraphQLGenerationError,
         match=(
-            rf"Parameter '{name}' of execute\(\) of template 'GetAttachment'"
+            rf"Parameter '{name}' of execute\(\) of template 'GetAttachmentQuery'"
             rf".*{re.escape(origin)}"
         ),
     ):
@@ -1805,7 +1808,7 @@ def test_fragment_reached_by_both_the_template_and_the_binding_composes(
     )
     test_project.generate()
     generated = (test_project.root / "sample_app/gql/api.py").read_text()
-    exec_source = _binding_entry(generated, "(('attachment', (Outer,)),)")
+    exec_source = _binding_entry(generated, "(('attachment', (OuterFragment,)),)")
     assert exec_source.count("fragment Common on ImageAttachment") == 1
     assert "fragment Outer on ImageAttachment" in exec_source
 
@@ -1873,7 +1876,7 @@ def test_two_templates_whose_class_names_collide_say_so(test_project: ProjectBui
     with pytest.raises(GraphQLGenerationError) as exc_info:
         test_project.generate()
     message = str(exc_info.value)
-    assert "GetPostResult" in message
+    assert "GetPostQueryResult" in message
     assert "unknown slot" not in message
 
 
@@ -1994,10 +1997,10 @@ def test_static_factory_spread_without_a_compatible_slot_is_allowed(
 def test_static_factory_spread_conflicts_with_a_compatible_transitive_owner(
     test_project: ProjectBuilder,
 ):
-    # InnerParts несовместим со slot User, но OuterParts совместим и владеет
-    # всеми variables своего transitive closure. Static spread отдаёт тот же
-    # $size в execute, поэтому принятие пакета разрешило бы OuterParts.with_args
-    # молча перекрыть execute(size=...).
+    # InnerParts is incompatible with slot User, but OuterParts is compatible
+    # and owns all the variables of its transitive closure. A static spread
+    # gives the same $size to execute, so accepting the package would let
+    # OuterParts.with_args silently override execute(size=...).
     test_project.prepare(
         schema="""
             type Query { page: Page }

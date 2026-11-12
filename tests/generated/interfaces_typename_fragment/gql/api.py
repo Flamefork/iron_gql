@@ -66,18 +66,18 @@ class User(GQLModel):
     name: str | None
 
 
-type GetNodeResultNode = Annotated[Post | User, pydantic.Field(discriminator="typename__")]
+type Node = Annotated[Post | User, pydantic.Field(discriminator="typename__")]
 
 
-class GetNodeResult(GQLModel):
-    node: GetNodeResultNode | None
+class GetNodeQueryResult(GQLModel):
+    node: Node | None
 
 
-class GetNode(runtime.GQLOperation):
+class GetNodeQuery(runtime.GQLOperation):
     # See: queries.py:12
-    async def execute(self, *, id: builtins.str) -> GetNodeResult:
+    async def execute(self, *, id: builtins.str) -> GetNodeQueryResult:
         return await _client.query(
-            GetNodeResult,
+            GetNodeQueryResult,
             'query GetNode($id: ID!) {\n  node(id: $id) {\n    ...NodeBase\n    ... on User {\n      name\n    }\n    ... on Post {\n      title\n    }\n  }\n}\n\nfragment NodeBase on Node {\n  __typename\n  id\n}',
             variables={"id": id},
             headers=self.headers,
@@ -85,7 +85,7 @@ class GetNode(runtime.GQLOperation):
 
 
 @overload
-def api_gql(stmt: Literal['\n    query GetNode($id: ID!) {\n        node(id: $id) {\n            ...NodeBase\n            ... on User {\n                name\n            }\n            ... on Post {\n                title\n            }\n        }\n    }\n    ']) -> GetNode: ...
+def api_gql(stmt: Literal['\n    query GetNode($id: ID!) {\n        node(id: $id) {\n            ...NodeBase\n            ... on User {\n                name\n            }\n            ... on Post {\n                title\n            }\n        }\n    }\n    ']) -> GetNodeQuery: ...
 @overload
 def api_gql(stmt: Literal['\n    fragment NodeBase on Node {\n        __typename\n        id\n    }\n    ']) -> runtime.GQLOperation: ...
 @overload
@@ -93,7 +93,7 @@ def api_gql(stmt: str) -> runtime.GQLOperation: ...
 
 
 _statement_factories: dict[str, Callable[[], runtime.GQLOperation]] = {
-    '\n    query GetNode($id: ID!) {\n        node(id: $id) {\n            ...NodeBase\n            ... on User {\n                name\n            }\n            ... on Post {\n                title\n            }\n        }\n    }\n    ': GetNode,
+    '\n    query GetNode($id: ID!) {\n        node(id: $id) {\n            ...NodeBase\n            ... on User {\n                name\n            }\n            ... on Post {\n                title\n            }\n        }\n    }\n    ': GetNodeQuery,
     '\n    fragment NodeBase on Node {\n        __typename\n        id\n    }\n    ': runtime.GQLOperation,
 }
 

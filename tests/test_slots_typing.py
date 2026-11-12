@@ -2,10 +2,11 @@ from typing import Any
 
 from tests.conftest import generated_package
 
-# Отдельный fixture для typing-контрактов factory: один обязательный fragment
-# variable (`SizedImage`) и один обычный fragment (`Wrapper`), который включает
-# его через root spread. Поэтому `Wrapper` тоже становится factory, а projection
-# можно прочитать транзитивно через независимо созданный definition этой factory.
+# A separate fixture for factory typing contracts: one required fragment
+# variable (`SizedImage`) and one ordinary fragment (`Wrapper`) that includes it
+# through a root spread. So `Wrapper` becomes a factory too, and the projection
+# can be read transitively through an independently created definition of that
+# factory.
 FRAGMENT_FACTORY_SCHEMA = """
 type Query {
     post(id: ID!): Post
@@ -77,7 +78,7 @@ from tests.generated.fragment_factory_typing.gql import api as factory_api
 def test_independent_factory_definition_reads_transitive_projection():
     wrapped = factory_queries.wrapper.with_args(width=32)
     bound = factory_queries.get_attachment.bind(attachment=wrapped)
-    result = factory_api.GetAttachmentResult[Any].model_validate(
+    result = factory_api.GetAttachmentQueryResult[Any].model_validate(
         {
             "post": {
                 "id": "p-1",
@@ -91,7 +92,7 @@ def test_independent_factory_definition_reads_transitive_projection():
         context=bound.slot_readers,
     )
     assert result.post is not None
-    independent = factory_api.SizedImage()
+    independent = factory_api.SizedImageFragment()
     assert independent is not factory_queries.sized_image
     image = independent.read(result.post.attachment)
     assert image is not None
@@ -99,7 +100,7 @@ def test_independent_factory_definition_reads_transitive_projection():
 
 
 def test_factory_definition_and_other_application_read_tuple_projection():
-    result = factory_api.GetAttachmentResult[Any].model_validate(
+    result = factory_api.GetAttachmentQueryResult[Any].model_validate(
         {
             "post": {
                 "id": "p-1",
@@ -113,7 +114,7 @@ def test_factory_definition_and_other_application_read_tuple_projection():
         context=factory_queries.tuple_bound.slot_readers,
     )
     assert result.post is not None
-    definition = factory_api.SizedImage()
+    definition = factory_api.SizedImageFragment()
     other_application = definition.with_args(width=128)
     from_definition = definition.read(result.post.attachment)
     from_other_application = other_application.read(result.post.attachment)

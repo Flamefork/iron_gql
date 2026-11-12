@@ -79,7 +79,7 @@ class UserWithEmailIdNamePhonePostsRole(GQLModel):
     posts: list[PostWithIdTitle]
 
 
-class GetUserResult(GQLModel):
+class GetUserQueryResult(GQLModel):
     user: UserWithEmailIdNamePhonePostsRole | None
 
 
@@ -87,7 +87,7 @@ class UserWithName(GQLModel):
     name: str
 
 
-class GetUserNameResult(GQLModel):
+class GetUserNameQueryResult(GQLModel):
     user: UserWithName | None
 
 
@@ -98,7 +98,7 @@ class UserWithEmailIdNameRole(GQLModel):
     role: Role
 
 
-class CreateUserResult(GQLModel):
+class CreateUserMutationResult(GQLModel):
     create_user: UserWithEmailIdNameRole
 
 
@@ -116,11 +116,11 @@ class UserWithIdNameRoleTypename(GQLModel):
     role: Role
 
 
-type SearchResultSearch = Annotated[PostWithAuthorIdTitleTypename | UserWithIdNameRoleTypename, pydantic.Field(discriminator="typename__")]
+type SearchItem = Annotated[PostWithAuthorIdTitleTypename | UserWithIdNameRoleTypename, pydantic.Field(discriminator="typename__")]
 
 
-class SearchResult(GQLModel):
-    search: list[SearchResultSearch]
+class SearchQueryResult(GQLModel):
+    search: list[SearchItem]
 
 
 class PostWithIdTitleTypename(GQLModel):
@@ -135,11 +135,11 @@ class UserWithIdNameTypename(GQLModel):
     name: str
 
 
-type GetNodeResultNode = Annotated[PostWithIdTitleTypename | UserWithIdNameTypename, pydantic.Field(discriminator="typename__")]
+type Node = Annotated[PostWithIdTitleTypename | UserWithIdNameTypename, pydantic.Field(discriminator="typename__")]
 
 
-class GetNodeResult(GQLModel):
-    node: GetNodeResultNode | None
+class GetNodeQueryResult(GQLModel):
+    node: Node | None
 
 
 class UserWithEmailIdNamePhoneRole(GQLModel):
@@ -150,7 +150,7 @@ class UserWithEmailIdNamePhoneRole(GQLModel):
     role: Role
 
 
-class GetProfileResult(GQLModel):
+class GetProfileQueryResult(GQLModel):
     user: UserWithEmailIdNamePhoneRole | None
 
 
@@ -160,7 +160,7 @@ class UserWithEmailIdName(GQLModel):
     email: str
 
 
-class FindUserResult(GQLModel):
+class FindUserQueryResult(GQLModel):
     find_user: UserWithEmailIdName | None
 
 
@@ -170,7 +170,7 @@ class PostWithCreatedAtIdTitle(GQLModel):
     created_at: datetime.datetime
 
 
-class GetPostResult(GQLModel):
+class GetPostQueryResult(GQLModel):
     post: PostWithCreatedAtIdTitle | None
 
 
@@ -179,7 +179,7 @@ class UserWithIdName(GQLModel):
     name: str
 
 
-class UploadAvatarResult(GQLModel):
+class UploadAvatarMutationResult(GQLModel):
     upload_avatar: UserWithIdName
 
 
@@ -190,52 +190,52 @@ class PostWithAuthorBodyIdTitle(GQLModel):
     author: UserWithName
 
 
-class PostAddedResult(GQLModel):
+class PostAddedSubscriptionResult(GQLModel):
     post_added: PostWithAuthorBodyIdTitle
 
 
-class PostAttachmentResultPostAttachmentSlotImageAttachment[TSlotAttachment = Never](GQLSlotModel[TSlotAttachment]):
+class PostAttachmentQueryResultPostAttachmentSlotImageAttachment[TSlotAttachment = Never](GQLSlotModel[TSlotAttachment]):
     slot_name__: ClassVar[str] = "attachment"
     typename__: Annotated[Literal["ImageAttachment"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
 
 
-class PostAttachmentResultPostAttachmentSlotLinkAttachment[TSlotAttachment = Never](GQLSlotModel[TSlotAttachment]):
+class PostAttachmentQueryResultPostAttachmentSlotLinkAttachment[TSlotAttachment = Never](GQLSlotModel[TSlotAttachment]):
     slot_name__: ClassVar[str] = "attachment"
     typename__: Annotated[Literal["LinkAttachment"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
 
 
-type PostAttachmentResultPostAttachmentSlot[TSlotAttachment] = Annotated[PostAttachmentResultPostAttachmentSlotImageAttachment[TSlotAttachment] | PostAttachmentResultPostAttachmentSlotLinkAttachment[TSlotAttachment], pydantic.Field(discriminator="typename__")]
+type Attachment_9fa8254d[TSlotAttachment] = Annotated[PostAttachmentQueryResultPostAttachmentSlotImageAttachment[TSlotAttachment] | PostAttachmentQueryResultPostAttachmentSlotLinkAttachment[TSlotAttachment], pydantic.Field(discriminator="typename__")]
 
 
-class PostWithAttachmentId_Opt_PostAttachmentResultPostAttachmentSlotID[TSlotAttachment = Never](GQLModel):
+class PostWithAttachmentId_Opt_AttachmentID_c9e9e350[TSlotAttachment = Never](GQLModel):
     id: builtins.str
-    attachment: PostAttachmentResultPostAttachmentSlot[TSlotAttachment] | None
+    attachment: Attachment_9fa8254d[TSlotAttachment] | None
 
 
-class PostAttachmentResult[TSlotAttachment = Never](GQLModel):
-    post: PostWithAttachmentId_Opt_PostAttachmentResultPostAttachmentSlotID[TSlotAttachment] | None
+class PostAttachmentQueryResult[TSlotAttachment = Never](GQLModel):
+    post: PostWithAttachmentId_Opt_AttachmentID_c9e9e350[TSlotAttachment] | None
 
 
-class GetPostAttachmentResultPostAttachmentSlotImageAttachment[TSlotAttachment = Never](GQLSlotModel[TSlotAttachment]):
+class GetPostAttachmentQueryResultPostAttachmentSlotImageAttachment[TSlotAttachment = Never](GQLSlotModel[TSlotAttachment]):
     slot_name__: ClassVar[str] = "attachment"
     typename__: Annotated[Literal["ImageAttachment"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
 
 
-class GetPostAttachmentResultPostAttachmentSlotLinkAttachment[TSlotAttachment = Never](GQLSlotModel[TSlotAttachment]):
+class GetPostAttachmentQueryResultPostAttachmentSlotLinkAttachment[TSlotAttachment = Never](GQLSlotModel[TSlotAttachment]):
     slot_name__: ClassVar[str] = "attachment"
     typename__: Annotated[Literal["LinkAttachment"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
 
 
-type GetPostAttachmentResultPostAttachmentSlot[TSlotAttachment] = Annotated[GetPostAttachmentResultPostAttachmentSlotImageAttachment[TSlotAttachment] | GetPostAttachmentResultPostAttachmentSlotLinkAttachment[TSlotAttachment], pydantic.Field(discriminator="typename__")]
+type Attachment_35f90b2d[TSlotAttachment] = Annotated[GetPostAttachmentQueryResultPostAttachmentSlotImageAttachment[TSlotAttachment] | GetPostAttachmentQueryResultPostAttachmentSlotLinkAttachment[TSlotAttachment], pydantic.Field(discriminator="typename__")]
 
 
-class PostWithAttachmentId_Opt_GetPostAttachmentResultPostAttachmentSlotID[TSlotAttachment = Never](GQLModel):
+class PostWithAttachmentId_Opt_AttachmentID_4e6ccf41[TSlotAttachment = Never](GQLModel):
     id: builtins.str
-    attachment: GetPostAttachmentResultPostAttachmentSlot[TSlotAttachment] | None
+    attachment: Attachment_35f90b2d[TSlotAttachment] | None
 
 
-class GetPostAttachmentResult[TSlotAttachment = Never](GQLModel):
-    post: PostWithAttachmentId_Opt_GetPostAttachmentResultPostAttachmentSlotID[TSlotAttachment] | None
+class GetPostAttachmentQueryResult[TSlotAttachment = Never](GQLModel):
+    post: PostWithAttachmentId_Opt_AttachmentID_4e6ccf41[TSlotAttachment] | None
 
 
 class ImageUrlData(GQLOpenModel):
@@ -267,110 +267,110 @@ class FindUserByEmail(GQLModel):
 type FindUserBy = FindUserById | FindUserByEmail
 
 
-class GetUser(runtime.GQLOperation):
+class GetUserQuery(runtime.GQLOperation):
     # See: ch01_queries.py:5
-    async def execute(self, *, id: builtins.str) -> GetUserResult:
+    async def execute(self, *, id: builtins.str) -> GetUserQueryResult:
         return await _client.query(
-            GetUserResult,
+            GetUserQueryResult,
             'query GetUser($id: ID!) {\n  user(id: $id) {\n    ...UserFields\n    posts {\n      id\n      title\n    }\n  }\n}\n\nfragment UserFields on User {\n  id\n  name\n  email\n  phone\n  role\n}',
             variables={"id": id},
             headers=self.headers,
         )
 
 
-class GetUserName(runtime.GQLOperation):
+class GetUserNameQuery(runtime.GQLOperation):
     # See: ch01_queries.py:32
-    async def execute(self, *, id: builtins.str) -> GetUserNameResult:
+    async def execute(self, *, id: builtins.str) -> GetUserNameQueryResult:
         return await _client.query(
-            GetUserNameResult,
+            GetUserNameQueryResult,
             'query GetUserName($id: ID!) {\n  user(id: $id) {\n    name\n  }\n}',
             variables={"id": id},
             headers=self.headers,
         )
 
 
-class CreateUser(runtime.GQLOperation):
+class CreateUserMutation(runtime.GQLOperation):
     # See: ch02_mutations.py:6
-    async def execute(self, *, input: CreateUserInput) -> CreateUserResult:
+    async def execute(self, *, input: CreateUserInput) -> CreateUserMutationResult:
         return await _client.query(
-            CreateUserResult,
+            CreateUserMutationResult,
             'mutation CreateUser($input: CreateUserInput!) {\n  createUser(input: $input) {\n    id\n    name\n    email\n    role\n  }\n}',
             variables={"input": input},
             headers=self.headers,
         )
 
 
-class Search(runtime.GQLOperation):
+class SearchQuery(runtime.GQLOperation):
     # See: ch03_polymorphism.py:9
-    async def execute(self, *, query: str) -> SearchResult:
+    async def execute(self, *, query: str) -> SearchQueryResult:
         return await _client.query(
-            SearchResult,
+            SearchQueryResult,
             'query Search($query: String!) {\n  search(query: $query) {\n    __typename\n    ... on User {\n      id\n      name\n      role\n    }\n    ... on Post {\n      id\n      title\n      author {\n        name\n      }\n    }\n  }\n}',
             variables={"query": query},
             headers=self.headers,
         )
 
 
-class GetNode(runtime.GQLOperation):
+class GetNodeQuery(runtime.GQLOperation):
     # See: ch03_polymorphism.py:36
-    async def execute(self, *, id: builtins.str) -> GetNodeResult:
+    async def execute(self, *, id: builtins.str) -> GetNodeQueryResult:
         return await _client.query(
-            GetNodeResult,
+            GetNodeQueryResult,
             'query GetNode($id: ID!) {\n  node(id: $id) {\n    __typename\n    id\n    ... on User {\n      name\n    }\n    ... on Post {\n      title\n    }\n  }\n}',
             variables={"id": id},
             headers=self.headers,
         )
 
 
-class GetProfile(runtime.GQLOperation):
+class GetProfileQuery(runtime.GQLOperation):
     # See: ch04_variables.py:7
-    async def execute(self, *, id: builtins.str, with_email: bool, skip_phone: bool) -> GetProfileResult:
+    async def execute(self, *, id: builtins.str, with_email: bool, skip_phone: bool) -> GetProfileQueryResult:
         return await _client.query(
-            GetProfileResult,
+            GetProfileQueryResult,
             'query GetProfile($id: ID!, $withEmail: Boolean!, $skipPhone: Boolean!) {\n  user(id: $id) {\n    id\n    name\n    email @include(if: $withEmail)\n    phone @skip(if: $skipPhone)\n    role\n  }\n}',
             variables={"id": id, "withEmail": with_email, "skipPhone": skip_phone},
             headers=self.headers,
         )
 
 
-class FindUser(runtime.GQLOperation):
+class FindUserQuery(runtime.GQLOperation):
     # See: ch04_variables.py:30
-    async def execute(self, *, by: FindUserBy) -> FindUserResult:
+    async def execute(self, *, by: FindUserBy) -> FindUserQueryResult:
         return await _client.query(
-            FindUserResult,
+            FindUserQueryResult,
             'query FindUser($by: FindUserBy!) {\n  findUser(by: $by) {\n    id\n    name\n    email\n  }\n}',
             variables={"by": by},
             headers=self.headers,
         )
 
 
-class GetPost(runtime.GQLOperation):
+class GetPostQuery(runtime.GQLOperation):
     # See: ch05_scalars.py:8
-    async def execute(self, *, id: builtins.str) -> GetPostResult:
+    async def execute(self, *, id: builtins.str) -> GetPostQueryResult:
         return await _client.query(
-            GetPostResult,
+            GetPostQueryResult,
             'query GetPost($id: ID!) {\n  post(id: $id) {\n    id\n    title\n    createdAt\n  }\n}',
             variables={"id": id},
             headers=self.headers,
         )
 
 
-class UploadAvatar(runtime.GQLOperation):
+class UploadAvatarMutation(runtime.GQLOperation):
     # See: ch05_scalars.py:24
-    async def execute(self, *, user_id: builtins.str, file: runtime.FileVar) -> UploadAvatarResult:
+    async def execute(self, *, user_id: builtins.str, file: runtime.FileVar) -> UploadAvatarMutationResult:
         return await _client.query(
-            UploadAvatarResult,
+            UploadAvatarMutationResult,
             'mutation UploadAvatar($userId: ID!, $file: Upload!) {\n  uploadAvatar(userId: $userId, file: $file) {\n    id\n    name\n  }\n}',
             variables={"userId": user_id, "file": file},
             headers=self.headers,
         )
 
 
-class PostAdded(runtime.GQLOperation):
+class PostAddedSubscription(runtime.GQLOperation):
     # See: ch07_subscriptions.py:5
-    def execute(self, *, user_id: builtins.str) -> AbstractAsyncContextManager[AsyncGenerator[PostAddedResult]]:
+    def execute(self, *, user_id: builtins.str) -> AbstractAsyncContextManager[AsyncGenerator[PostAddedSubscriptionResult]]:
         return _client.subscribe(
-            PostAddedResult,
+            PostAddedSubscriptionResult,
             'subscription PostAdded($userId: ID!) {\n  postAdded(userId: $userId) {\n    id\n    title\n    body\n    author {\n      name\n    }\n  }\n}',
             variables={"userId": user_id},
             headers=self.headers,
@@ -418,63 +418,63 @@ class OnLinkAttachment(slots.GQLBindableFragment[TModel, TReads], ABC):
 
 
 @final
-class ImageUrl(OnImageAttachment[ImageUrlData, "ImageUrl"]):
+class ImageUrlFragment(OnImageAttachment[ImageUrlData, "ImageUrlFragment"]):
     adapter__: ClassVar[pydantic.TypeAdapter[ImageUrlData]] = pydantic.TypeAdapter(ImageUrlData)
 
     @override
     def __init__(self) -> None:
         super().__init__(
             fragment_name='ImageUrl',
-            definition_type=ImageUrl,
+            definition_type=ImageUrlFragment,
             adapter=self.adapter__,
         )
 
 
 @final
-class LinkUrl(OnLinkAttachment[LinkUrlData, "LinkUrl"]):
+class LinkUrlFragment(OnLinkAttachment[LinkUrlData, "LinkUrlFragment"]):
     adapter__: ClassVar[pydantic.TypeAdapter[LinkUrlData]] = pydantic.TypeAdapter(LinkUrlData)
 
     @override
     def __init__(self) -> None:
         super().__init__(
             fragment_name='LinkUrl',
-            definition_type=LinkUrl,
+            definition_type=LinkUrlFragment,
             adapter=self.adapter__,
         )
 
 
 @final
-class ImageThumbnail(slots.GQLFragment[ImageThumbnailData, "_ImageThumbnailApplied"]):
+class ImageThumbnailFragment(slots.GQLFragment[ImageThumbnailData, "_ImageThumbnailFragmentApplied"]):
     adapter__: ClassVar[pydantic.TypeAdapter[ImageThumbnailData]] = pydantic.TypeAdapter(ImageThumbnailData)
 
     @override
     def __init__(self) -> None:
         super().__init__(
             fragment_name='ImageThumbnail',
-            definition_type=ImageThumbnail,
+            definition_type=ImageThumbnailFragment,
             adapter=self.adapter__,
         )
 
-    def with_args(self, *, width: int) -> _ImageThumbnailApplied:
-        return _ImageThumbnailApplied({"width": width})
+    def with_args(self, *, width: int) -> _ImageThumbnailFragmentApplied:
+        return _ImageThumbnailFragmentApplied({"width": width})
 
 
 @final
-class _ImageThumbnailApplied(OnImageAttachment[ImageThumbnailData, "_ImageThumbnailApplied"]):
+class _ImageThumbnailFragmentApplied(OnImageAttachment[ImageThumbnailData, "_ImageThumbnailFragmentApplied"]):
     @override
     def __init__(self, fragment_args: dict[str, object], /) -> None:
         super().__init__(
             fragment_name='ImageThumbnail',
-            definition_type=ImageThumbnail,
-            adapter=ImageThumbnail.adapter__,
+            definition_type=ImageThumbnailFragment,
+            adapter=ImageThumbnailFragment.adapter__,
         )
         self._set_fragment_args(fragment_args)
 
 
-class PostAttachmentBound[TResult: pydantic.BaseModel](runtime.GQLBoundOperation):
+class PostAttachmentQueryBound[TResult: pydantic.BaseModel](runtime.GQLBoundOperation):
     async def execute(self, *, id: builtins.str) -> TResult:
         return await _client.query(
-            typing.cast("type[TResult]", PostAttachmentResult),
+            typing.cast("type[TResult]", PostAttachmentQueryResult),
             self.exec_source,
             variables={"id": id, **self.fragment_args},
             headers=self.headers,
@@ -482,10 +482,10 @@ class PostAttachmentBound[TResult: pydantic.BaseModel](runtime.GQLBoundOperation
         )
 
 
-class GetPostAttachmentBound[TResult: pydantic.BaseModel](runtime.GQLBoundOperation):
+class GetPostAttachmentQueryBound[TResult: pydantic.BaseModel](runtime.GQLBoundOperation):
     async def execute(self, *, id: builtins.str) -> TResult:
         return await _client.query(
-            typing.cast("type[TResult]", GetPostAttachmentResult),
+            typing.cast("type[TResult]", GetPostAttachmentQueryResult),
             self.exec_source,
             variables={"id": id, **self.fragment_args},
             headers=self.headers,
@@ -493,112 +493,112 @@ class GetPostAttachmentBound[TResult: pydantic.BaseModel](runtime.GQLBoundOperat
         )
 
 
-class PostAttachment(runtime.GQLTemplate):
+class PostAttachmentQuery(runtime.GQLTemplate):
     _binding_specs: ClassVar[dict[slots.BindingKey, runtime.BoundSpec]] = {
         # See: ch06_slots.py:10
         (): ('query PostAttachment($id: ID!) {\n  post(id: $id) {\n    id\n    attachment {\n      __typename\n    }\n  }\n}', {"attachment": ()}),
         # See: ch06_slots.py:10, ch06_slots.py:53
-        (('attachment', (_ImageThumbnailApplied,)),): ('query PostAttachment($id: ID!, $width: Int!) {\n  post(id: $id) {\n    id\n    attachment {\n      __typename\n      ...ImageThumbnail\n    }\n  }\n}\n\nfragment ImageThumbnail on ImageAttachment {\n  thumbnail(width: $width)\n}', {"attachment": ((ImageThumbnail, frozenset({'ImageAttachment'})),)}),
+        (('attachment', (_ImageThumbnailFragmentApplied,)),): ('query PostAttachment($id: ID!, $width: Int!) {\n  post(id: $id) {\n    id\n    attachment {\n      __typename\n      ...ImageThumbnail\n    }\n  }\n}\n\nfragment ImageThumbnail on ImageAttachment {\n  thumbnail(width: $width)\n}', {"attachment": ((ImageThumbnailFragment, frozenset({'ImageAttachment'})),)}),
         # See: ch06_slots.py:10, ch06_slots.py:41
-        (('attachment', (ImageUrl,)),): ('query PostAttachment($id: ID!) {\n  post(id: $id) {\n    id\n    attachment {\n      __typename\n      ...ImageUrl\n    }\n  }\n}\n\nfragment ImageUrl on ImageAttachment {\n  url\n}', {"attachment": ((ImageUrl, frozenset({'ImageAttachment'})),)}),
+        (('attachment', (ImageUrlFragment,)),): ('query PostAttachment($id: ID!) {\n  post(id: $id) {\n    id\n    attachment {\n      __typename\n      ...ImageUrl\n    }\n  }\n}\n\nfragment ImageUrl on ImageAttachment {\n  url\n}', {"attachment": ((ImageUrlFragment, frozenset({'ImageAttachment'})),)}),
         # See: ch06_slots.py:10, ch06_slots.py:47
-        (('attachment', (LinkUrl,)),): ('query PostAttachment($id: ID!) {\n  post(id: $id) {\n    id\n    attachment {\n      __typename\n      ...LinkUrl\n    }\n  }\n}\n\nfragment LinkUrl on LinkAttachment {\n  href\n}', {"attachment": ((LinkUrl, frozenset({'LinkAttachment'})),)}),
+        (('attachment', (LinkUrlFragment,)),): ('query PostAttachment($id: ID!) {\n  post(id: $id) {\n    id\n    attachment {\n      __typename\n      ...LinkUrl\n    }\n  }\n}\n\nfragment LinkUrl on LinkAttachment {\n  href\n}', {"attachment": ((LinkUrlFragment, frozenset({'LinkAttachment'})),)}),
     }
 
     @overload
-    def bind(self, *, attachment: Sequence[Never] = ()) -> PostAttachmentBound[PostAttachmentResult[Never]]: ...
+    def bind(self, *, attachment: Sequence[Never] = ()) -> PostAttachmentQueryBound[PostAttachmentQueryResult[Never]]: ...
     @overload
-    def bind[TModelAttachment: pydantic.BaseModel, TReadsAttachment](self, *, attachment: OnImageAttachment[TModelAttachment, TReadsAttachment]) -> PostAttachmentBound[PostAttachmentResult[OnImageAttachment[TModelAttachment, TReadsAttachment] | TReadsAttachment]]: ...
+    def bind[TModelAttachment: pydantic.BaseModel, TReadsAttachment](self, *, attachment: OnImageAttachment[TModelAttachment, TReadsAttachment]) -> PostAttachmentQueryBound[PostAttachmentQueryResult[OnImageAttachment[TModelAttachment, TReadsAttachment] | TReadsAttachment]]: ...
     @overload
-    def bind[TModelAttachment: pydantic.BaseModel, TReadsAttachment](self, *, attachment: OnLinkAttachment[TModelAttachment, TReadsAttachment]) -> PostAttachmentBound[PostAttachmentResult[OnLinkAttachment[TModelAttachment, TReadsAttachment] | TReadsAttachment]]: ...
+    def bind[TModelAttachment: pydantic.BaseModel, TReadsAttachment](self, *, attachment: OnLinkAttachment[TModelAttachment, TReadsAttachment]) -> PostAttachmentQueryBound[PostAttachmentQueryResult[OnLinkAttachment[TModelAttachment, TReadsAttachment] | TReadsAttachment]]: ...
     def bind(self, *, attachment: slots.GQLBindableFragment[pydantic.BaseModel, Any] | Sequence[slots.GQLBindableFragment[pydantic.BaseModel, Any]] = ()) -> runtime.GQLBoundOperation:
         if slots.binding_key({'attachment': attachment}) not in self._binding_specs:
-            raise LookupError("unknown bind combination for PostAttachment; single-fragment and empty combinations are generated from the schema, so this is a tuple combination no call site writes literally - write it, then regenerate the module. A call whose template is an expression the scan cannot follow is never read either: those are listed, with the reason, in the debug run's ignored_binds.json")
-        return PostAttachmentBound[PostAttachmentResult].bound__(
+            raise LookupError("unknown bind combination for PostAttachmentQuery; single-fragment and empty combinations are generated from the schema, so this is a tuple combination no call site writes literally - write it, then regenerate the module. A call whose template is an expression the scan cannot follow is never read either: those are listed, with the reason, in the debug run's ignored_binds.json")
+        return PostAttachmentQueryBound[PostAttachmentQueryResult].bound__(
             self._binding_specs[slots.binding_key({'attachment': attachment})], {'attachment': slots.as_bindable_fragments(attachment)},
         )
 
 
-class GetPostAttachment(runtime.GQLTemplate):
+class GetPostAttachmentQuery(runtime.GQLTemplate):
     _binding_specs: ClassVar[dict[slots.BindingKey, runtime.BoundSpec]] = {
         # See: ch06_slots.py:32
         (): ('query GetPostAttachment($id: ID!) {\n  post(id: $id) {\n    id\n    attachment {\n      __typename\n    }\n  }\n}', {"attachment": ()}),
         # See: ch06_slots.py:32, ch06_slots.py:53
-        (('attachment', (_ImageThumbnailApplied,)),): ('query GetPostAttachment($id: ID!, $width: Int!) {\n  post(id: $id) {\n    id\n    attachment {\n      __typename\n      ...ImageThumbnail\n    }\n  }\n}\n\nfragment ImageThumbnail on ImageAttachment {\n  thumbnail(width: $width)\n}', {"attachment": ((ImageThumbnail, frozenset({'ImageAttachment'})),)}),
+        (('attachment', (_ImageThumbnailFragmentApplied,)),): ('query GetPostAttachment($id: ID!, $width: Int!) {\n  post(id: $id) {\n    id\n    attachment {\n      __typename\n      ...ImageThumbnail\n    }\n  }\n}\n\nfragment ImageThumbnail on ImageAttachment {\n  thumbnail(width: $width)\n}', {"attachment": ((ImageThumbnailFragment, frozenset({'ImageAttachment'})),)}),
         # See: ch06_slots.py:32, ch06_slots.py:41
-        (('attachment', (ImageUrl,)),): ('query GetPostAttachment($id: ID!) {\n  post(id: $id) {\n    id\n    attachment {\n      __typename\n      ...ImageUrl\n    }\n  }\n}\n\nfragment ImageUrl on ImageAttachment {\n  url\n}', {"attachment": ((ImageUrl, frozenset({'ImageAttachment'})),)}),
+        (('attachment', (ImageUrlFragment,)),): ('query GetPostAttachment($id: ID!) {\n  post(id: $id) {\n    id\n    attachment {\n      __typename\n      ...ImageUrl\n    }\n  }\n}\n\nfragment ImageUrl on ImageAttachment {\n  url\n}', {"attachment": ((ImageUrlFragment, frozenset({'ImageAttachment'})),)}),
         # See: ch06_slots.py:32, ch06_slots.py:47
-        (('attachment', (LinkUrl,)),): ('query GetPostAttachment($id: ID!) {\n  post(id: $id) {\n    id\n    attachment {\n      __typename\n      ...LinkUrl\n    }\n  }\n}\n\nfragment LinkUrl on LinkAttachment {\n  href\n}', {"attachment": ((LinkUrl, frozenset({'LinkAttachment'})),)}),
+        (('attachment', (LinkUrlFragment,)),): ('query GetPostAttachment($id: ID!) {\n  post(id: $id) {\n    id\n    attachment {\n      __typename\n      ...LinkUrl\n    }\n  }\n}\n\nfragment LinkUrl on LinkAttachment {\n  href\n}', {"attachment": ((LinkUrlFragment, frozenset({'LinkAttachment'})),)}),
         # See: ch06_slots.py:59
-        (('attachment', (ImageUrl, LinkUrl)),): ('query GetPostAttachment($id: ID!) {\n  post(id: $id) {\n    id\n    attachment {\n      __typename\n      ...ImageUrl\n      ...LinkUrl\n    }\n  }\n}\n\nfragment ImageUrl on ImageAttachment {\n  url\n}\n\nfragment LinkUrl on LinkAttachment {\n  href\n}', {"attachment": ((ImageUrl, frozenset({'ImageAttachment'})), (LinkUrl, frozenset({'LinkAttachment'})))}),
+        (('attachment', (ImageUrlFragment, LinkUrlFragment)),): ('query GetPostAttachment($id: ID!) {\n  post(id: $id) {\n    id\n    attachment {\n      __typename\n      ...ImageUrl\n      ...LinkUrl\n    }\n  }\n}\n\nfragment ImageUrl on ImageAttachment {\n  url\n}\n\nfragment LinkUrl on LinkAttachment {\n  href\n}', {"attachment": ((ImageUrlFragment, frozenset({'ImageAttachment'})), (LinkUrlFragment, frozenset({'LinkAttachment'})))}),
     }
 
     @overload
-    def bind(self, *, attachment: Sequence[Never] = ()) -> GetPostAttachmentBound[GetPostAttachmentResult[Never]]: ...
+    def bind(self, *, attachment: Sequence[Never] = ()) -> GetPostAttachmentQueryBound[GetPostAttachmentQueryResult[Never]]: ...
     @overload
-    def bind[TModelAttachment: pydantic.BaseModel, TReadsAttachment](self, *, attachment: OnImageAttachment[TModelAttachment, TReadsAttachment]) -> GetPostAttachmentBound[GetPostAttachmentResult[OnImageAttachment[TModelAttachment, TReadsAttachment] | TReadsAttachment]]: ...
+    def bind[TModelAttachment: pydantic.BaseModel, TReadsAttachment](self, *, attachment: OnImageAttachment[TModelAttachment, TReadsAttachment]) -> GetPostAttachmentQueryBound[GetPostAttachmentQueryResult[OnImageAttachment[TModelAttachment, TReadsAttachment] | TReadsAttachment]]: ...
     @overload
-    def bind[TModelAttachment: pydantic.BaseModel, TReadsAttachment](self, *, attachment: OnLinkAttachment[TModelAttachment, TReadsAttachment]) -> GetPostAttachmentBound[GetPostAttachmentResult[OnLinkAttachment[TModelAttachment, TReadsAttachment] | TReadsAttachment]]: ...
+    def bind[TModelAttachment: pydantic.BaseModel, TReadsAttachment](self, *, attachment: OnLinkAttachment[TModelAttachment, TReadsAttachment]) -> GetPostAttachmentQueryBound[GetPostAttachmentQueryResult[OnLinkAttachment[TModelAttachment, TReadsAttachment] | TReadsAttachment]]: ...
     @overload
-    def bind[TFillAttachment1: (ImageUrl, LinkUrl), TFillAttachment2: (ImageUrl, LinkUrl)](self, *, attachment: tuple[TFillAttachment1, TFillAttachment2]) -> GetPostAttachmentBound[GetPostAttachmentResult[TFillAttachment1 | TFillAttachment2]]: ...
+    def bind[TFillAttachment1: (ImageUrlFragment, LinkUrlFragment), TFillAttachment2: (ImageUrlFragment, LinkUrlFragment)](self, *, attachment: tuple[TFillAttachment1, TFillAttachment2]) -> GetPostAttachmentQueryBound[GetPostAttachmentQueryResult[TFillAttachment1 | TFillAttachment2]]: ...
     def bind(self, *, attachment: slots.GQLBindableFragment[pydantic.BaseModel, Any] | Sequence[slots.GQLBindableFragment[pydantic.BaseModel, Any]] = ()) -> runtime.GQLBoundOperation:
         if slots.binding_key({'attachment': attachment}) not in self._binding_specs:
-            raise LookupError("unknown bind combination for GetPostAttachment; single-fragment and empty combinations are generated from the schema, so this is a tuple combination no call site writes literally - write it, then regenerate the module. A call whose template is an expression the scan cannot follow is never read either: those are listed, with the reason, in the debug run's ignored_binds.json")
-        return GetPostAttachmentBound[GetPostAttachmentResult].bound__(
+            raise LookupError("unknown bind combination for GetPostAttachmentQuery; single-fragment and empty combinations are generated from the schema, so this is a tuple combination no call site writes literally - write it, then regenerate the module. A call whose template is an expression the scan cannot follow is never read either: those are listed, with the reason, in the debug run's ignored_binds.json")
+        return GetPostAttachmentQueryBound[GetPostAttachmentQueryResult].bound__(
             self._binding_specs[slots.binding_key({'attachment': attachment})], {'attachment': slots.as_bindable_fragments(attachment)},
         )
 
 
 @overload
-def api_gql(stmt: Literal['\n        query GetUser($id: ID!) {\n            user(id: $id) {\n                ...UserFields\n                posts { id title }\n            }\n        }\n\n        fragment UserFields on User {\n            id\n            name\n            email\n            phone\n            role\n        }\n    ']) -> GetUser: ...
+def api_gql(stmt: Literal['\n        query GetUser($id: ID!) {\n            user(id: $id) {\n                ...UserFields\n                posts { id title }\n            }\n        }\n\n        fragment UserFields on User {\n            id\n            name\n            email\n            phone\n            role\n        }\n    ']) -> GetUserQuery: ...
 @overload
-def api_gql(stmt: Literal['\n        query GetUserName($id: ID!) {\n            user(id: $id) {\n                name\n            }\n        }\n    ']) -> GetUserName: ...
+def api_gql(stmt: Literal['\n        query GetUserName($id: ID!) {\n            user(id: $id) {\n                name\n            }\n        }\n    ']) -> GetUserNameQuery: ...
 @overload
-def api_gql(stmt: Literal['\n        mutation CreateUser($input: CreateUserInput!) {\n            createUser(input: $input) {\n                id\n                name\n                email\n                role\n            }\n        }\n    ']) -> CreateUser: ...
+def api_gql(stmt: Literal['\n        mutation CreateUser($input: CreateUserInput!) {\n            createUser(input: $input) {\n                id\n                name\n                email\n                role\n            }\n        }\n    ']) -> CreateUserMutation: ...
 @overload
-def api_gql(stmt: Literal['\n        query Search($query: String!) {\n            search(query: $query) {\n                __typename\n                ... on User {\n                    id\n                    name\n                    role\n                }\n                ... on Post {\n                    id\n                    title\n                    author { name }\n                }\n            }\n        }\n    ']) -> Search: ...
+def api_gql(stmt: Literal['\n        query Search($query: String!) {\n            search(query: $query) {\n                __typename\n                ... on User {\n                    id\n                    name\n                    role\n                }\n                ... on Post {\n                    id\n                    title\n                    author { name }\n                }\n            }\n        }\n    ']) -> SearchQuery: ...
 @overload
-def api_gql(stmt: Literal['\n        query GetNode($id: ID!) {\n            node(id: $id) {\n                __typename\n                id\n                ... on User { name }\n                ... on Post { title }\n            }\n        }\n    ']) -> GetNode: ...
+def api_gql(stmt: Literal['\n        query GetNode($id: ID!) {\n            node(id: $id) {\n                __typename\n                id\n                ... on User { name }\n                ... on Post { title }\n            }\n        }\n    ']) -> GetNodeQuery: ...
 @overload
-def api_gql(stmt: Literal['\n        query GetProfile($id: ID!, $withEmail: Boolean!, $skipPhone: Boolean!) {\n            user(id: $id) {\n                id\n                name\n                email @include(if: $withEmail)\n                phone @skip(if: $skipPhone)\n                role\n            }\n        }\n    ']) -> GetProfile: ...
+def api_gql(stmt: Literal['\n        query GetProfile($id: ID!, $withEmail: Boolean!, $skipPhone: Boolean!) {\n            user(id: $id) {\n                id\n                name\n                email @include(if: $withEmail)\n                phone @skip(if: $skipPhone)\n                role\n            }\n        }\n    ']) -> GetProfileQuery: ...
 @overload
-def api_gql(stmt: Literal['\n        query FindUser($by: FindUserBy!) {\n            findUser(by: $by) {\n                id\n                name\n                email\n            }\n        }\n    ']) -> FindUser: ...
+def api_gql(stmt: Literal['\n        query FindUser($by: FindUserBy!) {\n            findUser(by: $by) {\n                id\n                name\n                email\n            }\n        }\n    ']) -> FindUserQuery: ...
 @overload
-def api_gql(stmt: Literal['\n        query GetPost($id: ID!) {\n            post(id: $id) {\n                id\n                title\n                createdAt\n            }\n        }\n    ']) -> GetPost: ...
+def api_gql(stmt: Literal['\n        query GetPost($id: ID!) {\n            post(id: $id) {\n                id\n                title\n                createdAt\n            }\n        }\n    ']) -> GetPostQuery: ...
 @overload
-def api_gql(stmt: Literal['\n            mutation UploadAvatar($userId: ID!, $file: Upload!) {\n                uploadAvatar(userId: $userId, file: $file) {\n                    id\n                    name\n                }\n            }\n        ']) -> UploadAvatar: ...
+def api_gql(stmt: Literal['\n            mutation UploadAvatar($userId: ID!, $file: Upload!) {\n                uploadAvatar(userId: $userId, file: $file) {\n                    id\n                    name\n                }\n            }\n        ']) -> UploadAvatarMutation: ...
 @overload
-def api_gql(stmt: Literal['\n        subscription PostAdded($userId: ID!) {\n            postAdded(userId: $userId) {\n                id\n                title\n                body\n                author { name }\n            }\n        }\n    ']) -> PostAdded: ...
+def api_gql(stmt: Literal['\n        subscription PostAdded($userId: ID!) {\n            postAdded(userId: $userId) {\n                id\n                title\n                body\n                author { name }\n            }\n        }\n    ']) -> PostAddedSubscription: ...
 @overload
-def api_gql(stmt: Literal['\n        fragment ImageUrl on ImageAttachment {\n            url\n        }\n    ']) -> ImageUrl: ...
+def api_gql(stmt: Literal['\n        fragment ImageUrl on ImageAttachment {\n            url\n        }\n    ']) -> ImageUrlFragment: ...
 @overload
-def api_gql(stmt: Literal['\n        fragment LinkUrl on LinkAttachment {\n            href\n        }\n    ']) -> LinkUrl: ...
+def api_gql(stmt: Literal['\n        fragment LinkUrl on LinkAttachment {\n            href\n        }\n    ']) -> LinkUrlFragment: ...
 @overload
-def api_gql(stmt: Literal['\n        fragment ImageThumbnail on ImageAttachment {\n            thumbnail(width: $width)\n        }\n    ']) -> ImageThumbnail: ...
+def api_gql(stmt: Literal['\n        fragment ImageThumbnail on ImageAttachment {\n            thumbnail(width: $width)\n        }\n    ']) -> ImageThumbnailFragment: ...
 @overload
-def api_gql(stmt: Literal['\n    query PostAttachment($id: ID!) {\n        post(id: $id) {\n            id\n            attachment @slot { __typename }\n        }\n    }\n']) -> PostAttachment: ...
+def api_gql(stmt: Literal['\n    query PostAttachment($id: ID!) {\n        post(id: $id) {\n            id\n            attachment @slot { __typename }\n        }\n    }\n']) -> PostAttachmentQuery: ...
 @overload
-def api_gql(stmt: Literal['\n        query GetPostAttachment($id: ID!) {\n            post(id: $id) {\n                id\n                attachment @slot { __typename }\n            }\n        }\n    ']) -> GetPostAttachment: ...
+def api_gql(stmt: Literal['\n        query GetPostAttachment($id: ID!) {\n            post(id: $id) {\n                id\n                attachment @slot { __typename }\n            }\n        }\n    ']) -> GetPostAttachmentQuery: ...
 @overload
 def api_gql(stmt: str) -> runtime.GQLOperation | slots.GQLFragment[pydantic.BaseModel, Any] | runtime.GQLTemplate: ...
 
 
 _statement_factories: dict[str, Callable[[], runtime.GQLOperation | slots.GQLFragment[pydantic.BaseModel, Any] | runtime.GQLTemplate]] = {
-    '\n        query GetUser($id: ID!) {\n            user(id: $id) {\n                ...UserFields\n                posts { id title }\n            }\n        }\n\n        fragment UserFields on User {\n            id\n            name\n            email\n            phone\n            role\n        }\n    ': GetUser,
-    '\n        query GetUserName($id: ID!) {\n            user(id: $id) {\n                name\n            }\n        }\n    ': GetUserName,
-    '\n        mutation CreateUser($input: CreateUserInput!) {\n            createUser(input: $input) {\n                id\n                name\n                email\n                role\n            }\n        }\n    ': CreateUser,
-    '\n        query Search($query: String!) {\n            search(query: $query) {\n                __typename\n                ... on User {\n                    id\n                    name\n                    role\n                }\n                ... on Post {\n                    id\n                    title\n                    author { name }\n                }\n            }\n        }\n    ': Search,
-    '\n        query GetNode($id: ID!) {\n            node(id: $id) {\n                __typename\n                id\n                ... on User { name }\n                ... on Post { title }\n            }\n        }\n    ': GetNode,
-    '\n        query GetProfile($id: ID!, $withEmail: Boolean!, $skipPhone: Boolean!) {\n            user(id: $id) {\n                id\n                name\n                email @include(if: $withEmail)\n                phone @skip(if: $skipPhone)\n                role\n            }\n        }\n    ': GetProfile,
-    '\n        query FindUser($by: FindUserBy!) {\n            findUser(by: $by) {\n                id\n                name\n                email\n            }\n        }\n    ': FindUser,
-    '\n        query GetPost($id: ID!) {\n            post(id: $id) {\n                id\n                title\n                createdAt\n            }\n        }\n    ': GetPost,
-    '\n            mutation UploadAvatar($userId: ID!, $file: Upload!) {\n                uploadAvatar(userId: $userId, file: $file) {\n                    id\n                    name\n                }\n            }\n        ': UploadAvatar,
-    '\n        subscription PostAdded($userId: ID!) {\n            postAdded(userId: $userId) {\n                id\n                title\n                body\n                author { name }\n            }\n        }\n    ': PostAdded,
-    '\n        fragment ImageUrl on ImageAttachment {\n            url\n        }\n    ': lambda: ImageUrl(),
-    '\n        fragment LinkUrl on LinkAttachment {\n            href\n        }\n    ': lambda: LinkUrl(),
-    '\n        fragment ImageThumbnail on ImageAttachment {\n            thumbnail(width: $width)\n        }\n    ': lambda: ImageThumbnail(),
-    '\n    query PostAttachment($id: ID!) {\n        post(id: $id) {\n            id\n            attachment @slot { __typename }\n        }\n    }\n': PostAttachment,
-    '\n        query GetPostAttachment($id: ID!) {\n            post(id: $id) {\n                id\n                attachment @slot { __typename }\n            }\n        }\n    ': GetPostAttachment,
+    '\n        query GetUser($id: ID!) {\n            user(id: $id) {\n                ...UserFields\n                posts { id title }\n            }\n        }\n\n        fragment UserFields on User {\n            id\n            name\n            email\n            phone\n            role\n        }\n    ': GetUserQuery,
+    '\n        query GetUserName($id: ID!) {\n            user(id: $id) {\n                name\n            }\n        }\n    ': GetUserNameQuery,
+    '\n        mutation CreateUser($input: CreateUserInput!) {\n            createUser(input: $input) {\n                id\n                name\n                email\n                role\n            }\n        }\n    ': CreateUserMutation,
+    '\n        query Search($query: String!) {\n            search(query: $query) {\n                __typename\n                ... on User {\n                    id\n                    name\n                    role\n                }\n                ... on Post {\n                    id\n                    title\n                    author { name }\n                }\n            }\n        }\n    ': SearchQuery,
+    '\n        query GetNode($id: ID!) {\n            node(id: $id) {\n                __typename\n                id\n                ... on User { name }\n                ... on Post { title }\n            }\n        }\n    ': GetNodeQuery,
+    '\n        query GetProfile($id: ID!, $withEmail: Boolean!, $skipPhone: Boolean!) {\n            user(id: $id) {\n                id\n                name\n                email @include(if: $withEmail)\n                phone @skip(if: $skipPhone)\n                role\n            }\n        }\n    ': GetProfileQuery,
+    '\n        query FindUser($by: FindUserBy!) {\n            findUser(by: $by) {\n                id\n                name\n                email\n            }\n        }\n    ': FindUserQuery,
+    '\n        query GetPost($id: ID!) {\n            post(id: $id) {\n                id\n                title\n                createdAt\n            }\n        }\n    ': GetPostQuery,
+    '\n            mutation UploadAvatar($userId: ID!, $file: Upload!) {\n                uploadAvatar(userId: $userId, file: $file) {\n                    id\n                    name\n                }\n            }\n        ': UploadAvatarMutation,
+    '\n        subscription PostAdded($userId: ID!) {\n            postAdded(userId: $userId) {\n                id\n                title\n                body\n                author { name }\n            }\n        }\n    ': PostAddedSubscription,
+    '\n        fragment ImageUrl on ImageAttachment {\n            url\n        }\n    ': lambda: ImageUrlFragment(),
+    '\n        fragment LinkUrl on LinkAttachment {\n            href\n        }\n    ': lambda: LinkUrlFragment(),
+    '\n        fragment ImageThumbnail on ImageAttachment {\n            thumbnail(width: $width)\n        }\n    ': lambda: ImageThumbnailFragment(),
+    '\n    query PostAttachment($id: ID!) {\n        post(id: $id) {\n            id\n            attachment @slot { __typename }\n        }\n    }\n': PostAttachmentQuery,
+    '\n        query GetPostAttachment($id: ID!) {\n            post(id: $id) {\n                id\n                attachment @slot { __typename }\n            }\n        }\n    ': GetPostAttachmentQuery,
 }
 
 

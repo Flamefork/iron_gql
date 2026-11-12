@@ -1,5 +1,6 @@
 import inspect
 import json
+import re
 from typing import cast
 
 import pydantic
@@ -489,13 +490,13 @@ from tests.generated.slots_execute import queries as execute_queries
 from tests.generated.slots_execute.gql.api import AttachmentIdentityDataImageAttachment
 from tests.generated.slots_execute.gql.api import AttachmentIdentityDataLinkAttachment
 from tests.generated.slots_isolation import queries as isolation_queries
-from tests.generated.slots_isolation.gql.api import GetBoardResult
-from tests.generated.slots_isolation.gql.api import GetBoardResultBoardSlot
+from tests.generated.slots_isolation.gql.api import GetBoardQueryResult
+from tests.generated.slots_isolation.gql.api import GetBoardQueryResultBoardSlot
 from tests.generated.slots_isolation.gql.api import (
-    GetBoardResultBoardSlotActivityComment,
+    GetBoardQueryResultBoardSlotActivityComment,
 )
 from tests.generated.slots_isolation.gql.api import (
-    GetBoardResultBoardSlotActivityCommentAuthor,
+    GetBoardQueryResultBoardSlotActivityCommentAuthor,
 )
 from tests.generated.slots_lists import queries as lists_queries
 from tests.generated.slots_lists.gql.api import ActivityTextsDataEventsComment
@@ -1083,7 +1084,7 @@ def test_nested_slot_in_a_merged_response_key_is_rejected(
 def test_fragment_named_like_the_client_binding_is_allowed(
     test_project: ProjectBuilder,
 ):
-    # The generated definition uses its public class name (`ApiClient`), not
+    # The generated definition uses its public class name (`ApiClientFragment`), not
     # the private client binding.
     test_project.prepare(
         schema=SCHEMA,
@@ -1105,7 +1106,7 @@ def test_fragment_named_like_the_client_binding_is_allowed(
     )
     api_module, _queries_module = test_project.generate_and_import()
     client = cast("AsyncGQLClient", vars(api_module)["_client"])
-    assert api_module.ApiClient is not client  # pyright: ignore[reportAny]
+    assert api_module.ApiClientFragment is not client  # pyright: ignore[reportAny]
 
 
 def test_schema_type_named_after_the_scaffold_keeps_the_model_apart(
@@ -1487,10 +1488,13 @@ def test_two_templates_may_name_a_slot_alike(test_project: ProjectBuilder):
     test_project.generate()
 
 
-def test_fragment_named_like_an_operation_is_rejected(test_project: ProjectBuilder):
-    # The fragment section renders after the operations, so by the time the
-    # statement factory table is built the name points at the definition class and
-    # `api_gql(query_text).execute()` raises AttributeError.
+def test_fragment_named_like_an_operation_keeps_both_classes(
+    test_project: ProjectBuilder,
+):
+    # One name used to give both classes one Python name, and the fragment
+    # section, rendered after the operations, rebound it -- so
+    # `api_gql(query_text).execute()` raised AttributeError. The kind suffixes
+    # (ADR 0004) keep the two classes apart.
     test_project.prepare(
         schema=SCHEMA,
         queries="""
@@ -1523,8 +1527,9 @@ def test_fragment_named_like_an_operation_is_rejected(test_project: ProjectBuild
         bound = with_slot.bind(attachment=url)
         """,
     )
-    with pytest.raises(GraphQLGenerationError, match="'GetAttachment' is claimed by"):
-        test_project.generate()
+    api_module, _queries_module = test_project.generate_and_import()
+    assert hasattr(api_module, "GetAttachmentFragment")
+    assert hasattr(api_module, "GetAttachmentQuery")
 
 
 def test_one_letter_fragment_definition_has_no_singleton_collision(
@@ -1551,15 +1556,16 @@ def test_one_letter_fragment_definition_has_no_singleton_collision(
         """,
     )
     api_module, queries_module = test_project.generate_and_import()
-    assert isinstance(queries_module.url, api_module.N)  # pyright: ignore[reportAny]
+    assert isinstance(queries_module.url, api_module.NFragment)  # pyright: ignore[reportAny]
 
 
 def test_fragment_named_after_a_schema_type_keeps_the_model_apart(
     test_project: ProjectBuilder,
 ):
-    # The definition class name is public API and cannot move, so the promotion of
-    # a result model to its bare GraphQL type name has to yield instead. Without
-    # that, the module would declare `class ImageAttachment` twice.
+    # The definition class carries the kind suffix (ADR 0004), so a fragment
+    # named after a schema type leaves the bare type name to the type's own
+    # models. Before the suffix the module would have declared
+    # `class ImageAttachment` twice.
     test_project.prepare(
         schema=SCHEMA,
         queries="""
@@ -1592,9 +1598,8 @@ def test_fragment_named_after_a_schema_type_keeps_the_model_apart(
     )
     test_project.generate()
     generated = (test_project.root / "sample_app/gql/api.py").read_text()
-    on_type_base = 'OnImageAttachment[ImageAttachmentData, "ImageAttachment"]'
-    assert f"@final\nclass ImageAttachment({on_type_base}):" in generated
-    assert "class ImageAttachment(GQLModel):" not in generated
+    on_type_base = 'OnImageAttachment[ImageAttachmentData, "ImageAttachmentFragment"]'
+    assert f"@final\nclass ImageAttachmentFragment({on_type_base}):" in generated
 
 
 def test_slot_subtree_models_are_open_and_the_rest_stay_strict():
@@ -1603,13 +1608,14 @@ def test_slot_subtree_models_are_open_and_the_rest_stay_strict():
     # extra keys — at every depth, pinned here for the deepest one — while
     # models outside the subtree keep the strict config.
     generated = generated_source("slots_isolation")
-    assert "class GetBoardResultBoardSlotOwner(GQLOpenModel):" in generated
+    assert "class GetBoardQueryResultBoardSlotOwner(GQLOpenModel):" in generated
     assert (
-        "class GetBoardResultBoardSlotActivityCommentAuthor(GQLOpenModel):" in generated
+        "class GetBoardQueryResultBoardSlotActivityCommentAuthor(GQLOpenModel):"
+        in generated
     )
-    assert "class GetBoardResult[TSlotBoard = Never](GQLModel):" in generated
-    assert GetBoardResultBoardSlot.model_config.get("extra") == "ignore"
-    assert GetBoardResult.model_config.get("extra") == "forbid"
+    assert "class GetBoardQueryResult[TSlotBoard = Never](GQLModel):" in generated
+    assert GetBoardQueryResultBoardSlot.model_config.get("extra") == "ignore"
+    assert GetBoardQueryResult.model_config.get("extra") == "forbid"
 
 
 def test_slots_with_equal_static_selections_are_not_deduplicated():
@@ -1624,10 +1630,10 @@ def test_slots_with_equal_static_selections_are_not_deduplicated():
     # own `slot_name__` and by nothing else.
     generated = generated_source("slots_isolation")
     for name, param in (
-        ("GetBoardResultBoardSlot", "TSlotBoard"),
-        ("PingBoardResultBoardSlot", "TSlotBoard"),
-        ("PingMainResultMainSlot", "TSlotMain"),
-        ("MergedBoardResultMergedSlot", "TSlotMerged"),
+        ("GetBoardQueryResultBoardSlot", "TSlotBoard"),
+        ("PingBoardQueryResultBoardSlot", "TSlotBoard"),
+        ("PingMainQueryResultMainSlot", "TSlotMain"),
+        ("MergedBoardQueryResultMergedSlot", "TSlotMerged"),
     ):
         header = f"class {name}[{param} = Never]"
         assert f"{header}(GQLSlotModel[{param}]):" in generated
@@ -1653,7 +1659,7 @@ def test_slot_subtree_ignores_foreign_fields_at_every_depth():
     # nothing binds, so its result models are the shared ones and its slot
     # node's phantom is `Never` -- nothing is readable there, which the empty
     # fragment tuple below is the runtime half of.
-    result = GetBoardResult.model_validate(
+    result = GetBoardQueryResult.model_validate(
         {
             "board": {
                 "__typename": "Board",
@@ -1674,10 +1680,10 @@ def test_slot_subtree_ignores_foreign_fields_at_every_depth():
     assert result.board.owner is not None
     assert result.board.owner.who == "Alice"
     assert [card.title for card in result.board.cards] == ["one"]
-    assert result.board.activity == GetBoardResultBoardSlotActivityComment(
+    assert result.board.activity == GetBoardQueryResultBoardSlotActivityComment(
         typename__="Comment",
         body="hi",
-        author=GetBoardResultBoardSlotActivityCommentAuthor(who="Alice"),
+        author=GetBoardQueryResultBoardSlotActivityCommentAuthor(who="Alice"),
     )
 
 
@@ -2217,7 +2223,7 @@ def test_slot_in_a_mutation_generates_the_same_kwarg_contract():
     # the rendered text. `execute` takes only the template's own variables —
     # fragment selection happens at bind time, not at call time.
     parameters = inspect.signature(
-        basic_api.AttachBound[basic_api.AttachResult].execute
+        basic_api.AttachMutationBound[basic_api.AttachMutationResult].execute
     ).parameters
     assert list(parameters) == ["self", "id"]
     assert parameters["id"].kind is inspect.Parameter.KEYWORD_ONLY
@@ -2268,12 +2274,12 @@ def test_slot_kwarg_is_snake_case_of_the_response_key(test_project: ProjectBuild
     assert (
         "def bind[TModelMainAttachment: pydantic.BaseModel, TReadsMainAttachment]"
         "(self, *, main_attachment: OnImageAttachment[TModelMainAttachment, "
-        "TReadsMainAttachment]) -> GetPostBound[GetPostResult["
+        "TReadsMainAttachment]) -> GetPostQueryBound[GetPostQueryResult["
         "OnImageAttachment[TModelMainAttachment, TReadsMainAttachment] "
         "| TReadsMainAttachment]]: ..."
     ) in generated
     assert (
-        "\"mainAttachment\": ((ImageUrl, frozenset({'ImageAttachment'})),)"
+        "\"mainAttachment\": ((ImageUrlFragment, frozenset({'ImageAttachment'})),)"
     ) in generated
     # attributes of a dynamically imported module are Any
     bound_module: object = queries_module.bound  # pyright: ignore[reportAny]
@@ -2693,7 +2699,7 @@ def test_template_execute_parameter_that_is_a_keyword_is_rejected(
     )
     with pytest.raises(
         GraphQLGenerationError,
-        match=r"Parameter 'class' of execute\(\) of template 'GetPost'",
+        match=r"Parameter 'class' of execute\(\) of template 'GetPostQuery'",
     ):
         test_project.generate()
 
@@ -2721,7 +2727,10 @@ def test_two_slots_mapping_to_one_python_name_are_rejected(
     )
     with pytest.raises(
         GraphQLGenerationError,
-        match=r"Slots 'att', 'Att' of template 'GetBoth'.*map to the Python name 'att'",
+        match=(
+            r"Slots 'att', 'Att' of template 'GetBoth'.*"
+            r"map to the Python name 'att'"
+        ),
     ):
         test_project.generate()
 
@@ -2753,7 +2762,7 @@ def test_two_slots_collapsing_to_one_type_parameter_are_rejected(
         GraphQLGenerationError,
         match=(
             r"Parameter 'TSlotDetails' of the type parameters of template "
-            r"'GetBoth'.*is claimed by"
+            r"'GetBothQuery'.*is claimed by"
         ),
     ):
         test_project.generate()
@@ -2782,8 +2791,14 @@ def test_one_slot_name_under_two_parents_collects_both_positions_models(
     )
     test_project.generate()
     generated = (test_project.root / "sample_app/gql/api.py").read_text()
-    assert "type GetBothResultPostAttachmentSlot[TSlotAttachment] = " in generated
-    assert "type GetBothResultCommentAttachmentSlot[TSlotAttachment] = " in generated
+    # Two slot positions, two aliases over their own node models: an alias's
+    # shape names the slot models it unions, so the two never merge.
+    aliases = re.findall(
+        r"^type (Attachment_[0-9a-f]{8})\[TSlotAttachment\] = ", generated, re.MULTILINE
+    )
+    assert len(set(aliases)) == 2
+    assert "class GetBothQueryResultPostAttachmentSlotImageAttachment[" in generated
+    assert "class GetBothQueryResultCommentAttachmentSlotImageAttachment[" in generated
 
 
 POLYMORPHIC_SLOT_PARENT_SCHEMA = """
@@ -2841,5 +2856,5 @@ def test_a_slot_under_a_polymorphic_parent_collects_each_variants_model(
     )
     test_project.generate()
     generated = (test_project.root / "sample_app/gql/api.py").read_text()
-    assert "class FeedResultItemPostDetailSlot[" in generated
-    assert "class FeedResultItemItemDetailSlot[" in generated
+    assert "class FeedQueryResultItemPostDetailSlot[" in generated
+    assert "class FeedQueryResultItemItemDetailSlot[" in generated

@@ -60,7 +60,7 @@ class UserWithEmailNamePhone(GQLModel):
     phone: str | None = None
 
 
-class IncludeSkipResult(GQLModel):
+class IncludeSkipQueryResult(GQLModel):
     user: UserWithEmailNamePhone | None
 
 
@@ -69,11 +69,11 @@ class UserWithIdName_IDOpt_String(GQLModel):
     name: str | None = None
 
 
-class IncludeNonNullResult(GQLModel):
+class IncludeNonNullQueryResult(GQLModel):
     user: UserWithIdName_IDOpt_String | None
 
 
-class SkipNonNullResult(GQLModel):
+class SkipNonNullQueryResult(GQLModel):
     user: UserWithIdName_IDOpt_String | None
 
 
@@ -82,7 +82,7 @@ class UserWithIdNullableName(GQLModel):
     nullable_name: str | None = None
 
 
-class IncludeNullableResult(GQLModel):
+class IncludeNullableQueryResult(GQLModel):
     user: UserWithIdNullableName | None
 
 
@@ -92,7 +92,7 @@ class UserWithEmailIdName(GQLModel):
     email: str | None = None
 
 
-class IncludeInlineFragmentResult(GQLModel):
+class IncludeInlineFragmentQueryResult(GQLModel):
     user: UserWithEmailIdName | None
 
 
@@ -101,15 +101,15 @@ class UserWithIdName_IDString(GQLModel):
     name: str
 
 
-class ConditionalAndUnconditionalResult(GQLModel):
+class ConditionalAndUnconditionalQueryResult(GQLModel):
     user: UserWithIdName_IDString | None
 
 
-class SkipLiteralFalseResult(GQLModel):
+class SkipLiteralFalseQueryResult(GQLModel):
     user: UserWithIdName_IDString | None
 
 
-class IncludeSkipSameFieldResult(GQLModel):
+class IncludeSkipSameFieldQueryResult(GQLModel):
     user: UserWithIdName_IDOpt_String | None
 
 
@@ -118,7 +118,7 @@ class UserWithFirstNameId(GQLModel):
     first_name: str | None = None
 
 
-class IncludeCamelCaseResult(GQLModel):
+class IncludeCamelCaseQueryResult(GQLModel):
     user: UserWithFirstNameId | None
 
 
@@ -127,11 +127,11 @@ class UserWithIdTags(GQLModel):
     tags: list[str | None] | None = None
 
 
-class IncludeListResult(GQLModel):
+class IncludeListQueryResult(GQLModel):
     user: UserWithIdTags | None
 
 
-class IncludeLiteralTrueResult(GQLModel):
+class IncludeLiteralTrueQueryResult(GQLModel):
     user: UserWithIdName_IDString | None
 
 
@@ -145,7 +145,7 @@ class UserWithAddressId(GQLModel):
     address: Address | None = None
 
 
-class IncludeNestedObjectResult(GQLModel):
+class IncludeNestedObjectQueryResult(GQLModel):
     user: UserWithAddressId | None
 
 
@@ -155,7 +155,7 @@ class UserWithEmailIdPhone(GQLModel):
     phone: str | None = None
 
 
-class SharedVariableResult(GQLModel):
+class SharedVariableQueryResult(GQLModel):
     user: UserWithEmailIdPhone | None
 
 
@@ -163,203 +163,203 @@ class UserWithId(GQLModel):
     id: builtins.str
 
 
-class InlineLiteralFalseResult(GQLModel):
+class InlineLiteralFalseQueryResult(GQLModel):
     user: UserWithId | None
 
 
-class ContradictoryPairResult(GQLModel):
+class ContradictoryPairQueryResult(GQLModel):
     user: UserWithId | None
 
 
-class MixedPolarityVariableResult(GQLModel):
+class MixedPolarityVariableQueryResult(GQLModel):
     user: UserWithEmailIdName | None
 
 
-class ComplementaryConjunctionsResult(GQLModel):
+class ComplementaryConjunctionsQueryResult(GQLModel):
     user: UserWithIdName_IDOpt_String | None
 
 
-class IncludeSkip(runtime.GQLOperation):
+class IncludeSkipQuery(runtime.GQLOperation):
     # See: queries.py:3
-    async def execute(self, *, id: builtins.str, with_email: bool, skip_phone: bool) -> IncludeSkipResult:
+    async def execute(self, *, id: builtins.str, with_email: bool, skip_phone: bool) -> IncludeSkipQueryResult:
         return await _client.query(
-            IncludeSkipResult,
+            IncludeSkipQueryResult,
             'query IncludeSkip($id: ID!, $withEmail: Boolean!, $skipPhone: Boolean!) {\n  user(id: $id) {\n    name\n    email @include(if: $withEmail)\n    phone @skip(if: $skipPhone)\n  }\n}',
             variables={"id": id, "withEmail": with_email, "skipPhone": skip_phone},
             headers=self.headers,
         )
 
 
-class IncludeNonNull(runtime.GQLOperation):
+class IncludeNonNullQuery(runtime.GQLOperation):
     # See: queries.py:15
-    async def execute(self, *, with_name: bool) -> IncludeNonNullResult:
+    async def execute(self, *, with_name: bool) -> IncludeNonNullQueryResult:
         return await _client.query(
-            IncludeNonNullResult,
+            IncludeNonNullQueryResult,
             'query IncludeNonNull($withName: Boolean!) {\n  user {\n    id\n    name @include(if: $withName)\n  }\n}',
             variables={"withName": with_name},
             headers=self.headers,
         )
 
 
-class SkipNonNull(runtime.GQLOperation):
+class SkipNonNullQuery(runtime.GQLOperation):
     # See: queries.py:26
-    async def execute(self, *, skip_name: bool) -> SkipNonNullResult:
+    async def execute(self, *, skip_name: bool) -> SkipNonNullQueryResult:
         return await _client.query(
-            SkipNonNullResult,
+            SkipNonNullQueryResult,
             'query SkipNonNull($skipName: Boolean!) {\n  user {\n    id\n    name @skip(if: $skipName)\n  }\n}',
             variables={"skipName": skip_name},
             headers=self.headers,
         )
 
 
-class IncludeNullable(runtime.GQLOperation):
+class IncludeNullableQuery(runtime.GQLOperation):
     # See: queries.py:37
-    async def execute(self, *, with_name: bool) -> IncludeNullableResult:
+    async def execute(self, *, with_name: bool) -> IncludeNullableQueryResult:
         return await _client.query(
-            IncludeNullableResult,
+            IncludeNullableQueryResult,
             'query IncludeNullable($withName: Boolean!) {\n  user {\n    id\n    nullableName @include(if: $withName)\n  }\n}',
             variables={"withName": with_name},
             headers=self.headers,
         )
 
 
-class IncludeInlineFragment(runtime.GQLOperation):
+class IncludeInlineFragmentQuery(runtime.GQLOperation):
     # See: queries.py:48
-    async def execute(self, *, with_details: bool) -> IncludeInlineFragmentResult:
+    async def execute(self, *, with_details: bool) -> IncludeInlineFragmentQueryResult:
         return await _client.query(
-            IncludeInlineFragmentResult,
+            IncludeInlineFragmentQueryResult,
             'query IncludeInlineFragment($withDetails: Boolean!) {\n  user {\n    id\n    ... @include(if: $withDetails) {\n      name\n      email\n    }\n  }\n}',
             variables={"withDetails": with_details},
             headers=self.headers,
         )
 
 
-class ConditionalAndUnconditional(runtime.GQLOperation):
+class ConditionalAndUnconditionalQuery(runtime.GQLOperation):
     # See: queries.py:62
-    async def execute(self, *, with_details: bool) -> ConditionalAndUnconditionalResult:
+    async def execute(self, *, with_details: bool) -> ConditionalAndUnconditionalQueryResult:
         return await _client.query(
-            ConditionalAndUnconditionalResult,
+            ConditionalAndUnconditionalQueryResult,
             'query ConditionalAndUnconditional($withDetails: Boolean!) {\n  user {\n    id\n    name\n    ... @include(if: $withDetails) {\n      name\n    }\n  }\n}',
             variables={"withDetails": with_details},
             headers=self.headers,
         )
 
 
-class SkipLiteralFalse(runtime.GQLOperation):
+class SkipLiteralFalseQuery(runtime.GQLOperation):
     # See: queries.py:76
-    async def execute(self) -> SkipLiteralFalseResult:
+    async def execute(self) -> SkipLiteralFalseQueryResult:
         return await _client.query(
-            SkipLiteralFalseResult,
+            SkipLiteralFalseQueryResult,
             'query SkipLiteralFalse {\n  user {\n    id\n    name @skip(if: false)\n  }\n}',
             variables={},
             headers=self.headers,
         )
 
 
-class IncludeSkipSameField(runtime.GQLOperation):
+class IncludeSkipSameFieldQuery(runtime.GQLOperation):
     # See: queries.py:87
-    async def execute(self, *, show: bool, hide: bool) -> IncludeSkipSameFieldResult:
+    async def execute(self, *, show: bool, hide: bool) -> IncludeSkipSameFieldQueryResult:
         return await _client.query(
-            IncludeSkipSameFieldResult,
+            IncludeSkipSameFieldQueryResult,
             'query IncludeSkipSameField($show: Boolean!, $hide: Boolean!) {\n  user {\n    id\n    name @include(if: $show) @skip(if: $hide)\n  }\n}',
             variables={"show": show, "hide": hide},
             headers=self.headers,
         )
 
 
-class IncludeCamelCase(runtime.GQLOperation):
+class IncludeCamelCaseQuery(runtime.GQLOperation):
     # See: queries.py:98
-    async def execute(self, *, with_name: bool) -> IncludeCamelCaseResult:
+    async def execute(self, *, with_name: bool) -> IncludeCamelCaseQueryResult:
         return await _client.query(
-            IncludeCamelCaseResult,
+            IncludeCamelCaseQueryResult,
             'query IncludeCamelCase($withName: Boolean!) {\n  user {\n    id\n    firstName @include(if: $withName)\n  }\n}',
             variables={"withName": with_name},
             headers=self.headers,
         )
 
 
-class IncludeList(runtime.GQLOperation):
+class IncludeListQuery(runtime.GQLOperation):
     # See: queries.py:109
-    async def execute(self, *, with_tags: bool) -> IncludeListResult:
+    async def execute(self, *, with_tags: bool) -> IncludeListQueryResult:
         return await _client.query(
-            IncludeListResult,
+            IncludeListQueryResult,
             'query IncludeList($withTags: Boolean!) {\n  user {\n    id\n    tags @include(if: $withTags)\n  }\n}',
             variables={"withTags": with_tags},
             headers=self.headers,
         )
 
 
-class IncludeLiteralTrue(runtime.GQLOperation):
+class IncludeLiteralTrueQuery(runtime.GQLOperation):
     # See: queries.py:120
-    async def execute(self) -> IncludeLiteralTrueResult:
+    async def execute(self) -> IncludeLiteralTrueQueryResult:
         return await _client.query(
-            IncludeLiteralTrueResult,
+            IncludeLiteralTrueQueryResult,
             'query IncludeLiteralTrue {\n  user {\n    id\n    name @include(if: true)\n  }\n}',
             variables={},
             headers=self.headers,
         )
 
 
-class IncludeNestedObject(runtime.GQLOperation):
+class IncludeNestedObjectQuery(runtime.GQLOperation):
     # See: queries.py:131
-    async def execute(self, *, with_address: bool) -> IncludeNestedObjectResult:
+    async def execute(self, *, with_address: bool) -> IncludeNestedObjectQueryResult:
         return await _client.query(
-            IncludeNestedObjectResult,
+            IncludeNestedObjectQueryResult,
             'query IncludeNestedObject($withAddress: Boolean!) {\n  user {\n    id\n    address @include(if: $withAddress) {\n      city\n      zip\n    }\n  }\n}',
             variables={"withAddress": with_address},
             headers=self.headers,
         )
 
 
-class SharedVariable(runtime.GQLOperation):
+class SharedVariableQuery(runtime.GQLOperation):
     # See: queries.py:145
-    async def execute(self, *, flag: bool) -> SharedVariableResult:
+    async def execute(self, *, flag: bool) -> SharedVariableQueryResult:
         return await _client.query(
-            SharedVariableResult,
+            SharedVariableQueryResult,
             'query SharedVariable($flag: Boolean!) {\n  user {\n    id\n    email @include(if: $flag)\n    phone @skip(if: $flag)\n  }\n}',
             variables={"flag": flag},
             headers=self.headers,
         )
 
 
-class InlineLiteralFalse(runtime.GQLOperation):
+class InlineLiteralFalseQuery(runtime.GQLOperation):
     # See: queries.py:157
-    async def execute(self) -> InlineLiteralFalseResult:
+    async def execute(self) -> InlineLiteralFalseQueryResult:
         return await _client.query(
-            InlineLiteralFalseResult,
+            InlineLiteralFalseQueryResult,
             'query InlineLiteralFalse {\n  user {\n    id\n    ... @include(if: false) {\n      name\n    }\n  }\n}',
             variables={},
             headers=self.headers,
         )
 
 
-class ContradictoryPair(runtime.GQLOperation):
+class ContradictoryPairQuery(runtime.GQLOperation):
     # See: queries.py:168
-    async def execute(self, *, flag: bool) -> ContradictoryPairResult:
+    async def execute(self, *, flag: bool) -> ContradictoryPairQueryResult:
         return await _client.query(
-            ContradictoryPairResult,
+            ContradictoryPairQueryResult,
             'query ContradictoryPair($flag: Boolean!) {\n  user {\n    id\n    name @include(if: $flag) @skip(if: $flag)\n  }\n}',
             variables={"flag": flag},
             headers=self.headers,
         )
 
 
-class MixedPolarityVariable(runtime.GQLOperation):
+class MixedPolarityVariableQuery(runtime.GQLOperation):
     # See: queries.py:179
-    async def execute(self, *, a: bool, b: bool) -> MixedPolarityVariableResult:
+    async def execute(self, *, a: bool, b: bool) -> MixedPolarityVariableQueryResult:
         return await _client.query(
-            MixedPolarityVariableResult,
+            MixedPolarityVariableQueryResult,
             'query MixedPolarityVariable($a: Boolean!, $b: Boolean!) {\n  user {\n    id\n    ... @include(if: $b) {\n      name\n    }\n    ... @include(if: $a) @skip(if: $b) {\n      email\n    }\n  }\n}',
             variables={"a": a, "b": b},
             headers=self.headers,
         )
 
 
-class ComplementaryConjunctions(runtime.GQLOperation):
+class ComplementaryConjunctionsQuery(runtime.GQLOperation):
     # See: queries.py:191
-    async def execute(self, *, a: bool, b: bool) -> ComplementaryConjunctionsResult:
+    async def execute(self, *, a: bool, b: bool) -> ComplementaryConjunctionsQueryResult:
         return await _client.query(
-            ComplementaryConjunctionsResult,
+            ComplementaryConjunctionsQueryResult,
             'query ComplementaryConjunctions($a: Boolean!, $b: Boolean!) {\n  user {\n    id\n    ... @include(if: $a) {\n      ... @include(if: $b) {\n        name\n      }\n    }\n    ... @skip(if: $a) {\n      ... @skip(if: $b) {\n        name\n      }\n    }\n  }\n}',
             variables={"a": a, "b": b},
             headers=self.headers,
@@ -367,61 +367,61 @@ class ComplementaryConjunctions(runtime.GQLOperation):
 
 
 @overload
-def api_gql(stmt: Literal['\n    query IncludeSkip($id: ID!, $withEmail: Boolean!, $skipPhone: Boolean!) {\n        user(id: $id) {\n            name\n            email @include(if: $withEmail)\n            phone @skip(if: $skipPhone)\n        }\n    }\n    ']) -> IncludeSkip: ...
+def api_gql(stmt: Literal['\n    query IncludeSkip($id: ID!, $withEmail: Boolean!, $skipPhone: Boolean!) {\n        user(id: $id) {\n            name\n            email @include(if: $withEmail)\n            phone @skip(if: $skipPhone)\n        }\n    }\n    ']) -> IncludeSkipQuery: ...
 @overload
-def api_gql(stmt: Literal['\n    query IncludeNonNull($withName: Boolean!) {\n        user {\n            id\n            name @include(if: $withName)\n        }\n    }\n    ']) -> IncludeNonNull: ...
+def api_gql(stmt: Literal['\n    query IncludeNonNull($withName: Boolean!) {\n        user {\n            id\n            name @include(if: $withName)\n        }\n    }\n    ']) -> IncludeNonNullQuery: ...
 @overload
-def api_gql(stmt: Literal['\n    query SkipNonNull($skipName: Boolean!) {\n        user {\n            id\n            name @skip(if: $skipName)\n        }\n    }\n    ']) -> SkipNonNull: ...
+def api_gql(stmt: Literal['\n    query SkipNonNull($skipName: Boolean!) {\n        user {\n            id\n            name @skip(if: $skipName)\n        }\n    }\n    ']) -> SkipNonNullQuery: ...
 @overload
-def api_gql(stmt: Literal['\n    query IncludeNullable($withName: Boolean!) {\n        user {\n            id\n            nullableName @include(if: $withName)\n        }\n    }\n    ']) -> IncludeNullable: ...
+def api_gql(stmt: Literal['\n    query IncludeNullable($withName: Boolean!) {\n        user {\n            id\n            nullableName @include(if: $withName)\n        }\n    }\n    ']) -> IncludeNullableQuery: ...
 @overload
-def api_gql(stmt: Literal['\n    query IncludeInlineFragment($withDetails: Boolean!) {\n        user {\n            id\n            ... @include(if: $withDetails) {\n                name\n                email\n            }\n        }\n    }\n    ']) -> IncludeInlineFragment: ...
+def api_gql(stmt: Literal['\n    query IncludeInlineFragment($withDetails: Boolean!) {\n        user {\n            id\n            ... @include(if: $withDetails) {\n                name\n                email\n            }\n        }\n    }\n    ']) -> IncludeInlineFragmentQuery: ...
 @overload
-def api_gql(stmt: Literal['\n    query ConditionalAndUnconditional($withDetails: Boolean!) {\n        user {\n            id\n            name\n            ... @include(if: $withDetails) {\n                name\n            }\n        }\n    }\n    ']) -> ConditionalAndUnconditional: ...
+def api_gql(stmt: Literal['\n    query ConditionalAndUnconditional($withDetails: Boolean!) {\n        user {\n            id\n            name\n            ... @include(if: $withDetails) {\n                name\n            }\n        }\n    }\n    ']) -> ConditionalAndUnconditionalQuery: ...
 @overload
-def api_gql(stmt: Literal['\n    query SkipLiteralFalse {\n        user {\n            id\n            name @skip(if: false)\n        }\n    }\n    ']) -> SkipLiteralFalse: ...
+def api_gql(stmt: Literal['\n    query SkipLiteralFalse {\n        user {\n            id\n            name @skip(if: false)\n        }\n    }\n    ']) -> SkipLiteralFalseQuery: ...
 @overload
-def api_gql(stmt: Literal['\n    query IncludeSkipSameField($show: Boolean!, $hide: Boolean!) {\n        user {\n            id\n            name @include(if: $show) @skip(if: $hide)\n        }\n    }\n    ']) -> IncludeSkipSameField: ...
+def api_gql(stmt: Literal['\n    query IncludeSkipSameField($show: Boolean!, $hide: Boolean!) {\n        user {\n            id\n            name @include(if: $show) @skip(if: $hide)\n        }\n    }\n    ']) -> IncludeSkipSameFieldQuery: ...
 @overload
-def api_gql(stmt: Literal['\n    query IncludeCamelCase($withName: Boolean!) {\n        user {\n            id\n            firstName @include(if: $withName)\n        }\n    }\n    ']) -> IncludeCamelCase: ...
+def api_gql(stmt: Literal['\n    query IncludeCamelCase($withName: Boolean!) {\n        user {\n            id\n            firstName @include(if: $withName)\n        }\n    }\n    ']) -> IncludeCamelCaseQuery: ...
 @overload
-def api_gql(stmt: Literal['\n    query IncludeList($withTags: Boolean!) {\n        user {\n            id\n            tags @include(if: $withTags)\n        }\n    }\n    ']) -> IncludeList: ...
+def api_gql(stmt: Literal['\n    query IncludeList($withTags: Boolean!) {\n        user {\n            id\n            tags @include(if: $withTags)\n        }\n    }\n    ']) -> IncludeListQuery: ...
 @overload
-def api_gql(stmt: Literal['\n    query IncludeLiteralTrue {\n        user {\n            id\n            name @include(if: true)\n        }\n    }\n    ']) -> IncludeLiteralTrue: ...
+def api_gql(stmt: Literal['\n    query IncludeLiteralTrue {\n        user {\n            id\n            name @include(if: true)\n        }\n    }\n    ']) -> IncludeLiteralTrueQuery: ...
 @overload
-def api_gql(stmt: Literal['\n    query IncludeNestedObject($withAddress: Boolean!) {\n        user {\n            id\n            address @include(if: $withAddress) {\n                city\n                zip\n            }\n        }\n    }\n    ']) -> IncludeNestedObject: ...
+def api_gql(stmt: Literal['\n    query IncludeNestedObject($withAddress: Boolean!) {\n        user {\n            id\n            address @include(if: $withAddress) {\n                city\n                zip\n            }\n        }\n    }\n    ']) -> IncludeNestedObjectQuery: ...
 @overload
-def api_gql(stmt: Literal['\n    query SharedVariable($flag: Boolean!) {\n        user {\n            id\n            email @include(if: $flag)\n            phone @skip(if: $flag)\n        }\n    }\n    ']) -> SharedVariable: ...
+def api_gql(stmt: Literal['\n    query SharedVariable($flag: Boolean!) {\n        user {\n            id\n            email @include(if: $flag)\n            phone @skip(if: $flag)\n        }\n    }\n    ']) -> SharedVariableQuery: ...
 @overload
-def api_gql(stmt: Literal['\n    query InlineLiteralFalse {\n        user {\n            id\n            ... @include(if: false) { name }\n        }\n    }\n    ']) -> InlineLiteralFalse: ...
+def api_gql(stmt: Literal['\n    query InlineLiteralFalse {\n        user {\n            id\n            ... @include(if: false) { name }\n        }\n    }\n    ']) -> InlineLiteralFalseQuery: ...
 @overload
-def api_gql(stmt: Literal['\n    query ContradictoryPair($flag: Boolean!) {\n        user {\n            id\n            name @include(if: $flag) @skip(if: $flag)\n        }\n    }\n    ']) -> ContradictoryPair: ...
+def api_gql(stmt: Literal['\n    query ContradictoryPair($flag: Boolean!) {\n        user {\n            id\n            name @include(if: $flag) @skip(if: $flag)\n        }\n    }\n    ']) -> ContradictoryPairQuery: ...
 @overload
-def api_gql(stmt: Literal['\n    query MixedPolarityVariable($a: Boolean!, $b: Boolean!) {\n        user {\n            id\n            ... @include(if: $b) { name }\n            ... @include(if: $a) @skip(if: $b) { email }\n        }\n    }\n    ']) -> MixedPolarityVariable: ...
+def api_gql(stmt: Literal['\n    query MixedPolarityVariable($a: Boolean!, $b: Boolean!) {\n        user {\n            id\n            ... @include(if: $b) { name }\n            ... @include(if: $a) @skip(if: $b) { email }\n        }\n    }\n    ']) -> MixedPolarityVariableQuery: ...
 @overload
-def api_gql(stmt: Literal['\n    query ComplementaryConjunctions($a: Boolean!, $b: Boolean!) {\n        user {\n            id\n            ... @include(if: $a) { ... @include(if: $b) { name } }\n            ... @skip(if: $a) { ... @skip(if: $b) { name } }\n        }\n    }\n    ']) -> ComplementaryConjunctions: ...
+def api_gql(stmt: Literal['\n    query ComplementaryConjunctions($a: Boolean!, $b: Boolean!) {\n        user {\n            id\n            ... @include(if: $a) { ... @include(if: $b) { name } }\n            ... @skip(if: $a) { ... @skip(if: $b) { name } }\n        }\n    }\n    ']) -> ComplementaryConjunctionsQuery: ...
 @overload
 def api_gql(stmt: str) -> runtime.GQLOperation: ...
 
 
 _statement_factories: dict[str, Callable[[], runtime.GQLOperation]] = {
-    '\n    query IncludeSkip($id: ID!, $withEmail: Boolean!, $skipPhone: Boolean!) {\n        user(id: $id) {\n            name\n            email @include(if: $withEmail)\n            phone @skip(if: $skipPhone)\n        }\n    }\n    ': IncludeSkip,
-    '\n    query IncludeNonNull($withName: Boolean!) {\n        user {\n            id\n            name @include(if: $withName)\n        }\n    }\n    ': IncludeNonNull,
-    '\n    query SkipNonNull($skipName: Boolean!) {\n        user {\n            id\n            name @skip(if: $skipName)\n        }\n    }\n    ': SkipNonNull,
-    '\n    query IncludeNullable($withName: Boolean!) {\n        user {\n            id\n            nullableName @include(if: $withName)\n        }\n    }\n    ': IncludeNullable,
-    '\n    query IncludeInlineFragment($withDetails: Boolean!) {\n        user {\n            id\n            ... @include(if: $withDetails) {\n                name\n                email\n            }\n        }\n    }\n    ': IncludeInlineFragment,
-    '\n    query ConditionalAndUnconditional($withDetails: Boolean!) {\n        user {\n            id\n            name\n            ... @include(if: $withDetails) {\n                name\n            }\n        }\n    }\n    ': ConditionalAndUnconditional,
-    '\n    query SkipLiteralFalse {\n        user {\n            id\n            name @skip(if: false)\n        }\n    }\n    ': SkipLiteralFalse,
-    '\n    query IncludeSkipSameField($show: Boolean!, $hide: Boolean!) {\n        user {\n            id\n            name @include(if: $show) @skip(if: $hide)\n        }\n    }\n    ': IncludeSkipSameField,
-    '\n    query IncludeCamelCase($withName: Boolean!) {\n        user {\n            id\n            firstName @include(if: $withName)\n        }\n    }\n    ': IncludeCamelCase,
-    '\n    query IncludeList($withTags: Boolean!) {\n        user {\n            id\n            tags @include(if: $withTags)\n        }\n    }\n    ': IncludeList,
-    '\n    query IncludeLiteralTrue {\n        user {\n            id\n            name @include(if: true)\n        }\n    }\n    ': IncludeLiteralTrue,
-    '\n    query IncludeNestedObject($withAddress: Boolean!) {\n        user {\n            id\n            address @include(if: $withAddress) {\n                city\n                zip\n            }\n        }\n    }\n    ': IncludeNestedObject,
-    '\n    query SharedVariable($flag: Boolean!) {\n        user {\n            id\n            email @include(if: $flag)\n            phone @skip(if: $flag)\n        }\n    }\n    ': SharedVariable,
-    '\n    query InlineLiteralFalse {\n        user {\n            id\n            ... @include(if: false) { name }\n        }\n    }\n    ': InlineLiteralFalse,
-    '\n    query ContradictoryPair($flag: Boolean!) {\n        user {\n            id\n            name @include(if: $flag) @skip(if: $flag)\n        }\n    }\n    ': ContradictoryPair,
-    '\n    query MixedPolarityVariable($a: Boolean!, $b: Boolean!) {\n        user {\n            id\n            ... @include(if: $b) { name }\n            ... @include(if: $a) @skip(if: $b) { email }\n        }\n    }\n    ': MixedPolarityVariable,
-    '\n    query ComplementaryConjunctions($a: Boolean!, $b: Boolean!) {\n        user {\n            id\n            ... @include(if: $a) { ... @include(if: $b) { name } }\n            ... @skip(if: $a) { ... @skip(if: $b) { name } }\n        }\n    }\n    ': ComplementaryConjunctions,
+    '\n    query IncludeSkip($id: ID!, $withEmail: Boolean!, $skipPhone: Boolean!) {\n        user(id: $id) {\n            name\n            email @include(if: $withEmail)\n            phone @skip(if: $skipPhone)\n        }\n    }\n    ': IncludeSkipQuery,
+    '\n    query IncludeNonNull($withName: Boolean!) {\n        user {\n            id\n            name @include(if: $withName)\n        }\n    }\n    ': IncludeNonNullQuery,
+    '\n    query SkipNonNull($skipName: Boolean!) {\n        user {\n            id\n            name @skip(if: $skipName)\n        }\n    }\n    ': SkipNonNullQuery,
+    '\n    query IncludeNullable($withName: Boolean!) {\n        user {\n            id\n            nullableName @include(if: $withName)\n        }\n    }\n    ': IncludeNullableQuery,
+    '\n    query IncludeInlineFragment($withDetails: Boolean!) {\n        user {\n            id\n            ... @include(if: $withDetails) {\n                name\n                email\n            }\n        }\n    }\n    ': IncludeInlineFragmentQuery,
+    '\n    query ConditionalAndUnconditional($withDetails: Boolean!) {\n        user {\n            id\n            name\n            ... @include(if: $withDetails) {\n                name\n            }\n        }\n    }\n    ': ConditionalAndUnconditionalQuery,
+    '\n    query SkipLiteralFalse {\n        user {\n            id\n            name @skip(if: false)\n        }\n    }\n    ': SkipLiteralFalseQuery,
+    '\n    query IncludeSkipSameField($show: Boolean!, $hide: Boolean!) {\n        user {\n            id\n            name @include(if: $show) @skip(if: $hide)\n        }\n    }\n    ': IncludeSkipSameFieldQuery,
+    '\n    query IncludeCamelCase($withName: Boolean!) {\n        user {\n            id\n            firstName @include(if: $withName)\n        }\n    }\n    ': IncludeCamelCaseQuery,
+    '\n    query IncludeList($withTags: Boolean!) {\n        user {\n            id\n            tags @include(if: $withTags)\n        }\n    }\n    ': IncludeListQuery,
+    '\n    query IncludeLiteralTrue {\n        user {\n            id\n            name @include(if: true)\n        }\n    }\n    ': IncludeLiteralTrueQuery,
+    '\n    query IncludeNestedObject($withAddress: Boolean!) {\n        user {\n            id\n            address @include(if: $withAddress) {\n                city\n                zip\n            }\n        }\n    }\n    ': IncludeNestedObjectQuery,
+    '\n    query SharedVariable($flag: Boolean!) {\n        user {\n            id\n            email @include(if: $flag)\n            phone @skip(if: $flag)\n        }\n    }\n    ': SharedVariableQuery,
+    '\n    query InlineLiteralFalse {\n        user {\n            id\n            ... @include(if: false) { name }\n        }\n    }\n    ': InlineLiteralFalseQuery,
+    '\n    query ContradictoryPair($flag: Boolean!) {\n        user {\n            id\n            name @include(if: $flag) @skip(if: $flag)\n        }\n    }\n    ': ContradictoryPairQuery,
+    '\n    query MixedPolarityVariable($a: Boolean!, $b: Boolean!) {\n        user {\n            id\n            ... @include(if: $b) { name }\n            ... @include(if: $a) @skip(if: $b) { email }\n        }\n    }\n    ': MixedPolarityVariableQuery,
+    '\n    query ComplementaryConjunctions($a: Boolean!, $b: Boolean!) {\n        user {\n            id\n            ... @include(if: $a) { ... @include(if: $b) { name } }\n            ... @skip(if: $a) { ... @skip(if: $b) { name } }\n        }\n    }\n    ': ComplementaryConjunctionsQuery,
 }
 
 

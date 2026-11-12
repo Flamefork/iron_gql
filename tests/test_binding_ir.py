@@ -123,10 +123,10 @@ fragment ImageParts on ImageAttachment {
 }
 """
 
-# `Comment` не является `Attachment`, не spread-compatible с type slot
-# `attachment` и вообще недостижим ни из одного slot пакета. Фрагмент на нём —
-# factory, которую не bind-ит ни один combination: это случай «не совместим ни
-# с одним slot» из контракта `bindings.fragment_closure`.
+# `Comment` is not an `Attachment`, is not spread-compatible with the type of
+# slot `attachment`, and is not reachable from any slot of the package at all.
+# The fragment on it is a factory no combination binds: this is the "compatible
+# with no slot" case from the `bindings.fragment_closure` contract.
 ORPHAN_INPUT_TYPE_SCHEMA = """
 type Query {
     post(id: ID!): Post
@@ -251,9 +251,9 @@ def test_template_is_classified_not_an_operation(tmp_path: Path):
 
     assert [operation.class_name for operation in ir.operations] == []
     [template] = ir.templates
-    assert template.class_name == "GetAttachment"
-    assert template.bound_base_name == "GetAttachmentBound"
-    assert template.result_type == "GetAttachmentResult"
+    assert template.class_name == "GetAttachmentQuery"
+    assert template.bound_base_name == "GetAttachmentQueryBound"
+    assert template.result_type == "GetAttachmentQueryResult"
     assert not template.is_subscription
     [slot] = template.slots
     assert slot.name == "attachment"
@@ -264,8 +264,8 @@ def test_template_is_classified_not_an_operation(tmp_path: Path):
     # over them is not a node model itself and is reached from them through
     # the dependency graph.
     assert slot.node_types == (
-        "GetAttachmentResultPostAttachmentSlotImageAttachment",
-        "GetAttachmentResultPostAttachmentSlotLinkAttachment",
+        "GetAttachmentQueryResultPostAttachmentSlotImageAttachment",
+        "GetAttachmentQueryResultPostAttachmentSlotLinkAttachment",
     )
 
 
@@ -294,18 +294,18 @@ def test_binding_collected_with_spread_model_names_and_arg_vars(tmp_path: Path):
     # and no call site is needed to produce it either, which is why the whole
     # enumeration is pinned here beside the one pair this test is about.
     assert [binding.combination_key for binding in ir.bindings] == [
-        ("GetAttachment", ()),
-        ("GetAttachment", (("attachment", ("ImageParts",)),)),
+        ("GetAttachmentQuery", ()),
+        ("GetAttachmentQuery", (("attachment", ("ImageParts",)),)),
     ]
-    binding = _binding(ir, ("GetAttachment", (("attachment", ("ImageParts",)),)))
-    assert binding.template.class_name == "GetAttachment"
+    binding = _binding(ir, ("GetAttachmentQuery", (("attachment", ("ImageParts",)),)))
+    assert binding.template.class_name == "GetAttachmentQuery"
     # A combination somebody wrote answers with the line they wrote -- that is
     # the edit that removes it.
     assert binding.location == "<test:bind>:1"
     # One nobody wrote answers with the statements it is made of instead: the
     # schema produced it, so the template and its fragments are what a
     # developer edits to change it.
-    empty = _binding(ir, ("GetAttachment", ()))
+    empty = _binding(ir, ("GetAttachmentQuery", ()))
     assert empty.location == "<test:template>:1"
     assert "@slot" not in binding.exec_source
     assert "...ImageParts" in binding.exec_source
@@ -313,19 +313,19 @@ def test_binding_collected_with_spread_model_names_and_arg_vars(tmp_path: Path):
 
     [binding_slot] = binding.slots
     assert binding_slot.slot.name == "attachment"
-    assert _definition_classes(binding_slot) == ("ImageParts",)
+    assert _definition_classes(binding_slot) == ("ImagePartsFragment",)
     assert _model_names(binding_slot) == ("ImagePartsData",)
 
     # The fragment itself becomes a typed definition because the module holds a
     # template at all -- no `.bind()` naming it is required.
     [fragment] = ir.fragments
     assert fragment.fragment_name == "ImageParts"
-    # У `$limit` нет schema default, поэтому `ImageParts` — factory: её
-    # параметр `with_args` хранится на фрагменте, а не на binding.
+    # `$limit` has no schema default, so `ImageParts` is a factory: its
+    # `with_args` parameter is stored on the fragment, not on the binding.
     assert isinstance(fragment, CollectedFactoryFragment)
-    assert fragment.applied_class_name == "_ImagePartsApplied"
-    assert fragment.binding_class_name == "_ImagePartsApplied"
-    assert fragment.bound_closure[0] == "_ImagePartsApplied"
+    assert fragment.applied_class_name == "_ImagePartsFragmentApplied"
+    assert fragment.binding_class_name == "_ImagePartsFragmentApplied"
+    assert fragment.bound_closure[0] == "_ImagePartsFragmentApplied"
     [arg] = fragment.arg_vars
     assert isinstance(arg, CollectedRequiredFragmentArg)
     assert arg.gql_name == "limit"
@@ -375,16 +375,16 @@ def test_readable_fragments_widen_but_direct_fields_stay_scoped(
 
     ir = _collect(parse_res, [bind])
 
-    binding = _binding(ir, ("GetAttachment", (("attachment", ("ImageParts",)),)))
+    binding = _binding(ir, ("GetAttachmentQuery", (("attachment", ("ImageParts",)),)))
     [binding_slot] = binding.slots
-    assert _definition_classes(binding_slot) == ("ImageParts",)
+    assert _definition_classes(binding_slot) == ("ImagePartsFragment",)
     assert _model_names(binding_slot) == ("ImagePartsData",)
     assert [
         (readable.fragment.class_name, readable.typenames)
         for readable in binding_slot.readable_fragments
     ] == [
-        ("BaseParts", ("ImageAttachment",)),
-        ("ImageParts", ("ImageAttachment",)),
+        ("BasePartsFragment", ("ImageAttachment",)),
+        ("ImagePartsFragment", ("ImageAttachment",)),
     ]
 
 
@@ -427,7 +427,7 @@ def test_direct_fragments_are_ordered_by_fragment_name_not_by_call_order(
     ir = _collect(parse_res, [bind])
 
     binding = _binding(
-        ir, ("GetAttachment", (("attachment", ("ImageUrl", "LinkHref")),))
+        ir, ("GetAttachmentQuery", (("attachment", ("ImageUrl", "LinkHref")),))
     )
     [binding_slot] = binding.slots
     assert tuple(f.fragment_name for f in binding_slot.direct_fragments) == (
@@ -544,8 +544,8 @@ def test_bind_slot_arg_not_a_single_fragment_statement_is_rejected(tmp_path: Pat
 
 
 def test_a_fragment_in_two_slots_gives_two_combination_keys(tmp_path: Path):
-    # Slot входит в логическую идентичность: один fragment в двух slots одного
-    # template образует две разные combinations.
+    # The slot is part of the logical identity: one fragment in two slots of one
+    # template forms two different combinations.
     schema_path = tmp_path / "schema.graphql"
     schema_path.write_text(TWO_SLOT_SCHEMA, encoding="utf-8")
     template_stmt = _stmt(TWO_SLOT_TEMPLATE_TEXT, "template")
@@ -576,11 +576,11 @@ def test_a_fragment_in_two_slots_gives_two_combination_keys(tmp_path: Path):
     # a `.bind()` names any of it -- and inside it, the two combinations this
     # test is about: the same fragment in two different slots keeps two keys.
     assert [binding.combination_key for binding in ir.bindings] == [
-        ("GetAttachment", ()),
-        ("GetAttachment", (("preview", ("ImageParts",)),)),
-        ("GetAttachment", (("attachment", ("ImageParts",)),)),
+        ("GetAttachmentQuery", ()),
+        ("GetAttachmentQuery", (("preview", ("ImageParts",)),)),
+        ("GetAttachmentQuery", (("attachment", ("ImageParts",)),)),
         (
-            "GetAttachment",
+            "GetAttachmentQuery",
             (("attachment", ("ImageParts",)), ("preview", ("ImageParts",))),
         ),
     ]
@@ -727,7 +727,7 @@ def test_nested_slot_in_a_template_is_rejected(tmp_path: Path):
 
     assert ir.operations == []
     [template] = ir.templates
-    assert template.class_name == "GetPost"
+    assert template.class_name == "GetPostQuery"
 
     errors = validate_no_nested_slots(ir)
     assert any("nested inside slot" in error for error in errors)
@@ -788,12 +788,12 @@ def test_binding_leaves_an_unfilled_slot_empty(tmp_path: Path):
 
     ir = _collect(parse_res, [bind])
 
-    binding = _binding(ir, ("GetAttachment", (("attachment", ("ImageParts",)),)))
+    binding = _binding(ir, ("GetAttachmentQuery", (("attachment", ("ImageParts",)),)))
     slots_by_name = {
         binding_slot.slot.name: binding_slot for binding_slot in binding.slots
     }
     assert set(slots_by_name) == {"attachment", "preview"}
-    assert _definition_classes(slots_by_name["attachment"]) == ("ImageParts",)
+    assert _definition_classes(slots_by_name["attachment"]) == ("ImagePartsFragment",)
     assert _model_names(slots_by_name["attachment"]) == ("ImagePartsData",)
     assert _definition_classes(slots_by_name["preview"]) == ()
     assert _model_names(slots_by_name["preview"]) == ()

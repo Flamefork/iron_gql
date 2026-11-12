@@ -67,19 +67,19 @@ class User(GQLModel):
     name: str
 
 
-type GetNodeAndCountResultNode = Annotated[Admin | User, pydantic.Field(discriminator="typename__")]
+type Node = Annotated[Admin | User, pydantic.Field(discriminator="typename__")]
 
 
-class GetNodeAndCountResult(GQLModel):
-    node: GetNodeAndCountResultNode | None
+class GetNodeAndCountQueryResult(GQLModel):
+    node: Node | None
     count: int
 
 
-class GetNodeAndCount(runtime.GQLOperation):
+class GetNodeAndCountQuery(runtime.GQLOperation):
     # See: queries.py:3
-    async def execute(self, *, id: builtins.str) -> GetNodeAndCountResult:
+    async def execute(self, *, id: builtins.str) -> GetNodeAndCountQueryResult:
         return await _client.query(
-            GetNodeAndCountResult,
+            GetNodeAndCountQueryResult,
             'query GetNodeAndCount($id: ID!) {\n  node(id: $id) {\n    __typename\n    ... on User {\n      id\n      name\n    }\n    ... on Admin {\n      id\n      name\n      permissions\n    }\n  }\n  count\n}',
             variables={"id": id},
             headers=self.headers,
@@ -87,13 +87,13 @@ class GetNodeAndCount(runtime.GQLOperation):
 
 
 @overload
-def api_gql(stmt: Literal['\n    query GetNodeAndCount($id: ID!) {\n        node(id: $id) {\n            __typename\n            ... on User {\n                id\n                name\n            }\n            ... on Admin {\n                id\n                name\n                permissions\n            }\n        }\n        count\n    }\n    ']) -> GetNodeAndCount: ...
+def api_gql(stmt: Literal['\n    query GetNodeAndCount($id: ID!) {\n        node(id: $id) {\n            __typename\n            ... on User {\n                id\n                name\n            }\n            ... on Admin {\n                id\n                name\n                permissions\n            }\n        }\n        count\n    }\n    ']) -> GetNodeAndCountQuery: ...
 @overload
 def api_gql(stmt: str) -> runtime.GQLOperation: ...
 
 
 _statement_factories: dict[str, Callable[[], runtime.GQLOperation]] = {
-    '\n    query GetNodeAndCount($id: ID!) {\n        node(id: $id) {\n            __typename\n            ... on User {\n                id\n                name\n            }\n            ... on Admin {\n                id\n                name\n                permissions\n            }\n        }\n        count\n    }\n    ': GetNodeAndCount,
+    '\n    query GetNodeAndCount($id: ID!) {\n        node(id: $id) {\n            __typename\n            ... on User {\n                id\n                name\n            }\n            ... on Admin {\n                id\n                name\n                permissions\n            }\n        }\n        count\n    }\n    ': GetNodeAndCountQuery,
 }
 
 

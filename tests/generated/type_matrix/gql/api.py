@@ -71,7 +71,7 @@ class EchoWithSeenSizeSizes(GQLModel):
     sizes: list[Size]
 
 
-class EveryCellResult(GQLModel):
+class EveryCellQueryResult(GQLModel):
     echo: EchoWithSeenSizeSizes | None
 
 
@@ -80,17 +80,17 @@ class EchoWithSeenSize(GQLModel):
     size: Size | None
 
 
-class DefaultsResult(GQLModel):
+class DefaultsQueryResult(GQLModel):
     labelled: EchoWithSeenSize | None
 
 
-class SlottedResultEchoSlot[TSlotEcho = Never](GQLSlotModel[TSlotEcho]):
+class SlottedQueryResultEchoSlot[TSlotEcho = Never](GQLSlotModel[TSlotEcho]):
     slot_name__: ClassVar[str] = "echo"
     typename__: Annotated[Literal["Echo"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
 
 
-class SlottedResult[TSlotEcho = Never](GQLModel):
-    echo: SlottedResultEchoSlot[TSlotEcho] | None
+class SlottedQueryResult[TSlotEcho = Never](GQLModel):
+    echo: SlottedQueryResultEchoSlot[TSlotEcho] | None
 
 
 class SizePartsData(GQLOpenModel):
@@ -125,22 +125,22 @@ class Payload(GQLModel):
     filter_sparse: list[Filter | None] | None = None
 
 
-class EveryCell(runtime.GQLOperation):
+class EveryCellQuery(runtime.GQLOperation):
     # See: queries.py:3
-    async def execute(self, *, string_plain: str | None, string_required: str, string_list: list[str], string_sparse: list[str | None] | None, int_plain: int | None, int_required: int, int_list: list[int], int_sparse: list[int | None] | None, id_plain: builtins.str | None, id_required: builtins.str, id_list: list[builtins.str], id_sparse: list[builtins.str | None] | None, size_plain: Size | None, size_required: Size, size_list: list[Size], size_sparse: list[Size | None] | None, filter_plain: Filter | None, filter_required: Filter, filter_list: list[Filter], filter_sparse: list[Filter | None] | None) -> EveryCellResult:
+    async def execute(self, *, string_plain: str | None, string_required: str, string_list: list[str], string_sparse: list[str | None] | None, int_plain: int | None, int_required: int, int_list: list[int], int_sparse: list[int | None] | None, id_plain: builtins.str | None, id_required: builtins.str, id_list: list[builtins.str], id_sparse: list[builtins.str | None] | None, size_plain: Size | None, size_required: Size, size_list: list[Size], size_sparse: list[Size | None] | None, filter_plain: Filter | None, filter_required: Filter, filter_list: list[Filter], filter_sparse: list[Filter | None] | None) -> EveryCellQueryResult:
         return await _client.query(
-            EveryCellResult,
+            EveryCellQueryResult,
             'query EveryCell($stringPlain: String, $stringRequired: String!, $stringList: [String!]!, $stringSparse: [String], $intPlain: Int, $intRequired: Int!, $intList: [Int!]!, $intSparse: [Int], $idPlain: ID, $idRequired: ID!, $idList: [ID!]!, $idSparse: [ID], $sizePlain: Size, $sizeRequired: Size!, $sizeList: [Size!]!, $sizeSparse: [Size], $filterPlain: Filter, $filterRequired: Filter!, $filterList: [Filter!]!, $filterSparse: [Filter]) {\n  echo(\n    payload: {\n      stringPlain: $stringPlain\n      stringRequired: $stringRequired\n      stringList: $stringList\n      stringSparse: $stringSparse\n      intPlain: $intPlain\n      intRequired: $intRequired\n      intList: $intList\n      intSparse: $intSparse\n      idPlain: $idPlain\n      idRequired: $idRequired\n      idList: $idList\n      idSparse: $idSparse\n      sizePlain: $sizePlain\n      sizeRequired: $sizeRequired\n      sizeList: $sizeList\n      sizeSparse: $sizeSparse\n      filterPlain: $filterPlain\n      filterRequired: $filterRequired\n      filterList: $filterList\n      filterSparse: $filterSparse\n    }\n    stringPlain: $stringPlain\n    stringRequired: $stringRequired\n    stringList: $stringList\n    stringSparse: $stringSparse\n    intPlain: $intPlain\n    intRequired: $intRequired\n    intList: $intList\n    intSparse: $intSparse\n    idPlain: $idPlain\n    idRequired: $idRequired\n    idList: $idList\n    idSparse: $idSparse\n    sizePlain: $sizePlain\n    sizeRequired: $sizeRequired\n    sizeList: $sizeList\n    sizeSparse: $sizeSparse\n    filterPlain: $filterPlain\n    filterRequired: $filterRequired\n    filterList: $filterList\n    filterSparse: $filterSparse\n  ) {\n    seen\n    size\n    sizes\n  }\n}',
             variables={"stringPlain": string_plain, "stringRequired": string_required, "stringList": string_list, "stringSparse": string_sparse, "intPlain": int_plain, "intRequired": int_required, "intList": int_list, "intSparse": int_sparse, "idPlain": id_plain, "idRequired": id_required, "idList": id_list, "idSparse": id_sparse, "sizePlain": size_plain, "sizeRequired": size_required, "sizeList": size_list, "sizeSparse": size_sparse, "filterPlain": filter_plain, "filterRequired": filter_required, "filterList": filter_list, "filterSparse": filter_sparse},
             headers=self.headers,
         )
 
 
-class Defaults(runtime.GQLOperation):
+class DefaultsQuery(runtime.GQLOperation):
     # See: queries.py:15
-    async def execute(self) -> DefaultsResult:
+    async def execute(self) -> DefaultsQueryResult:
         return await _client.query(
-            DefaultsResult,
+            DefaultsQueryResult,
             'query Defaults {\n  labelled {\n    seen\n    size\n  }\n}',
             variables={},
             headers=self.headers,
@@ -170,37 +170,37 @@ class OnEcho(slots.GQLBindableFragment[TModel, TReads], ABC):
 
 
 @final
-class SizeParts(slots.GQLFragment[SizePartsData, "_SizePartsApplied"]):
+class SizePartsFragment(slots.GQLFragment[SizePartsData, "_SizePartsFragmentApplied"]):
     adapter__: ClassVar[pydantic.TypeAdapter[SizePartsData]] = pydantic.TypeAdapter(SizePartsData)
 
     @override
     def __init__(self) -> None:
         super().__init__(
             fragment_name='SizeParts',
-            definition_type=SizeParts,
+            definition_type=SizePartsFragment,
             adapter=self.adapter__,
         )
 
-    def with_args(self, *, frag_size: Size, frag_term: str | None) -> _SizePartsApplied:
-        return _SizePartsApplied({"frag_size": frag_size, "frag_term": frag_term})
+    def with_args(self, *, frag_size: Size, frag_term: str | None) -> _SizePartsFragmentApplied:
+        return _SizePartsFragmentApplied({"frag_size": frag_size, "frag_term": frag_term})
 
 
 @final
-class _SizePartsApplied(OnEcho[SizePartsData, "_SizePartsApplied"]):
+class _SizePartsFragmentApplied(OnEcho[SizePartsData, "_SizePartsFragmentApplied"]):
     @override
     def __init__(self, fragment_args: dict[str, object], /) -> None:
         super().__init__(
             fragment_name='SizeParts',
-            definition_type=SizeParts,
-            adapter=SizeParts.adapter__,
+            definition_type=SizePartsFragment,
+            adapter=SizePartsFragment.adapter__,
         )
         self._set_fragment_args(fragment_args)
 
 
-class SlottedBound[TResult: pydantic.BaseModel](runtime.GQLBoundOperation):
+class SlottedQueryBound[TResult: pydantic.BaseModel](runtime.GQLBoundOperation):
     async def execute(self, *, payload: Payload) -> TResult:
         return await _client.query(
-            typing.cast("type[TResult]", SlottedResult),
+            typing.cast("type[TResult]", SlottedQueryResult),
             self.exec_source,
             variables={"payload": payload, **self.fragment_args},
             headers=self.headers,
@@ -208,43 +208,43 @@ class SlottedBound[TResult: pydantic.BaseModel](runtime.GQLBoundOperation):
         )
 
 
-class Slotted(runtime.GQLTemplate):
+class SlottedQuery(runtime.GQLTemplate):
     _binding_specs: ClassVar[dict[slots.BindingKey, runtime.BoundSpec]] = {
         # See: queries.py:23
         (): ('query Slotted($payload: Payload!) {\n  echo(payload: $payload) {\n    __typename\n  }\n}', {"echo": ()}),
         # See: queries.py:23, queries.py:31
-        (('echo', (_SizePartsApplied,)),): ('query Slotted($payload: Payload!, $frag_size: Size!, $frag_term: String) {\n  echo(payload: $payload) {\n    __typename\n    ...SizeParts\n  }\n}\n\nfragment SizeParts on Echo {\n  seen\n  tagged(size: $frag_size, term: $frag_term)\n}', {"echo": ((SizeParts, frozenset({'Echo'})),)}),
+        (('echo', (_SizePartsFragmentApplied,)),): ('query Slotted($payload: Payload!, $frag_size: Size!, $frag_term: String) {\n  echo(payload: $payload) {\n    __typename\n    ...SizeParts\n  }\n}\n\nfragment SizeParts on Echo {\n  seen\n  tagged(size: $frag_size, term: $frag_term)\n}', {"echo": ((SizePartsFragment, frozenset({'Echo'})),)}),
     }
 
     @overload
-    def bind(self, *, echo: Sequence[Never] = ()) -> SlottedBound[SlottedResult[Never]]: ...
+    def bind(self, *, echo: Sequence[Never] = ()) -> SlottedQueryBound[SlottedQueryResult[Never]]: ...
     @overload
-    def bind[TModelEcho: pydantic.BaseModel, TReadsEcho](self, *, echo: OnEcho[TModelEcho, TReadsEcho]) -> SlottedBound[SlottedResult[OnEcho[TModelEcho, TReadsEcho] | TReadsEcho]]: ...
+    def bind[TModelEcho: pydantic.BaseModel, TReadsEcho](self, *, echo: OnEcho[TModelEcho, TReadsEcho]) -> SlottedQueryBound[SlottedQueryResult[OnEcho[TModelEcho, TReadsEcho] | TReadsEcho]]: ...
     def bind(self, *, echo: slots.GQLBindableFragment[pydantic.BaseModel, Any] | Sequence[slots.GQLBindableFragment[pydantic.BaseModel, Any]] = ()) -> runtime.GQLBoundOperation:
         if slots.binding_key({'echo': echo}) not in self._binding_specs:
-            raise LookupError("unknown bind combination for Slotted; single-fragment and empty combinations are generated from the schema, so this is a tuple combination no call site writes literally - write it, then regenerate the module. A call whose template is an expression the scan cannot follow is never read either: those are listed, with the reason, in the debug run's ignored_binds.json")
-        return SlottedBound[SlottedResult].bound__(
+            raise LookupError("unknown bind combination for SlottedQuery; single-fragment and empty combinations are generated from the schema, so this is a tuple combination no call site writes literally - write it, then regenerate the module. A call whose template is an expression the scan cannot follow is never read either: those are listed, with the reason, in the debug run's ignored_binds.json")
+        return SlottedQueryBound[SlottedQueryResult].bound__(
             self._binding_specs[slots.binding_key({'echo': echo})], {'echo': slots.as_bindable_fragments(echo)},
         )
 
 
 @overload
-def api_gql(stmt: Literal['\n    query EveryCell($stringPlain: String, $stringRequired: String!, $stringList: [String!]!, $stringSparse: [String], $intPlain: Int, $intRequired: Int!, $intList: [Int!]!, $intSparse: [Int], $idPlain: ID, $idRequired: ID!, $idList: [ID!]!, $idSparse: [ID], $sizePlain: Size, $sizeRequired: Size!, $sizeList: [Size!]!, $sizeSparse: [Size], $filterPlain: Filter, $filterRequired: Filter!, $filterList: [Filter!]!, $filterSparse: [Filter]) {\n        echo(payload: {stringPlain: $stringPlain, stringRequired: $stringRequired, stringList: $stringList, stringSparse: $stringSparse, intPlain: $intPlain, intRequired: $intRequired, intList: $intList, intSparse: $intSparse, idPlain: $idPlain, idRequired: $idRequired, idList: $idList, idSparse: $idSparse, sizePlain: $sizePlain, sizeRequired: $sizeRequired, sizeList: $sizeList, sizeSparse: $sizeSparse, filterPlain: $filterPlain, filterRequired: $filterRequired, filterList: $filterList, filterSparse: $filterSparse}, stringPlain: $stringPlain, stringRequired: $stringRequired, stringList: $stringList, stringSparse: $stringSparse, intPlain: $intPlain, intRequired: $intRequired, intList: $intList, intSparse: $intSparse, idPlain: $idPlain, idRequired: $idRequired, idList: $idList, idSparse: $idSparse, sizePlain: $sizePlain, sizeRequired: $sizeRequired, sizeList: $sizeList, sizeSparse: $sizeSparse, filterPlain: $filterPlain, filterRequired: $filterRequired, filterList: $filterList, filterSparse: $filterSparse) {\n            seen\n            size\n            sizes\n        }\n    }\n    ']) -> EveryCell: ...
+def api_gql(stmt: Literal['\n    query EveryCell($stringPlain: String, $stringRequired: String!, $stringList: [String!]!, $stringSparse: [String], $intPlain: Int, $intRequired: Int!, $intList: [Int!]!, $intSparse: [Int], $idPlain: ID, $idRequired: ID!, $idList: [ID!]!, $idSparse: [ID], $sizePlain: Size, $sizeRequired: Size!, $sizeList: [Size!]!, $sizeSparse: [Size], $filterPlain: Filter, $filterRequired: Filter!, $filterList: [Filter!]!, $filterSparse: [Filter]) {\n        echo(payload: {stringPlain: $stringPlain, stringRequired: $stringRequired, stringList: $stringList, stringSparse: $stringSparse, intPlain: $intPlain, intRequired: $intRequired, intList: $intList, intSparse: $intSparse, idPlain: $idPlain, idRequired: $idRequired, idList: $idList, idSparse: $idSparse, sizePlain: $sizePlain, sizeRequired: $sizeRequired, sizeList: $sizeList, sizeSparse: $sizeSparse, filterPlain: $filterPlain, filterRequired: $filterRequired, filterList: $filterList, filterSparse: $filterSparse}, stringPlain: $stringPlain, stringRequired: $stringRequired, stringList: $stringList, stringSparse: $stringSparse, intPlain: $intPlain, intRequired: $intRequired, intList: $intList, intSparse: $intSparse, idPlain: $idPlain, idRequired: $idRequired, idList: $idList, idSparse: $idSparse, sizePlain: $sizePlain, sizeRequired: $sizeRequired, sizeList: $sizeList, sizeSparse: $sizeSparse, filterPlain: $filterPlain, filterRequired: $filterRequired, filterList: $filterList, filterSparse: $filterSparse) {\n            seen\n            size\n            sizes\n        }\n    }\n    ']) -> EveryCellQuery: ...
 @overload
-def api_gql(stmt: Literal['\n    query Defaults {\n        labelled { seen size }\n    }\n    ']) -> Defaults: ...
+def api_gql(stmt: Literal['\n    query Defaults {\n        labelled { seen size }\n    }\n    ']) -> DefaultsQuery: ...
 @overload
-def api_gql(stmt: Literal['\n    fragment SizeParts on Echo {\n        seen\n        tagged(size: $frag_size, term: $frag_term)\n    }\n    ']) -> SizeParts: ...
+def api_gql(stmt: Literal['\n    fragment SizeParts on Echo {\n        seen\n        tagged(size: $frag_size, term: $frag_term)\n    }\n    ']) -> SizePartsFragment: ...
 @overload
-def api_gql(stmt: Literal['\n    query Slotted($payload: Payload!) {\n        echo(payload: $payload) @slot { __typename }\n    }\n    ']) -> Slotted: ...
+def api_gql(stmt: Literal['\n    query Slotted($payload: Payload!) {\n        echo(payload: $payload) @slot { __typename }\n    }\n    ']) -> SlottedQuery: ...
 @overload
 def api_gql(stmt: str) -> runtime.GQLOperation | slots.GQLFragment[pydantic.BaseModel, Any] | runtime.GQLTemplate: ...
 
 
 _statement_factories: dict[str, Callable[[], runtime.GQLOperation | slots.GQLFragment[pydantic.BaseModel, Any] | runtime.GQLTemplate]] = {
-    '\n    query EveryCell($stringPlain: String, $stringRequired: String!, $stringList: [String!]!, $stringSparse: [String], $intPlain: Int, $intRequired: Int!, $intList: [Int!]!, $intSparse: [Int], $idPlain: ID, $idRequired: ID!, $idList: [ID!]!, $idSparse: [ID], $sizePlain: Size, $sizeRequired: Size!, $sizeList: [Size!]!, $sizeSparse: [Size], $filterPlain: Filter, $filterRequired: Filter!, $filterList: [Filter!]!, $filterSparse: [Filter]) {\n        echo(payload: {stringPlain: $stringPlain, stringRequired: $stringRequired, stringList: $stringList, stringSparse: $stringSparse, intPlain: $intPlain, intRequired: $intRequired, intList: $intList, intSparse: $intSparse, idPlain: $idPlain, idRequired: $idRequired, idList: $idList, idSparse: $idSparse, sizePlain: $sizePlain, sizeRequired: $sizeRequired, sizeList: $sizeList, sizeSparse: $sizeSparse, filterPlain: $filterPlain, filterRequired: $filterRequired, filterList: $filterList, filterSparse: $filterSparse}, stringPlain: $stringPlain, stringRequired: $stringRequired, stringList: $stringList, stringSparse: $stringSparse, intPlain: $intPlain, intRequired: $intRequired, intList: $intList, intSparse: $intSparse, idPlain: $idPlain, idRequired: $idRequired, idList: $idList, idSparse: $idSparse, sizePlain: $sizePlain, sizeRequired: $sizeRequired, sizeList: $sizeList, sizeSparse: $sizeSparse, filterPlain: $filterPlain, filterRequired: $filterRequired, filterList: $filterList, filterSparse: $filterSparse) {\n            seen\n            size\n            sizes\n        }\n    }\n    ': EveryCell,
-    '\n    query Defaults {\n        labelled { seen size }\n    }\n    ': Defaults,
-    '\n    fragment SizeParts on Echo {\n        seen\n        tagged(size: $frag_size, term: $frag_term)\n    }\n    ': lambda: SizeParts(),
-    '\n    query Slotted($payload: Payload!) {\n        echo(payload: $payload) @slot { __typename }\n    }\n    ': Slotted,
+    '\n    query EveryCell($stringPlain: String, $stringRequired: String!, $stringList: [String!]!, $stringSparse: [String], $intPlain: Int, $intRequired: Int!, $intList: [Int!]!, $intSparse: [Int], $idPlain: ID, $idRequired: ID!, $idList: [ID!]!, $idSparse: [ID], $sizePlain: Size, $sizeRequired: Size!, $sizeList: [Size!]!, $sizeSparse: [Size], $filterPlain: Filter, $filterRequired: Filter!, $filterList: [Filter!]!, $filterSparse: [Filter]) {\n        echo(payload: {stringPlain: $stringPlain, stringRequired: $stringRequired, stringList: $stringList, stringSparse: $stringSparse, intPlain: $intPlain, intRequired: $intRequired, intList: $intList, intSparse: $intSparse, idPlain: $idPlain, idRequired: $idRequired, idList: $idList, idSparse: $idSparse, sizePlain: $sizePlain, sizeRequired: $sizeRequired, sizeList: $sizeList, sizeSparse: $sizeSparse, filterPlain: $filterPlain, filterRequired: $filterRequired, filterList: $filterList, filterSparse: $filterSparse}, stringPlain: $stringPlain, stringRequired: $stringRequired, stringList: $stringList, stringSparse: $stringSparse, intPlain: $intPlain, intRequired: $intRequired, intList: $intList, intSparse: $intSparse, idPlain: $idPlain, idRequired: $idRequired, idList: $idList, idSparse: $idSparse, sizePlain: $sizePlain, sizeRequired: $sizeRequired, sizeList: $sizeList, sizeSparse: $sizeSparse, filterPlain: $filterPlain, filterRequired: $filterRequired, filterList: $filterList, filterSparse: $filterSparse) {\n            seen\n            size\n            sizes\n        }\n    }\n    ': EveryCellQuery,
+    '\n    query Defaults {\n        labelled { seen size }\n    }\n    ': DefaultsQuery,
+    '\n    fragment SizeParts on Echo {\n        seen\n        tagged(size: $frag_size, term: $frag_term)\n    }\n    ': lambda: SizePartsFragment(),
+    '\n    query Slotted($payload: Payload!) {\n        echo(payload: $payload) @slot { __typename }\n    }\n    ': SlottedQuery,
 }
 
 

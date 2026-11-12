@@ -62,25 +62,25 @@ class GQLSlotModel[TOffered](GQLOpenModel, slots.GQLSlotNode[TOffered]):
     pass
 
 
-class WatchAttachmentResultAttachmentChangedAttachmentSlotImageAttachment[TSlotAttachment = Never](GQLSlotModel[TSlotAttachment]):
+class WatchAttachmentSubscriptionResultAttachmentChangedAttachmentSlotImageAttachment[TSlotAttachment = Never](GQLSlotModel[TSlotAttachment]):
     slot_name__: ClassVar[str] = "attachment"
     typename__: Annotated[Literal["ImageAttachment"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
 
 
-class WatchAttachmentResultAttachmentChangedAttachmentSlotLinkAttachment[TSlotAttachment = Never](GQLSlotModel[TSlotAttachment]):
+class WatchAttachmentSubscriptionResultAttachmentChangedAttachmentSlotLinkAttachment[TSlotAttachment = Never](GQLSlotModel[TSlotAttachment]):
     slot_name__: ClassVar[str] = "attachment"
     typename__: Annotated[Literal["LinkAttachment"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
 
 
-type WatchAttachmentResultAttachmentChangedAttachmentSlot[TSlotAttachment] = Annotated[WatchAttachmentResultAttachmentChangedAttachmentSlotImageAttachment[TSlotAttachment] | WatchAttachmentResultAttachmentChangedAttachmentSlotLinkAttachment[TSlotAttachment], pydantic.Field(discriminator="typename__")]
+type Attachment[TSlotAttachment] = Annotated[WatchAttachmentSubscriptionResultAttachmentChangedAttachmentSlotImageAttachment[TSlotAttachment] | WatchAttachmentSubscriptionResultAttachmentChangedAttachmentSlotLinkAttachment[TSlotAttachment], pydantic.Field(discriminator="typename__")]
 
 
 class Post[TSlotAttachment = Never](GQLModel):
     id: builtins.str
-    attachment: WatchAttachmentResultAttachmentChangedAttachmentSlot[TSlotAttachment] | None
+    attachment: Attachment[TSlotAttachment] | None
 
 
-class WatchAttachmentResult[TSlotAttachment = Never](GQLModel):
+class WatchAttachmentSubscriptionResult[TSlotAttachment = Never](GQLModel):
     attachment_changed: Post[TSlotAttachment]
 
 
@@ -111,22 +111,22 @@ class OnImageAttachment(slots.GQLBindableFragment[TModel, TReads], ABC):
 
 
 @final
-class ImageUrl(OnImageAttachment[ImageUrlData, "ImageUrl"]):
+class ImageUrlFragment(OnImageAttachment[ImageUrlData, "ImageUrlFragment"]):
     adapter__: ClassVar[pydantic.TypeAdapter[ImageUrlData]] = pydantic.TypeAdapter(ImageUrlData)
 
     @override
     def __init__(self) -> None:
         super().__init__(
             fragment_name='ImageUrl',
-            definition_type=ImageUrl,
+            definition_type=ImageUrlFragment,
             adapter=self.adapter__,
         )
 
 
-class WatchAttachmentBound[TResult: pydantic.BaseModel](runtime.GQLBoundOperation):
+class WatchAttachmentSubscriptionBound[TResult: pydantic.BaseModel](runtime.GQLBoundOperation):
     def execute(self, *, id: builtins.str) -> AbstractAsyncContextManager[AsyncGenerator[TResult]]:
         return _client.subscribe(
-            typing.cast("type[TResult]", WatchAttachmentResult),
+            typing.cast("type[TResult]", WatchAttachmentSubscriptionResult),
             self.exec_source,
             variables={"id": id, **self.fragment_args},
             headers=self.headers,
@@ -134,37 +134,37 @@ class WatchAttachmentBound[TResult: pydantic.BaseModel](runtime.GQLBoundOperatio
         )
 
 
-class WatchAttachment(runtime.GQLTemplate):
+class WatchAttachmentSubscription(runtime.GQLTemplate):
     _binding_specs: ClassVar[dict[slots.BindingKey, runtime.BoundSpec]] = {
         # See: queries.py:11
         (): ('subscription WatchAttachment($id: ID!) {\n  attachmentChanged(id: $id) {\n    id\n    attachment {\n      __typename\n    }\n  }\n}', {"attachment": ()}),
         # See: queries.py:11, queries.py:3
-        (('attachment', (ImageUrl,)),): ('subscription WatchAttachment($id: ID!) {\n  attachmentChanged(id: $id) {\n    id\n    attachment {\n      __typename\n      ...ImageUrl\n    }\n  }\n}\n\nfragment ImageUrl on ImageAttachment {\n  url\n}', {"attachment": ((ImageUrl, frozenset({'ImageAttachment'})),)}),
+        (('attachment', (ImageUrlFragment,)),): ('subscription WatchAttachment($id: ID!) {\n  attachmentChanged(id: $id) {\n    id\n    attachment {\n      __typename\n      ...ImageUrl\n    }\n  }\n}\n\nfragment ImageUrl on ImageAttachment {\n  url\n}', {"attachment": ((ImageUrlFragment, frozenset({'ImageAttachment'})),)}),
     }
 
     @overload
-    def bind(self, *, attachment: Sequence[Never] = ()) -> WatchAttachmentBound[WatchAttachmentResult[Never]]: ...
+    def bind(self, *, attachment: Sequence[Never] = ()) -> WatchAttachmentSubscriptionBound[WatchAttachmentSubscriptionResult[Never]]: ...
     @overload
-    def bind[TModelAttachment: pydantic.BaseModel, TReadsAttachment](self, *, attachment: OnImageAttachment[TModelAttachment, TReadsAttachment]) -> WatchAttachmentBound[WatchAttachmentResult[OnImageAttachment[TModelAttachment, TReadsAttachment] | TReadsAttachment]]: ...
+    def bind[TModelAttachment: pydantic.BaseModel, TReadsAttachment](self, *, attachment: OnImageAttachment[TModelAttachment, TReadsAttachment]) -> WatchAttachmentSubscriptionBound[WatchAttachmentSubscriptionResult[OnImageAttachment[TModelAttachment, TReadsAttachment] | TReadsAttachment]]: ...
     def bind(self, *, attachment: slots.GQLBindableFragment[pydantic.BaseModel, Any] | Sequence[slots.GQLBindableFragment[pydantic.BaseModel, Any]] = ()) -> runtime.GQLBoundOperation:
         if slots.binding_key({'attachment': attachment}) not in self._binding_specs:
-            raise LookupError("unknown bind combination for WatchAttachment; single-fragment and empty combinations are generated from the schema, so this is a tuple combination no call site writes literally - write it, then regenerate the module. A call whose template is an expression the scan cannot follow is never read either: those are listed, with the reason, in the debug run's ignored_binds.json")
-        return WatchAttachmentBound[WatchAttachmentResult].bound__(
+            raise LookupError("unknown bind combination for WatchAttachmentSubscription; single-fragment and empty combinations are generated from the schema, so this is a tuple combination no call site writes literally - write it, then regenerate the module. A call whose template is an expression the scan cannot follow is never read either: those are listed, with the reason, in the debug run's ignored_binds.json")
+        return WatchAttachmentSubscriptionBound[WatchAttachmentSubscriptionResult].bound__(
             self._binding_specs[slots.binding_key({'attachment': attachment})], {'attachment': slots.as_bindable_fragments(attachment)},
         )
 
 
 @overload
-def api_gql(stmt: Literal['\n    fragment ImageUrl on ImageAttachment {\n        url\n    }\n    ']) -> ImageUrl: ...
+def api_gql(stmt: Literal['\n    fragment ImageUrl on ImageAttachment {\n        url\n    }\n    ']) -> ImageUrlFragment: ...
 @overload
-def api_gql(stmt: Literal['\n    subscription WatchAttachment($id: ID!) {\n        attachmentChanged(id: $id) {\n            id\n            attachment @slot { __typename }\n        }\n    }\n    ']) -> WatchAttachment: ...
+def api_gql(stmt: Literal['\n    subscription WatchAttachment($id: ID!) {\n        attachmentChanged(id: $id) {\n            id\n            attachment @slot { __typename }\n        }\n    }\n    ']) -> WatchAttachmentSubscription: ...
 @overload
 def api_gql(stmt: str) -> runtime.GQLOperation | slots.GQLFragment[pydantic.BaseModel, Any] | runtime.GQLTemplate: ...
 
 
 _statement_factories: dict[str, Callable[[], runtime.GQLOperation | slots.GQLFragment[pydantic.BaseModel, Any] | runtime.GQLTemplate]] = {
-    '\n    fragment ImageUrl on ImageAttachment {\n        url\n    }\n    ': lambda: ImageUrl(),
-    '\n    subscription WatchAttachment($id: ID!) {\n        attachmentChanged(id: $id) {\n            id\n            attachment @slot { __typename }\n        }\n    }\n    ': WatchAttachment,
+    '\n    fragment ImageUrl on ImageAttachment {\n        url\n    }\n    ': lambda: ImageUrlFragment(),
+    '\n    subscription WatchAttachment($id: ID!) {\n        attachmentChanged(id: $id) {\n            id\n            attachment @slot { __typename }\n        }\n    }\n    ': WatchAttachmentSubscription,
 }
 
 

@@ -55,19 +55,19 @@ class GQLModel(pydantic.BaseModel):
     )
 
 
-class DirectResult(GQLModel):
+class DirectQueryResult(GQLModel):
     direct: bool
 
 
-class InInputResult(GQLModel):
+class InInputQueryResult(GQLModel):
     in_input: bool
 
 
-class InListResult(GQLModel):
+class InListQueryResult(GQLModel):
     in_list: bool
 
 
-class InMappingResult(GQLModel):
+class InMappingQueryResult(GQLModel):
     in_mapping: bool
 
 
@@ -77,44 +77,44 @@ class Vault(GQLModel):
     number: tests.corpus.secrets.SecretInt | None = None
 
 
-class Direct(runtime.GQLOperation):
+class DirectQuery(runtime.GQLOperation):
     # See: queries.py:3
-    async def execute(self, *, string: pydantic.SecretStr | None, blob: pydantic.SecretBytes | None, number: tests.corpus.secrets.SecretInt | None) -> DirectResult:
+    async def execute(self, *, string: pydantic.SecretStr | None, blob: pydantic.SecretBytes | None, number: tests.corpus.secrets.SecretInt | None) -> DirectQueryResult:
         return await _client.query(
-            DirectResult,
+            DirectQueryResult,
             'query Direct($string: SecretString, $blob: SecretBlob, $number: SecretNumber) {\n  direct(string: $string, blob: $blob, number: $number)\n}',
             variables={"string": string, "blob": blob, "number": number},
             headers=self.headers,
         )
 
 
-class InInput(runtime.GQLOperation):
+class InInputQuery(runtime.GQLOperation):
     # See: queries.py:11
-    async def execute(self, *, vault: Vault) -> InInputResult:
+    async def execute(self, *, vault: Vault) -> InInputQueryResult:
         return await _client.query(
-            InInputResult,
+            InInputQueryResult,
             'query InInput($vault: Vault!) {\n  inInput(vault: $vault)\n}',
             variables={"vault": vault},
             headers=self.headers,
         )
 
 
-class InList(runtime.GQLOperation):
+class InListQuery(runtime.GQLOperation):
     # See: queries.py:19
-    async def execute(self, *, strings: list[pydantic.SecretStr] | None, blobs: list[pydantic.SecretBytes] | None, numbers: list[tests.corpus.secrets.SecretInt] | None) -> InListResult:
+    async def execute(self, *, strings: list[pydantic.SecretStr] | None, blobs: list[pydantic.SecretBytes] | None, numbers: list[tests.corpus.secrets.SecretInt] | None) -> InListQueryResult:
         return await _client.query(
-            InListResult,
+            InListQueryResult,
             'query InList($strings: [SecretString!], $blobs: [SecretBlob!], $numbers: [SecretNumber!]) {\n  inList(strings: $strings, blobs: $blobs, numbers: $numbers)\n}',
             variables={"strings": strings, "blobs": blobs, "numbers": numbers},
             headers=self.headers,
         )
 
 
-class InMapping(runtime.GQLOperation):
+class InMappingQuery(runtime.GQLOperation):
     # See: queries.py:27
-    async def execute(self, *, bag: builtins.object) -> InMappingResult:
+    async def execute(self, *, bag: builtins.object) -> InMappingQueryResult:
         return await _client.query(
-            InMappingResult,
+            InMappingQueryResult,
             'query InMapping($bag: JSON!) {\n  inMapping(bag: $bag)\n}',
             variables={"bag": bag},
             headers=self.headers,
@@ -122,22 +122,22 @@ class InMapping(runtime.GQLOperation):
 
 
 @overload
-def api_gql(stmt: Literal['\n    query Direct($string: SecretString, $blob: SecretBlob, $number: SecretNumber) {\n        direct(string: $string, blob: $blob, number: $number)\n    }\n    ']) -> Direct: ...
+def api_gql(stmt: Literal['\n    query Direct($string: SecretString, $blob: SecretBlob, $number: SecretNumber) {\n        direct(string: $string, blob: $blob, number: $number)\n    }\n    ']) -> DirectQuery: ...
 @overload
-def api_gql(stmt: Literal['\n    query InInput($vault: Vault!) {\n        inInput(vault: $vault)\n    }\n    ']) -> InInput: ...
+def api_gql(stmt: Literal['\n    query InInput($vault: Vault!) {\n        inInput(vault: $vault)\n    }\n    ']) -> InInputQuery: ...
 @overload
-def api_gql(stmt: Literal['\n    query InList($strings: [SecretString!], $blobs: [SecretBlob!], $numbers: [SecretNumber!]) {\n        inList(strings: $strings, blobs: $blobs, numbers: $numbers)\n    }\n    ']) -> InList: ...
+def api_gql(stmt: Literal['\n    query InList($strings: [SecretString!], $blobs: [SecretBlob!], $numbers: [SecretNumber!]) {\n        inList(strings: $strings, blobs: $blobs, numbers: $numbers)\n    }\n    ']) -> InListQuery: ...
 @overload
-def api_gql(stmt: Literal['\n    query InMapping($bag: JSON!) {\n        inMapping(bag: $bag)\n    }\n    ']) -> InMapping: ...
+def api_gql(stmt: Literal['\n    query InMapping($bag: JSON!) {\n        inMapping(bag: $bag)\n    }\n    ']) -> InMappingQuery: ...
 @overload
 def api_gql(stmt: str) -> runtime.GQLOperation: ...
 
 
 _statement_factories: dict[str, Callable[[], runtime.GQLOperation]] = {
-    '\n    query Direct($string: SecretString, $blob: SecretBlob, $number: SecretNumber) {\n        direct(string: $string, blob: $blob, number: $number)\n    }\n    ': Direct,
-    '\n    query InInput($vault: Vault!) {\n        inInput(vault: $vault)\n    }\n    ': InInput,
-    '\n    query InList($strings: [SecretString!], $blobs: [SecretBlob!], $numbers: [SecretNumber!]) {\n        inList(strings: $strings, blobs: $blobs, numbers: $numbers)\n    }\n    ': InList,
-    '\n    query InMapping($bag: JSON!) {\n        inMapping(bag: $bag)\n    }\n    ': InMapping,
+    '\n    query Direct($string: SecretString, $blob: SecretBlob, $number: SecretNumber) {\n        direct(string: $string, blob: $blob, number: $number)\n    }\n    ': DirectQuery,
+    '\n    query InInput($vault: Vault!) {\n        inInput(vault: $vault)\n    }\n    ': InInputQuery,
+    '\n    query InList($strings: [SecretString!], $blobs: [SecretBlob!], $numbers: [SecretNumber!]) {\n        inList(strings: $strings, blobs: $blobs, numbers: $numbers)\n    }\n    ': InListQuery,
+    '\n    query InMapping($bag: JSON!) {\n        inMapping(bag: $bag)\n    }\n    ': InMappingQuery,
 }
 
 

@@ -64,11 +64,11 @@ class UserWithEmailIdNameRole(GQLModel):
     role: Role
 
 
-class GetUserResult(GQLModel):
+class GetUserQueryResult(GQLModel):
     user: UserWithEmailIdNameRole | None
 
 
-class CreateUserResult(GQLModel):
+class CreateUserMutationResult(GQLModel):
     create_user: UserWithEmailIdNameRole
 
 
@@ -83,7 +83,7 @@ class Post(GQLModel):
     author: UserWithName
 
 
-class PostAddedResult(GQLModel):
+class PostAddedSubscriptionResult(GQLModel):
     post_added: Post
 
 
@@ -93,33 +93,33 @@ class CreateUserInput(GQLModel):
     role: Role
 
 
-class GetUser(runtime.GQLOperation):
+class GetUserQuery(runtime.GQLOperation):
     # See: ch08_sync.py:6
-    def execute(self, *, id: builtins.str) -> GetUserResult:
+    def execute(self, *, id: builtins.str) -> GetUserQueryResult:
         return _client.query(
-            GetUserResult,
+            GetUserQueryResult,
             'query GetUser($id: ID!) {\n  user(id: $id) {\n    id\n    name\n    email\n    role\n  }\n}',
             variables={"id": id},
             headers=self.headers,
         )
 
 
-class CreateUser(runtime.GQLOperation):
+class CreateUserMutation(runtime.GQLOperation):
     # See: ch08_sync.py:22
-    def execute(self, *, input: CreateUserInput) -> CreateUserResult:
+    def execute(self, *, input: CreateUserInput) -> CreateUserMutationResult:
         return _client.query(
-            CreateUserResult,
+            CreateUserMutationResult,
             'mutation CreateUser($input: CreateUserInput!) {\n  createUser(input: $input) {\n    id\n    name\n    email\n    role\n  }\n}',
             variables={"input": input},
             headers=self.headers,
         )
 
 
-class PostAdded(runtime.GQLOperation):
+class PostAddedSubscription(runtime.GQLOperation):
     # See: ch08_sync.py:38
-    def execute(self, *, user_id: builtins.str) -> AbstractContextManager[Generator[PostAddedResult]]:
+    def execute(self, *, user_id: builtins.str) -> AbstractContextManager[Generator[PostAddedSubscriptionResult]]:
         return _client.subscribe(
-            PostAddedResult,
+            PostAddedSubscriptionResult,
             'subscription PostAdded($userId: ID!) {\n  postAdded(userId: $userId) {\n    id\n    title\n    body\n    author {\n      name\n    }\n  }\n}',
             variables={"userId": user_id},
             headers=self.headers,
@@ -127,19 +127,19 @@ class PostAdded(runtime.GQLOperation):
 
 
 @overload
-def api_sync_gql(stmt: Literal['\n        query GetUser($id: ID!) {\n            user(id: $id) {\n                id\n                name\n                email\n                role\n            }\n        }\n    ']) -> GetUser: ...
+def api_sync_gql(stmt: Literal['\n        query GetUser($id: ID!) {\n            user(id: $id) {\n                id\n                name\n                email\n                role\n            }\n        }\n    ']) -> GetUserQuery: ...
 @overload
-def api_sync_gql(stmt: Literal['\n        mutation CreateUser($input: CreateUserInput!) {\n            createUser(input: $input) {\n                id\n                name\n                email\n                role\n            }\n        }\n    ']) -> CreateUser: ...
+def api_sync_gql(stmt: Literal['\n        mutation CreateUser($input: CreateUserInput!) {\n            createUser(input: $input) {\n                id\n                name\n                email\n                role\n            }\n        }\n    ']) -> CreateUserMutation: ...
 @overload
-def api_sync_gql(stmt: Literal['\n        subscription PostAdded($userId: ID!) {\n            postAdded(userId: $userId) {\n                id\n                title\n                body\n                author { name }\n            }\n        }\n    ']) -> PostAdded: ...
+def api_sync_gql(stmt: Literal['\n        subscription PostAdded($userId: ID!) {\n            postAdded(userId: $userId) {\n                id\n                title\n                body\n                author { name }\n            }\n        }\n    ']) -> PostAddedSubscription: ...
 @overload
 def api_sync_gql(stmt: str) -> runtime.GQLOperation: ...
 
 
 _statement_factories: dict[str, Callable[[], runtime.GQLOperation]] = {
-    '\n        query GetUser($id: ID!) {\n            user(id: $id) {\n                id\n                name\n                email\n                role\n            }\n        }\n    ': GetUser,
-    '\n        mutation CreateUser($input: CreateUserInput!) {\n            createUser(input: $input) {\n                id\n                name\n                email\n                role\n            }\n        }\n    ': CreateUser,
-    '\n        subscription PostAdded($userId: ID!) {\n            postAdded(userId: $userId) {\n                id\n                title\n                body\n                author { name }\n            }\n        }\n    ': PostAdded,
+    '\n        query GetUser($id: ID!) {\n            user(id: $id) {\n                id\n                name\n                email\n                role\n            }\n        }\n    ': GetUserQuery,
+    '\n        mutation CreateUser($input: CreateUserInput!) {\n            createUser(input: $input) {\n                id\n                name\n                email\n                role\n            }\n        }\n    ': CreateUserMutation,
+    '\n        subscription PostAdded($userId: ID!) {\n            postAdded(userId: $userId) {\n                id\n                title\n                body\n                author { name }\n            }\n        }\n    ': PostAddedSubscription,
 }
 
 

@@ -1,5 +1,10 @@
+import dataclasses
+import hashlib
+from collections.abc import Callable
+
 import pytest
 
+from iron_gql.codegen.ir import CollectedArtifact
 from iron_gql.codegen.ir import CollectedField
 from iron_gql.codegen.ir import CollectedModel
 from iron_gql.codegen.ir import CollectedModuleIR
@@ -29,8 +34,8 @@ def test_single_form_promoted_to_graphql_type_name():
         graphql_type_name="Foo",
         fields=[_field("a", _scalar("str")), _field("b", _scalar("int"))],
     )
-    rename = build_rename_map([foo], frozenset(), frozenset())
-    assert rename == {"Foo_1": "Foo", "FooWithAB": "Foo"}
+    rename = build_rename_map([foo], frozenset(), {})
+    assert rename == {"Foo_1": "Foo"}
 
 
 def test_same_shape_deduplicates():
@@ -40,7 +45,7 @@ def test_same_shape_deduplicates():
     second = CollectedModel(
         name="Foo_2", graphql_type_name="Foo", fields=list(shape_fields)
     )
-    rename = build_rename_map([first, second], frozenset(), frozenset())
+    rename = build_rename_map([first, second], frozenset(), {})
     # Both collapse to the graphql type name (single variant in type_variants).
     assert rename["Foo_1"] == "Foo"
     assert rename["Foo_2"] == "Foo"
@@ -59,7 +64,7 @@ def test_collision_on_two_forms_separated_by_named_tokens():
         graphql_type_name="Foo",
         fields=[_field("x", NamedRef(name="Beta"))],
     )
-    rename = build_rename_map([first, second], frozenset(), frozenset())
+    rename = build_rename_map([first, second], frozenset(), {})
     assert rename["Foo_1"] == "FooWithX_Alpha"
     assert rename["Foo_2"] == "FooWithX_Beta"
 
@@ -80,25 +85,21 @@ def test_three_forms_all_get_detailed_suffix():
         graphql_type_name="Foo",
         fields=[_field("x", NamedRef(name="Gamma"))],
     )
-    rename = build_rename_map([first, second, third], frozenset(), frozenset())
+    rename = build_rename_map([first, second, third], frozenset(), {})
     assert rename["Foo_1"] == "FooWithX_Alpha"
     assert rename["Foo_2"] == "FooWithX_Beta"
     assert rename["Foo_3"] == "FooWithX_Gamma"
 
 
 def test_single_form_blocked_by_reserved_name_keeps_short_name():
-    # An unrelated artifact already occupies the desired GraphQL type name.
-    # The final promotion step must leave the short form intact.
-    reserved = CollectedUnionAlias(
-        name="Foo",
-        variants=(NamedRef(name="Alpha"), NamedRef(name="Beta")),
-    )
+    # A scaffold name already occupies the desired GraphQL type name: the
+    # shape skips it and keeps its short form.
     foo = CollectedModel(
         name="Foo_1",
         graphql_type_name="Foo",
         fields=[_field("a", _scalar("str"))],
     )
-    rename = build_rename_map([reserved, foo], frozenset(), frozenset())
+    rename = build_rename_map([foo], frozenset({"Foo"}), {})
     assert rename["Foo_1"] == "FooWithA"
     assert "Foo" not in rename.values()
 
@@ -114,7 +115,7 @@ def test_different_graphql_types_are_independent():
         graphql_type_name="Bar",
         fields=[_field("a", _scalar("str"))],
     )
-    rename = build_rename_map([foo, bar], frozenset(), frozenset())
+    rename = build_rename_map([foo, bar], frozenset(), {})
     assert rename["Foo_1"] == "Foo"
     assert rename["Bar_1"] == "Bar"
 
@@ -132,31 +133,6 @@ def _pkg(artifacts: list[CollectedModel | CollectedUnionAlias]) -> CollectedModu
         open_model_names=frozenset(),
         discovered_texts=(),
     )
-
-
-def test_two_selections_deriving_one_name_are_diagnosed(
-    test_project: ProjectBuilder,
-):
-    # The detailed name concatenates field names and type tokens with nothing
-    # between them, and `field_name_to_pascal` strips underscores -- so
-    # `{a_b, c}` and `{a, b_c}` both spell `ABC`, and two different shapes of
-    # `T` ask for one class. Ordinary schema, ordinary queries: the generator
-    # cannot name them apart, and that is the user's to hear rather than a
-    # crash marked unreachable.
-    test_project.prepare(
-        schema="""
-        type T { a_b: String, c: String, a: String, b_c: String }
-        type Query { t: T }
-        """,
-        queries="""
-        from sample_app.gql.api import api_gql
-
-        q1 = api_gql("query Q1 { t { a_b c } }")
-        q2 = api_gql("query Q2 { t { a b_c } }")
-        """,
-    )
-    with pytest.raises(GraphQLGenerationError, match="derive the same generated name"):
-        _ = test_project.generate()
 
 
 def test_apply_rename_collapses_identical_shapes():
@@ -186,141 +162,135 @@ def test_rename_map_is_order_independent_for_same_input_set():
         graphql_type_name="Foo",
         fields=[_field("x", NamedRef(name="Beta"))],
     )
-    first = build_rename_map([a, b], frozenset(), frozenset())
-    second = build_rename_map([b, a], frozenset(), frozenset())
+    first = build_rename_map([a, b], frozenset(), {})
+    second = build_rename_map([b, a], frozenset(), {})
     assert first == second
 
 
-def test_generated_name_colliding_with_a_fixed_name_is_diagnosed(
-    test_project: ProjectBuilder,
-):
-    # The residual the two collapse tests below cannot cover: both phases yield
-    # to every fixed name, but the *detailed* Phase A name is assigned before
-    # them and answers to nothing, so a fixed artifact spelled exactly like one
-    # is a real collision and the only honest answer is a diagnosis.
-    #
-    # Reached with an operation named after the model its own selection
-    # generates: `Post`, field `id`, and the tokens of that field's
-    # rendered type (`PostWithId_Opt_String`). The
-    # aliased `id: child` is what keeps the collapse phases off that model: two
-    # selections of `Post` then share the field name `id` with different
-    # shapes, so neither the short form nor the bare type name is taken.
-    test_project.prepare(
-        schema="""
-        type Query {
-            post: Post
-        }
-
-        type Post {
-            id: String
-            child: Post
-        }
-        """,
-        queries="""
-        from sample_app.gql.api import api_gql
-
-        q = api_gql("query PostWithId_Opt_String { post { id: child { id } } }")
-        """,
-    )
-    with pytest.raises(GraphQLGenerationError) as exc_info:
-        test_project.generate()
-
-    [error] = exc_info.value.errors
-    assert "Generated model name(s) 'PostWithId_Opt_String' collide" in error
-    assert "alias the colliding field or rename the fragment" in error
-
-
-def test_short_name_collapse_yields_to_a_slot_model_name(
-    test_project: ProjectBuilder,
-):
-    # `withItem @slot` fixes QResultWithItemSlot; the model for `thing` (type
-    # QResult, field itemSlot) would collapse to the same short name. The
-    # collapse must yield to the fixed name instead of crashing the rename
-    # pass with an internal assertion.
-    test_project.prepare(
-        schema="""
-        type Query {
-            withItem: Item
-            thing: QResult
-        }
-
-        type Item {
-            id: ID!
-        }
-
-        type QResult {
-            itemSlot: String
-        }
-        """,
-        queries="""
-        from sample_app.gql.api import api_gql
-
-        q = api_gql(
-            '''
-            query Q {
-                withItem @slot { __typename }
-                thing { itemSlot }
-            }
-            '''
+def _underscore_twins() -> list[CollectedArtifact]:
+    # `{a_b, c}` and `{a, b_c}` of one type: both spell the detailed
+    # candidate below, so both are suffixed.
+    nullable = ScalarRef(expr="str", name_hint="String", nullable=True)
+    return [
+        CollectedModel(
+            name=f"T_{index}",
+            graphql_type_name="T",
+            fields=[_field(name, nullable) for name in names],
         )
-        """,
+        for index, names in enumerate([("a_b", "c"), ("a", "b_c")])
+    ]
+
+
+TWINS_CANDIDATE = "TWithABC_Opt_StringOpt_String"
+
+
+def _rename_twins(reserved: frozenset[str]) -> dict[str, str]:
+    twins = _underscore_twins()
+    names = build_rename_map(twins, reserved, {})
+    assert names == build_rename_map(twins[::-1], reserved, {})
+    return names
+
+
+@dataclasses.dataclass(frozen=True)
+class _StandInHash:
+    digest: str
+
+    def hexdigest(self) -> str:
+        return self.digest
+
+
+def _stand_in_sha256(*, first: str, second: str) -> Callable[[bytes], _StandInHash]:
+    # Replaces SHA-256 itself: the twins are told apart by their first field.
+    def sha256(data: bytes) -> _StandInHash:
+        return _StandInHash(first if b'"a_b"' in data else second)
+
+    return sha256
+
+
+def test_shared_digest_prefix_lengthens_every_claimant(monkeypatch: pytest.MonkeyPatch):
+    # A contested name is suffixed with a prefix of the shape's own digest.
+    # When two shapes share that prefix, neither keeps it -- both move to a
+    # longer one -- and the answer does not depend on input order.
+    sha256 = _stand_in_sha256(first="0" * 8 + "1" * 56, second="0" * 8 + "2" * 56)
+    monkeypatch.setattr(hashlib, "sha256", sha256)
+    assert set(_rename_twins(frozenset()).values()) == {
+        f"{TWINS_CANDIDATE}_{'0' * 8}{'1' * 8}",
+        f"{TWINS_CANDIDATE}_{'0' * 8}{'2' * 8}",
+    }
+
+
+def test_suffix_taken_by_a_fixed_name_lengthens():
+    names = _rename_twins(frozenset())
+    assert all(len(name) == len(TWINS_CANDIDATE) + 9 for name in names.values())
+    taken = names["T_0"]
+    lengthened = _rename_twins(frozenset({taken}))
+    assert lengthened["T_1"] == names["T_1"]
+    assert lengthened["T_0"].startswith(taken)
+    assert len(lengthened["T_0"]) == len(taken) + 8
+
+
+def _taken_suffixes(count: int) -> frozenset[str]:
+    # The first `count` names of twin `T_0`, each taken as a fixed name.
+    taken: frozenset[str] = frozenset()
+    for _ in range(count):
+        taken |= {_rename_twins(taken)["T_0"]}
+    return taken
+
+
+def test_every_name_of_a_shape_taken_is_diagnosed():
+    # Fixed names are valid input -- an operation may be named anything. A
+    # shape whose every suffix is taken gets no name rather than a count past
+    # them, which a name spelled like the count could later take over.
+    taken = _taken_suffixes(4)
+    assert max(len(name) for name in taken) == len(TWINS_CANDIDATE) + 65
+    with pytest.raises(GraphQLGenerationError) as exc_info:
+        _ = _rename_twins(taken)
+    [error] = exc_info.value.errors
+    assert error.startswith(
+        f"No name is left for the selection named '{TWINS_CANDIDATE}'"
     )
-    test_project.generate()
-    test_project.import_api()
+    assert "(taken)" in error
+    assert "rename the operation, fragment or GraphQL type" in error
 
 
-def test_short_name_collapse_yields_to_an_on_type_base_name(
-    test_project: ProjectBuilder,
-):
-    # `fragment FragOnPost on Post` earns type `Post` an `OnPost` base (design's
-    # §4/§6) once some template exists for `bind` to spread it into. A plain
-    # query on a type literally named `OnPost` would otherwise collapse to
-    # that same bare name (`_collapse_single_variant_types`) -- the base's
-    # name has to be claimed as fixed for the collapse to yield instead of
-    # generating two classes under one Python name.
-    test_project.prepare(
-        schema="""
-        type Query {
-            post: Post
-            onPost: OnPost
-        }
-
-        type Post {
-            id: ID!
-        }
-
-        type OnPost {
-            id: ID!
-        }
-        """,
-        queries="""
-        from sample_app.gql.api import api_gql
-
-        frag = api_gql("fragment FragOnPost on Post { id }")
-        tmpl = api_gql("query Tmpl { post @slot { __typename } }")
-        q = api_gql("query QOnPost { onPost { id } }")
-        """,
+def test_type_spelled_like_the_last_suffix_is_diagnosed():
+    # A GraphQL type spelled like a shape's full-digest name contests it, so
+    # the shape cannot take it either.
+    taken = _taken_suffixes(3)
+    full = _rename_twins(taken)["T_0"]
+    spelled_alike = CollectedModel(
+        name="Raw",
+        graphql_type_name=full,
+        fields=[_field("id", _scalar("str"))],
     )
-    test_project.generate()
-    generated = (test_project.root / "sample_app/gql/api.py").read_text()
-    assert "class OnPostWithId(" in generated
-    assert "class OnPost(slots.GQLBindableFragment[TModel, TReads], ABC):" in generated
+    with pytest.raises(GraphQLGenerationError, match="also spelled elsewhere"):
+        _ = build_rename_map([*_underscore_twins(), spelled_alike], taken, {})
+
+
+def test_shapes_with_one_full_digest_are_diagnosed(monkeypatch: pytest.MonkeyPatch):
+    # Equal over the full digest, two shapes have no suffix to tell them
+    # apart, and neither is handed a name by order.
+    sha256 = _stand_in_sha256(first="0" * 64, second="0" * 64)
+    monkeypatch.setattr(hashlib, "sha256", sha256)
+    with pytest.raises(GraphQLGenerationError) as exc_info:
+        _ = _rename_twins(frozenset())
+    assert len(exc_info.value.errors) == 2
 
 
 def test_fragment_named_like_a_base_is_diagnosed(test_project: ProjectBuilder):
-    # `fragment FragOnPost on Post` earns `Post` an `OnPost` base; a second,
-    # unrelated fragment spelled `OnPost` (on a different type) claims the
-    # exact same Python name for its own class -- an ordinary two-fixed-names
-    # collision, not a rename-map one, so it must be diagnosed even though
-    # neither side is ever renamed.
+    # `fragment FragOnPost on PostFragment` earns `PostFragment` an
+    # `OnPostFragment` base; a second, unrelated fragment spelled `OnPost` (on
+    # a different type) claims the exact same Python name for its own class
+    # -- an ordinary two-fixed-names collision, not a rename-map one, so it
+    # must be diagnosed even though neither side is ever renamed.
     test_project.prepare(
         schema="""
         type Query {
-            post: Post
+            post: PostFragment
             bar: Bar
         }
 
-        type Post {
+        type PostFragment {
             id: ID!
         }
 
@@ -331,7 +301,7 @@ def test_fragment_named_like_a_base_is_diagnosed(test_project: ProjectBuilder):
         queries="""
         from sample_app.gql.api import api_gql
 
-        base_frag = api_gql("fragment FragOnPost on Post { id }")
+        base_frag = api_gql("fragment FragOnPost on PostFragment { id }")
         clashing_frag = api_gql("fragment OnPost on Bar { id }")
         tmpl = api_gql("query Tmpl { post @slot { __typename } }")
         """,
@@ -339,7 +309,7 @@ def test_fragment_named_like_a_base_is_diagnosed(test_project: ProjectBuilder):
     with pytest.raises(GraphQLGenerationError) as exc_info:
         test_project.generate()
     message = str(exc_info.value)
-    assert "OnPost" in message
+    assert "OnPostFragment" in message
     assert "on-type base" in message
     assert "fragment 'OnPost'" in message
 
@@ -347,21 +317,21 @@ def test_fragment_named_like_a_base_is_diagnosed(test_project: ProjectBuilder):
 def test_private_applied_name_does_not_force_public_model_rename(
     test_project: ProjectBuilder,
 ):
-    # Factory `Foo` получает private applied class `_FooApplied`. Поэтому model
-    # GraphQL type `FooApplied` сохраняет короткое публичное имя: два namespace
-    # больше не конкурируют за `FooApplied`.
+    # Factory `Foo` gets the private applied class `_FooFragmentApplied`. So the
+    # model of GraphQL type `FooFragmentApplied` keeps its short public name:
+    # the two namespaces no longer compete for `FooFragmentApplied`.
     test_project.prepare(
         schema="""
         type Query {
             bar: Bar
-            fooApplied: FooApplied
+            fooApplied: FooFragmentApplied
         }
 
         type Bar {
             id(size: Int): ID!
         }
 
-        type FooApplied {
+        type FooFragmentApplied {
             id: ID!
         }
         """,
@@ -375,8 +345,10 @@ def test_private_applied_name_does_not_force_public_model_rename(
     )
     test_project.generate()
     generated = (test_project.root / "sample_app/gql/api.py").read_text()
-    assert "class FooApplied(" in generated
-    assert 'class _FooApplied(OnBar[FooData, "_FooApplied"]):' in generated
+    assert "class FooFragmentApplied(" in generated
+    assert (
+        'class _FooFragmentApplied(OnBar[FooData, "_FooFragmentApplied"]):' in generated
+    )
 
 
 def test_fragment_named_like_another_slots_bind_type_param_is_diagnosed(
@@ -385,15 +357,16 @@ def test_fragment_named_like_another_slots_bind_type_param_is_diagnosed(
     # `bind()`'s own PEP 695 type parameters (`TModel{Slot}`/`TReads{Slot}`,
     # render.slot_type_param_names) are a namespace `_signature_claims`
     # otherwise only checks slots against each other for -- a fragment never
-    # entered that check. A fragment literally named `TModelPost` here is
-    # spread-compatible with slot `attachment`, not `post`, and a `.bind(...)`
-    # naming two fragments for `attachment` renders a literal-tuple overload
-    # (`tuple[FragB, TModelPost] | ...`) that also fills `post` from its base
-    # form, declaring a `TModelPost` type parameter of its own. PEP 695 scopes
-    # a generic function's type parameters over its whole signature, so that
-    # overload would silently read `TModelPost` in the tuple form as the
-    # type variable instead of the fragment -- caught here rather than shipped
-    # as a wrong annotation nothing flags.
+    # entered that check. A fragment named `TModelPost` -- its class
+    # `TModelPostFragment` -- is spread-compatible with slot `attachment`, not
+    # `postFragment`, and a `.bind(...)` naming two fragments for `attachment`
+    # renders a literal-tuple overload (`tuple[FragBFragment,
+    # TModelPostFragment] | ...`) that also fills `postFragment` from its base
+    # form, declaring a `TModelPostFragment` type parameter of its own. PEP
+    # 695 scopes a generic function's type parameters over its whole
+    # signature, so that overload would silently read `TModelPostFragment` in
+    # the tuple form as the type variable instead of the fragment -- caught
+    # here rather than shipped as a wrong annotation nothing flags.
     test_project.prepare(
         schema="""
         type Query {
@@ -429,33 +402,33 @@ def test_fragment_named_like_another_slots_bind_type_param_is_diagnosed(
             '''
             query GetThing {
                 thing {
-                    post @slot { __typename }
+                    postFragment: post @slot { __typename }
                     attachment @slot { __typename }
                 }
             }
             '''
         )
-        bound = tmpl.bind(post=frag_post, attachment=(frag_a, frag_b))
+        bound = tmpl.bind(post_fragment=frag_post, attachment=(frag_a, frag_b))
         """,
     )
     with pytest.raises(GraphQLGenerationError) as exc_info:
         test_project.generate()
     message = str(exc_info.value)
-    assert "'TModelPost'" in message
+    assert "'TModelPostFragment'" in message
     assert "the type parameters of overload" in message
-    assert "of template 'GetThing'" in message
-    assert "the bind() type parameter of slot 'post'" in message
+    assert "of template 'GetThingQuery'" in message
+    assert "the bind() type parameter of slot 'postFragment'" in message
     assert "fragment 'TModelPost'" in message
 
 
 def test_private_applied_factory_name_does_not_collide_with_bind_type_param(
     test_project: ProjectBuilder,
 ):
-    # Slot `postApplied` создаёт type parameter `TModelPostApplied`, а factory
-    # fragment `TModelPost` создаёт private application class
-    # `_TModelPostApplied`. Разные имена
-    # должны сосуществовать: private applied type больше не отнимает публичный
-    # namespace у bind signature.
+    # Slot `postFragmentApplied` creates the type parameter
+    # `TModelPostFragmentApplied`, and the factory fragment `TModelPost` creates
+    # the private application class `_TModelPostFragmentApplied`. The different
+    # names must coexist: the private applied type no longer takes the public
+    # namespace away from the bind signature.
     test_project.prepare(
         schema="""
         type Query {
@@ -486,7 +459,7 @@ def test_private_applied_factory_name_does_not_collide_with_bind_type_param(
             '''
             query GetThing {
                 thing {
-                    postApplied: post @slot { __typename }
+                    postFragmentApplied: post @slot { __typename }
                     tag @slot { __typename }
                 }
             }
@@ -497,19 +470,20 @@ def test_private_applied_factory_name_does_not_collide_with_bind_type_param(
     )
     test_project.generate()
     generated = (test_project.root / "sample_app/gql/api.py").read_text()
-    assert "_TModelPostApplied" in generated
-    assert "TModelPostApplied" in generated
+    assert "_TModelPostFragmentApplied" in generated
+    assert "TModelPostFragmentApplied" in generated
 
 
 def test_fragment_named_like_its_own_slots_bind_type_param_is_accepted(
     test_project: ProjectBuilder,
 ):
     # The same coincidence as the sibling test above, but the fragment is
-    # compatible with slot `post` alone -- the very slot whose type
-    # parameters share its name -- not with any other slot. A single slot
-    # picks exactly one form per overload (`render.bind_signatures`' Cartesian
-    # product), so `post`'s own base form (declaring `TModelPost`) and a
-    # tuple form naming this fragment for `post` itself never coexist in one
+    # compatible with slot `postFragment` alone -- the very slot whose type
+    # parameters share its class name -- not with any other slot. A single
+    # slot picks exactly one form per overload (`render.bind_signatures`'
+    # Cartesian product), so the slot's own base form (declaring
+    # `TModelPostFragment`) and a tuple form naming this fragment for the
+    # slot itself never coexist in one
     # signature: nothing is actually shadowed, and this must generate.
     test_project.prepare(
         schema="""
@@ -545,92 +519,14 @@ def test_fragment_named_like_its_own_slots_bind_type_param_is_accepted(
             '''
             query GetThing {
                 thing {
-                    post @slot { __typename }
+                    postFragment: post @slot { __typename }
                     attachment @slot { __typename }
                 }
             }
             '''
         )
-        bound = tmpl.bind(post=(frag_post_a, frag_post_b))
+        bound = tmpl.bind(post_fragment=(frag_post_a, frag_post_b))
         """,
-    )
-    test_project.generate()
-
-
-TUPLE_FILL_SCHEMA = """
-type Query {
-    thing: Thing
-}
-
-type Thing {
-    attachment: Attachment
-}
-
-union Attachment = A | B
-
-type A {
-    id: ID!
-}
-
-type B {
-    id: ID!
-}
-"""
-
-
-def _tuple_fill_queries(fragment: str) -> str:
-    return f"""
-    from sample_app.gql.api import api_gql
-
-    frag_a = api_gql("fragment {fragment} on A {{ id }}")
-    frag_b = api_gql("fragment FragB on B {{ id }}")
-    tmpl = api_gql(
-        '''
-        query GetThing {{
-            thing {{
-                attachment @slot {{ __typename }}
-            }}
-        }}
-        '''
-    )
-    bound = tmpl.bind(attachment=(frag_a, frag_b))
-    """
-
-
-def test_fragment_named_like_a_tuple_positions_type_param_is_diagnosed(
-    test_project: ProjectBuilder,
-):
-    # A literal tuple form declares one constrained parameter per position
-    # (`render.slot_tuple_param_names`) and spells the fragment classes inside
-    # those constraints -- so a fragment named `TFillAttachment1` is read as
-    # the position's own type variable there, and the constraint meant to name
-    # it names nothing. The base form's twin of this is
-    # `test_fragment_named_like_another_slots_bind_type_param_is_diagnosed`;
-    # the two parameter sets are separate namespaces and a claim on one is no
-    # claim on the other.
-    test_project.prepare(
-        schema=TUPLE_FILL_SCHEMA, queries=_tuple_fill_queries("TFillAttachment1")
-    )
-    with pytest.raises(GraphQLGenerationError) as exc_info:
-        test_project.generate()
-    message = str(exc_info.value)
-    assert "'TFillAttachment1'" in message
-    assert "the type parameters of overload" in message
-    assert "of template 'GetThing'" in message
-    assert "position 1 of slot 'attachment'" in message
-    assert "fragment 'TFillAttachment1'" in message
-
-
-def test_fragment_named_past_the_tuples_own_arity_is_accepted(
-    test_project: ProjectBuilder,
-):
-    # The claim is no wider than the forms: this slot's tuples are written
-    # with two fragments, so there is no third position and no
-    # `TFillAttachment3` for anything to collide with. A claim covering
-    # positions no form declares would refuse a legal GraphQL name for
-    # nothing.
-    test_project.prepare(
-        schema=TUPLE_FILL_SCHEMA, queries=_tuple_fill_queries("TFillAttachment3")
     )
     test_project.generate()
 
@@ -638,9 +534,9 @@ def test_fragment_named_past_the_tuples_own_arity_is_accepted(
 def test_tuple_overloads_of_different_arities_have_distinct_namespaces(
     test_project: ProjectBuilder,
 ):
-    # Каждая arity рендерится отдельным overload. Поэтому повторное использование
-    # positional type parameter names в arity-three легально:
-    # TFillAttachment1/2 не делят namespace Python с overload arity-two.
+    # Each arity is rendered as a separate overload. So reusing positional type
+    # parameter names in arity-three is legal: TFillAttachment1/2 do not share a
+    # Python namespace with the arity-two overload.
     test_project.prepare(
         schema="""
         type Query {
@@ -689,8 +585,13 @@ def test_tuple_overloads_of_different_arities_have_distinct_namespaces(
 @pytest.mark.parametrize(
     ("template", "slot", "collision", "claimed_by"),
     [
-        ("TModelX", "xResult", "TModelXResult", "the result class of template"),
-        ("TReadsX", "xBound", "TReadsXBound", "the bound base of template"),
+        (
+            "TModelX",
+            "xQueryResult",
+            "TModelXQueryResult",
+            "the result class of template",
+        ),
+        ("TReadsX", "xQueryBound", "TReadsXQueryBound", "the bound base of template"),
     ],
 )
 def test_a_slot_completing_the_templates_own_class_name_is_diagnosed(
@@ -752,42 +653,5 @@ def test_a_slot_completing_the_templates_own_class_name_is_diagnosed(
     message = str(exc_info.value)
     assert f"'{collision}'" in message
     assert "the type parameters of overload" in message
-    assert f"of template '{template}'" in message
+    assert f"of template '{template}Query'" in message
     assert f"{claimed_by} '{template}'" in message
-
-
-def test_short_name_collapse_yields_to_a_pinned_fragment_model(
-    test_project: ProjectBuilder,
-):
-    # `fragment TWith` pins TWithData; the model for `thing` (type T, field
-    # data) would collapse to the same short name — the second, slot-free path
-    # to the same crash.
-    test_project.prepare(
-        schema="""
-        type Query {
-            thing: T
-        }
-
-        type T {
-            data: String
-            other: String
-        }
-        """,
-        queries="""
-        from sample_app.gql.api import api_gql
-
-        f = api_gql("fragment TWith on T { other }")
-
-        s = api_gql(
-            '''
-            query S {
-                slotted: thing @slot { __typename }
-            }
-            '''
-        )
-
-        q = api_gql("query Q { thing { data } }")
-        """,
-    )
-    test_project.generate()
-    test_project.import_api()

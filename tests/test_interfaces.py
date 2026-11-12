@@ -1,3 +1,4 @@
+import pydantic
 import pytest
 from graphql import GraphQLResolveInfo
 from pytest_httpserver import HTTPServer
@@ -5,6 +6,7 @@ from pytest_httpserver import HTTPServer
 from iron_gql.codegen import GraphQLGenerationError
 from tests.conftest import ProjectBuilder
 from tests.conftest import generated_package
+from tests.conftest import generated_source
 from tests.conftest import gql_server
 
 generated_package(
@@ -550,7 +552,109 @@ generated_package(
     ''',
 )
 
+generated_package(
+    "interfaces_fallback_literals",
+    schema="""
+    interface Node {
+        id: ID!
+    }
+
+    type Post implements Node {
+        id: ID!
+        title: String!
+    }
+
+    type Comment implements Node {
+        id: ID!
+        body: String!
+    }
+
+    type User implements Node {
+        id: ID!
+    }
+
+    type Query {
+        node(id: ID!): Node
+    }
+    """,
+    queries='''
+    from tests.generated.interfaces_fallback_literals.gql.api import api_gql
+
+    get_post = api_gql(
+        """
+        query GetPost($id: ID!) {
+            node(id: $id) {
+                __typename
+                ... on Post {
+                    title
+                }
+            }
+        }
+        """
+    )
+
+    get_comment = api_gql(
+        """
+        query GetComment($id: ID!) {
+            node(id: $id) {
+                __typename
+                ... on Comment {
+                    body
+                }
+            }
+        }
+        """
+    )
+    ''',
+)
+
+generated_package(
+    "interfaces_union_partial",
+    schema="""
+    union SearchResult = User | Post | Comment
+
+    type User {
+        id: ID!
+        name: String!
+    }
+
+    type Post {
+        id: ID!
+    }
+
+    type Comment {
+        id: ID!
+    }
+
+    type Query {
+        search: SearchResult
+    }
+    """,
+    queries='''
+    from tests.generated.interfaces_union_partial.gql.api import api_gql
+
+    search = api_gql(
+        """
+        query Search {
+            search {
+                __typename
+                ... on User {
+                    name
+                }
+            }
+        }
+        """
+    )
+    ''',
+)
+
 from tests.generated.interfaces_exhaustive import queries as exhaustive_queries
+from tests.generated.interfaces_fallback_literals.gql.api import (
+    NodeWithTypename_ExceptComment,
+)
+from tests.generated.interfaces_fallback_literals.gql.api import (
+    NodeWithTypename_ExceptPost,
+)
 from tests.generated.interfaces_hierarchy import queries as hierarchy_queries
 from tests.generated.interfaces_hierarchy.gql.api import User as HierarchyUser
 from tests.generated.interfaces_list_union import queries as list_union_queries
@@ -583,9 +687,29 @@ from tests.generated.interfaces_union_iface_fragment.gql.api import (
 from tests.generated.interfaces_union_iface_fragment.gql.api import (
     User as UnionIfaceUser,
 )
+from tests.generated.interfaces_union_partial.gql.api import Comment as PartialComment
+from tests.generated.interfaces_union_partial.gql.api import Post as PartialPost
+from tests.generated.interfaces_union_partial.gql.api import (
+    SearchQueryResult as PartialSearchResult,
+)
 from tests.generated.interfaces_union_result import queries as union_result_queries
 from tests.generated.interfaces_with_fragments import queries as with_fragments_queries
 from tests.generated.interfaces_with_fragments.gql.api import User as WithFragmentsUser
+
+
+def test_fallbacks_differing_only_in_their_typename_literal_are_named_apart():
+    # Each query's fallback stands for the `Node` types it did not spell out,
+    # so the two shapes differ only in that `__typename` literal. The name
+    # says which types the fallback excludes; before, both asked for one
+    # class and generation failed.
+    for model, accepted, excluded in (
+        (NodeWithTypename_ExceptPost, "Comment", "Post"),
+        (NodeWithTypename_ExceptComment, "Post", "Comment"),
+    ):
+        assert model.model_validate({"__typename": accepted}).typename__ == accepted
+        assert model.model_validate({"__typename": "User"}).typename__ == "User"
+        with pytest.raises(pydantic.ValidationError):
+            _ = model.model_validate({"__typename": excluded})
 
 
 async def test_union_result_validation(httpserver: HTTPServer):
@@ -1410,3 +1534,15 @@ async def test_interface_exhaustively_covered(httpserver: HTTPServer):
             "id": "post-1",
             "title": "GraphQL 101",
         }
+
+
+def test_union_selection_gives_every_possible_type_its_own_variant():
+    # README "Generated Names": only an interface selection has a fallback
+    # model; a union's possible types left out by `... on X` get variants of
+    # their own.
+    for typename, variant in (("Post", PartialPost), ("Comment", PartialComment)):
+        result = PartialSearchResult.model_validate({
+            "search": {"__typename": typename}
+        })
+        assert type(result.search) is variant
+    assert "Except" not in generated_source("interfaces_union_partial")

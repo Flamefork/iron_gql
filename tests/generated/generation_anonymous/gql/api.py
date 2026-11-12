@@ -54,15 +54,15 @@ class GQLModel(pydantic.BaseModel):
     )
 
 
-class Query97588d2694772639a577fd66f9013e54Result(GQLModel):
+class Anonymous97588d2694772639a577fd66f9013e54QueryResult(GQLModel):
     ping: str | None
 
 
-class Query97588d2694772639a577fd66f9013e54(runtime.GQLOperation):
+class Anonymous97588d2694772639a577fd66f9013e54Query(runtime.GQLOperation):
     # See: queries.py:4
-    async def execute(self) -> Query97588d2694772639a577fd66f9013e54Result:
+    async def execute(self) -> Anonymous97588d2694772639a577fd66f9013e54QueryResult:
         return await _client.query(
-            Query97588d2694772639a577fd66f9013e54Result,
+            Anonymous97588d2694772639a577fd66f9013e54QueryResult,
             '{\n  ping\n}',
             variables={},
             headers=self.headers,
@@ -70,13 +70,13 @@ class Query97588d2694772639a577fd66f9013e54(runtime.GQLOperation):
 
 
 @overload
-def api_gql(stmt: Literal['query { ping }']) -> Query97588d2694772639a577fd66f9013e54: ...
+def api_gql(stmt: Literal['query { ping }']) -> Anonymous97588d2694772639a577fd66f9013e54Query: ...
 @overload
 def api_gql(stmt: str) -> runtime.GQLOperation: ...
 
 
 _statement_factories: dict[str, Callable[[], runtime.GQLOperation]] = {
-    'query { ping }': Query97588d2694772639a577fd66f9013e54,
+    'query { ping }': Anonymous97588d2694772639a577fd66f9013e54Query,
 }
 
 

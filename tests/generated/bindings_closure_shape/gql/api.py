@@ -62,25 +62,25 @@ class GQLSlotModel[TOffered](GQLOpenModel, slots.GQLSlotNode[TOffered]):
     pass
 
 
-class GetAttachmentResultPostAttachmentSlotImageAttachment[TSlotAttachment = Never](GQLSlotModel[TSlotAttachment]):
+class GetAttachmentQueryResultPostAttachmentSlotImageAttachment[TSlotAttachment = Never](GQLSlotModel[TSlotAttachment]):
     slot_name__: ClassVar[str] = "attachment"
     typename__: Annotated[Literal["ImageAttachment"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
 
 
-class GetAttachmentResultPostAttachmentSlotLinkAttachment[TSlotAttachment = Never](GQLSlotModel[TSlotAttachment]):
+class GetAttachmentQueryResultPostAttachmentSlotLinkAttachment[TSlotAttachment = Never](GQLSlotModel[TSlotAttachment]):
     slot_name__: ClassVar[str] = "attachment"
     typename__: Annotated[Literal["LinkAttachment"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
 
 
-type GetAttachmentResultPostAttachmentSlot[TSlotAttachment] = Annotated[GetAttachmentResultPostAttachmentSlotImageAttachment[TSlotAttachment] | GetAttachmentResultPostAttachmentSlotLinkAttachment[TSlotAttachment], pydantic.Field(discriminator="typename__")]
+type Attachment[TSlotAttachment] = Annotated[GetAttachmentQueryResultPostAttachmentSlotImageAttachment[TSlotAttachment] | GetAttachmentQueryResultPostAttachmentSlotLinkAttachment[TSlotAttachment], pydantic.Field(discriminator="typename__")]
 
 
 class Post[TSlotAttachment = Never](GQLModel):
     id: builtins.str
-    attachment: GetAttachmentResultPostAttachmentSlot[TSlotAttachment] | None
+    attachment: Attachment[TSlotAttachment] | None
 
 
-class GetAttachmentResult[TSlotAttachment = Never](GQLModel):
+class GetAttachmentQueryResult[TSlotAttachment = Never](GQLModel):
     post: Post[TSlotAttachment] | None
 
 
@@ -183,61 +183,61 @@ class OnThumb(slots.GQLBindableFragment[TModel, TReads], ABC):
 
 
 @final
-class NodeId(OnNode[NodeIdData, "NodeId"]):
+class NodeIdFragment(OnNode[NodeIdData, "NodeIdFragment"]):
     adapter__: ClassVar[pydantic.TypeAdapter[NodeIdData]] = pydantic.TypeAdapter(NodeIdData)
 
     @override
     def __init__(self) -> None:
         super().__init__(
             fragment_name='NodeId',
-            definition_type=NodeId,
+            definition_type=NodeIdFragment,
             adapter=self.adapter__,
         )
 
 
 @final
-class ThumbAlt(OnThumb[ThumbAltData, "ThumbAlt"]):
+class ThumbAltFragment(OnThumb[ThumbAltData, "ThumbAltFragment"]):
     adapter__: ClassVar[pydantic.TypeAdapter[ThumbAltData]] = pydantic.TypeAdapter(ThumbAltData)
 
     @override
     def __init__(self) -> None:
         super().__init__(
             fragment_name='ThumbAlt',
-            definition_type=ThumbAlt,
+            definition_type=ThumbAltFragment,
             adapter=self.adapter__,
         )
 
 
 @final
-class ImageParts(OnImageAttachment[ImagePartsData, "ImageParts | NodeId"]):
+class ImagePartsFragment(OnImageAttachment[ImagePartsData, "ImagePartsFragment | NodeIdFragment"]):
     adapter__: ClassVar[pydantic.TypeAdapter[ImagePartsData]] = pydantic.TypeAdapter(ImagePartsData)
 
     @override
     def __init__(self) -> None:
         super().__init__(
             fragment_name='ImageParts',
-            definition_type=ImageParts,
+            definition_type=ImagePartsFragment,
             adapter=self.adapter__,
         )
 
 
 @final
-class LinkParts(OnLinkAttachment[LinkPartsData, "LinkParts"]):
+class LinkPartsFragment(OnLinkAttachment[LinkPartsData, "LinkPartsFragment"]):
     adapter__: ClassVar[pydantic.TypeAdapter[LinkPartsData]] = pydantic.TypeAdapter(LinkPartsData)
 
     @override
     def __init__(self) -> None:
         super().__init__(
             fragment_name='LinkParts',
-            definition_type=LinkParts,
+            definition_type=LinkPartsFragment,
             adapter=self.adapter__,
         )
 
 
-class GetAttachmentBound[TResult: pydantic.BaseModel](runtime.GQLBoundOperation):
+class GetAttachmentQueryBound[TResult: pydantic.BaseModel](runtime.GQLBoundOperation):
     async def execute(self, *, id: builtins.str) -> TResult:
         return await _client.query(
-            typing.cast("type[TResult]", GetAttachmentResult),
+            typing.cast("type[TResult]", GetAttachmentQueryResult),
             self.exec_source,
             variables={"id": id, **self.fragment_args},
             headers=self.headers,
@@ -245,58 +245,58 @@ class GetAttachmentBound[TResult: pydantic.BaseModel](runtime.GQLBoundOperation)
         )
 
 
-class GetAttachment(runtime.GQLTemplate):
+class GetAttachmentQuery(runtime.GQLTemplate):
     _binding_specs: ClassVar[dict[slots.BindingKey, runtime.BoundSpec]] = {
         # See: queries.py:37
         (): ('query GetAttachment($id: ID!) {\n  post(id: $id) {\n    id\n    attachment {\n      __typename\n    }\n  }\n}', {"attachment": ()}),
         # See: queries.py:37, queries.py:19
-        (('attachment', (ImageParts,)),): ('query GetAttachment($id: ID!) {\n  post(id: $id) {\n    id\n    attachment {\n      __typename\n      ...ImageParts\n    }\n  }\n}\n\nfragment ImageParts on ImageAttachment {\n  url\n  ...NodeId\n  thumb {\n    ...ThumbAlt\n  }\n}\n\nfragment NodeId on Node {\n  id\n}\n\nfragment ThumbAlt on Thumb {\n  alt\n}', {"attachment": ((ImageParts, frozenset({'ImageAttachment'})), (NodeId, frozenset({'ImageAttachment'})))}),
+        (('attachment', (ImagePartsFragment,)),): ('query GetAttachment($id: ID!) {\n  post(id: $id) {\n    id\n    attachment {\n      __typename\n      ...ImageParts\n    }\n  }\n}\n\nfragment ImageParts on ImageAttachment {\n  url\n  ...NodeId\n  thumb {\n    ...ThumbAlt\n  }\n}\n\nfragment NodeId on Node {\n  id\n}\n\nfragment ThumbAlt on Thumb {\n  alt\n}', {"attachment": ((ImagePartsFragment, frozenset({'ImageAttachment'})), (NodeIdFragment, frozenset({'ImageAttachment'})))}),
         # See: queries.py:37, queries.py:29
-        (('attachment', (LinkParts,)),): ('query GetAttachment($id: ID!) {\n  post(id: $id) {\n    id\n    attachment {\n      __typename\n      ...LinkParts\n    }\n  }\n}\n\nfragment LinkParts on LinkAttachment {\n  href\n}', {"attachment": ((LinkParts, frozenset({'LinkAttachment'})),)}),
+        (('attachment', (LinkPartsFragment,)),): ('query GetAttachment($id: ID!) {\n  post(id: $id) {\n    id\n    attachment {\n      __typename\n      ...LinkParts\n    }\n  }\n}\n\nfragment LinkParts on LinkAttachment {\n  href\n}', {"attachment": ((LinkPartsFragment, frozenset({'LinkAttachment'})),)}),
         # See: queries.py:37, queries.py:3
-        (('attachment', (NodeId,)),): ('query GetAttachment($id: ID!) {\n  post(id: $id) {\n    id\n    attachment {\n      __typename\n      ...NodeId\n    }\n  }\n}\n\nfragment NodeId on Node {\n  id\n}', {"attachment": ((NodeId, frozenset({'ImageAttachment'})),)}),
+        (('attachment', (NodeIdFragment,)),): ('query GetAttachment($id: ID!) {\n  post(id: $id) {\n    id\n    attachment {\n      __typename\n      ...NodeId\n    }\n  }\n}\n\nfragment NodeId on Node {\n  id\n}', {"attachment": ((NodeIdFragment, frozenset({'ImageAttachment'})),)}),
         # See: queries.py:48
-        (('attachment', (ImageParts, LinkParts)),): ('query GetAttachment($id: ID!) {\n  post(id: $id) {\n    id\n    attachment {\n      __typename\n      ...ImageParts\n      ...LinkParts\n    }\n  }\n}\n\nfragment ImageParts on ImageAttachment {\n  url\n  ...NodeId\n  thumb {\n    ...ThumbAlt\n  }\n}\n\nfragment LinkParts on LinkAttachment {\n  href\n}\n\nfragment NodeId on Node {\n  id\n}\n\nfragment ThumbAlt on Thumb {\n  alt\n}', {"attachment": ((ImageParts, frozenset({'ImageAttachment'})), (LinkParts, frozenset({'LinkAttachment'})), (NodeId, frozenset({'ImageAttachment'})))}),
+        (('attachment', (ImagePartsFragment, LinkPartsFragment)),): ('query GetAttachment($id: ID!) {\n  post(id: $id) {\n    id\n    attachment {\n      __typename\n      ...ImageParts\n      ...LinkParts\n    }\n  }\n}\n\nfragment ImageParts on ImageAttachment {\n  url\n  ...NodeId\n  thumb {\n    ...ThumbAlt\n  }\n}\n\nfragment LinkParts on LinkAttachment {\n  href\n}\n\nfragment NodeId on Node {\n  id\n}\n\nfragment ThumbAlt on Thumb {\n  alt\n}', {"attachment": ((ImagePartsFragment, frozenset({'ImageAttachment'})), (LinkPartsFragment, frozenset({'LinkAttachment'})), (NodeIdFragment, frozenset({'ImageAttachment'})))}),
     }
 
     @overload
-    def bind(self, *, attachment: Sequence[Never] = ()) -> GetAttachmentBound[GetAttachmentResult[Never]]: ...
+    def bind(self, *, attachment: Sequence[Never] = ()) -> GetAttachmentQueryBound[GetAttachmentQueryResult[Never]]: ...
     @overload
-    def bind[TModelAttachment: pydantic.BaseModel, TReadsAttachment](self, *, attachment: OnImageAttachment[TModelAttachment, TReadsAttachment]) -> GetAttachmentBound[GetAttachmentResult[OnImageAttachment[TModelAttachment, TReadsAttachment] | TReadsAttachment]]: ...
+    def bind[TModelAttachment: pydantic.BaseModel, TReadsAttachment](self, *, attachment: OnImageAttachment[TModelAttachment, TReadsAttachment]) -> GetAttachmentQueryBound[GetAttachmentQueryResult[OnImageAttachment[TModelAttachment, TReadsAttachment] | TReadsAttachment]]: ...
     @overload
-    def bind[TModelAttachment: pydantic.BaseModel, TReadsAttachment](self, *, attachment: OnLinkAttachment[TModelAttachment, TReadsAttachment]) -> GetAttachmentBound[GetAttachmentResult[OnLinkAttachment[TModelAttachment, TReadsAttachment] | TReadsAttachment]]: ...
+    def bind[TModelAttachment: pydantic.BaseModel, TReadsAttachment](self, *, attachment: OnLinkAttachment[TModelAttachment, TReadsAttachment]) -> GetAttachmentQueryBound[GetAttachmentQueryResult[OnLinkAttachment[TModelAttachment, TReadsAttachment] | TReadsAttachment]]: ...
     @overload
-    def bind[TModelAttachment: pydantic.BaseModel, TReadsAttachment](self, *, attachment: OnNode[TModelAttachment, TReadsAttachment]) -> GetAttachmentBound[GetAttachmentResult[OnNode[TModelAttachment, TReadsAttachment] | TReadsAttachment]]: ...
+    def bind[TModelAttachment: pydantic.BaseModel, TReadsAttachment](self, *, attachment: OnNode[TModelAttachment, TReadsAttachment]) -> GetAttachmentQueryBound[GetAttachmentQueryResult[OnNode[TModelAttachment, TReadsAttachment] | TReadsAttachment]]: ...
     @overload
-    def bind[TFillAttachment1: (ImageParts | NodeId, LinkParts), TFillAttachment2: (ImageParts | NodeId, LinkParts)](self, *, attachment: tuple[TFillAttachment1, TFillAttachment2]) -> GetAttachmentBound[GetAttachmentResult[TFillAttachment1 | TFillAttachment2]]: ...
+    def bind[TFillAttachment1: (ImagePartsFragment | NodeIdFragment, LinkPartsFragment), TFillAttachment2: (ImagePartsFragment | NodeIdFragment, LinkPartsFragment)](self, *, attachment: tuple[TFillAttachment1, TFillAttachment2]) -> GetAttachmentQueryBound[GetAttachmentQueryResult[TFillAttachment1 | TFillAttachment2]]: ...
     def bind(self, *, attachment: slots.GQLBindableFragment[pydantic.BaseModel, Any] | Sequence[slots.GQLBindableFragment[pydantic.BaseModel, Any]] = ()) -> runtime.GQLBoundOperation:
         if slots.binding_key({'attachment': attachment}) not in self._binding_specs:
-            raise LookupError("unknown bind combination for GetAttachment; single-fragment and empty combinations are generated from the schema, so this is a tuple combination no call site writes literally - write it, then regenerate the module. A call whose template is an expression the scan cannot follow is never read either: those are listed, with the reason, in the debug run's ignored_binds.json")
-        return GetAttachmentBound[GetAttachmentResult].bound__(
+            raise LookupError("unknown bind combination for GetAttachmentQuery; single-fragment and empty combinations are generated from the schema, so this is a tuple combination no call site writes literally - write it, then regenerate the module. A call whose template is an expression the scan cannot follow is never read either: those are listed, with the reason, in the debug run's ignored_binds.json")
+        return GetAttachmentQueryBound[GetAttachmentQueryResult].bound__(
             self._binding_specs[slots.binding_key({'attachment': attachment})], {'attachment': slots.as_bindable_fragments(attachment)},
         )
 
 
 @overload
-def api_gql(stmt: Literal['\n    fragment NodeId on Node {\n        id\n    }\n    ']) -> NodeId: ...
+def api_gql(stmt: Literal['\n    fragment NodeId on Node {\n        id\n    }\n    ']) -> NodeIdFragment: ...
 @overload
-def api_gql(stmt: Literal['\n    fragment ThumbAlt on Thumb {\n        alt\n    }\n    ']) -> ThumbAlt: ...
+def api_gql(stmt: Literal['\n    fragment ThumbAlt on Thumb {\n        alt\n    }\n    ']) -> ThumbAltFragment: ...
 @overload
-def api_gql(stmt: Literal['\n    fragment ImageParts on ImageAttachment {\n        url\n        ...NodeId\n        thumb { ...ThumbAlt }\n    }\n    ']) -> ImageParts: ...
+def api_gql(stmt: Literal['\n    fragment ImageParts on ImageAttachment {\n        url\n        ...NodeId\n        thumb { ...ThumbAlt }\n    }\n    ']) -> ImagePartsFragment: ...
 @overload
-def api_gql(stmt: Literal['\n    fragment LinkParts on LinkAttachment {\n        href\n    }\n    ']) -> LinkParts: ...
+def api_gql(stmt: Literal['\n    fragment LinkParts on LinkAttachment {\n        href\n    }\n    ']) -> LinkPartsFragment: ...
 @overload
-def api_gql(stmt: Literal['\n    query GetAttachment($id: ID!) {\n        post(id: $id) {\n            id\n            attachment @slot { __typename }\n        }\n    }\n    ']) -> GetAttachment: ...
+def api_gql(stmt: Literal['\n    query GetAttachment($id: ID!) {\n        post(id: $id) {\n            id\n            attachment @slot { __typename }\n        }\n    }\n    ']) -> GetAttachmentQuery: ...
 @overload
 def api_gql(stmt: str) -> runtime.GQLOperation | slots.GQLFragment[pydantic.BaseModel, Any] | runtime.GQLTemplate: ...
 
 
 _statement_factories: dict[str, Callable[[], runtime.GQLOperation | slots.GQLFragment[pydantic.BaseModel, Any] | runtime.GQLTemplate]] = {
-    '\n    fragment NodeId on Node {\n        id\n    }\n    ': lambda: NodeId(),
-    '\n    fragment ThumbAlt on Thumb {\n        alt\n    }\n    ': lambda: ThumbAlt(),
-    '\n    fragment ImageParts on ImageAttachment {\n        url\n        ...NodeId\n        thumb { ...ThumbAlt }\n    }\n    ': lambda: ImageParts(),
-    '\n    fragment LinkParts on LinkAttachment {\n        href\n    }\n    ': lambda: LinkParts(),
-    '\n    query GetAttachment($id: ID!) {\n        post(id: $id) {\n            id\n            attachment @slot { __typename }\n        }\n    }\n    ': GetAttachment,
+    '\n    fragment NodeId on Node {\n        id\n    }\n    ': lambda: NodeIdFragment(),
+    '\n    fragment ThumbAlt on Thumb {\n        alt\n    }\n    ': lambda: ThumbAltFragment(),
+    '\n    fragment ImageParts on ImageAttachment {\n        url\n        ...NodeId\n        thumb { ...ThumbAlt }\n    }\n    ': lambda: ImagePartsFragment(),
+    '\n    fragment LinkParts on LinkAttachment {\n        href\n    }\n    ': lambda: LinkPartsFragment(),
+    '\n    query GetAttachment($id: ID!) {\n        post(id: $id) {\n            id\n            attachment @slot { __typename }\n        }\n    }\n    ': GetAttachmentQuery,
 }
 
 

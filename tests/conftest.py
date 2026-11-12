@@ -43,6 +43,7 @@ from iron_gql.slots import GQLSlotNode
 from iron_gql.testing import accept_graphql_ws
 from iron_gql.testing import use_client
 from iron_gql.testing.server import async_live_asgi_server
+from tests.corpus.generated_oracles import assert_builtins_read_are_claimed
 from tests.corpus.generated_oracles import assert_documents_are_valid
 from tests.corpus.generated_oracles import assert_each_module_imported_once
 from tests.corpus.generated_oracles import assert_method_namespaces_are_closed
@@ -88,8 +89,8 @@ def build_schema(sdl: str, resolvers: Resolvers) -> graphql.GraphQLSchema:
     return schema
 
 
-# Минимальный типизированный срез схемы `basedpyright --outputjson`: его
-# достаточно для проверок, а `Any` из `json.loads` не просачивается в тесты.
+# A minimal typed slice of the `basedpyright --outputjson` schema: it is enough
+# for the checks, and `Any` from `json.loads` does not leak into the tests.
 class DiagnosticPosition(pydantic.BaseModel):
     line: int
 
@@ -112,14 +113,15 @@ class DiagnosticSummary(pydantic.BaseModel):
 
 class BasedPyrightReport(pydantic.BaseModel):
     general_diagnostics: list[Diagnostic] = pydantic.Field(alias="generalDiagnostics")
-    # Пустой список означает успех только после подтверждения, что файлы
-    # действительно были прочитаны: несуществующий путь даёт тот же результат.
+    # An empty list means success only after confirming that the files were
+    # actually read: a nonexistent path gives the same result.
     summary: DiagnosticSummary
 
 
 def basedpyright_report(*check_paths: Path) -> BasedPyrightReport:
-    # Запускается из корня, чтобы применялся конфиг проекта. Ошибка разбора JSON
-    # явно сообщает о расхождении схемы ответа, а не теряется внутри теста.
+    # Run from the root so the project config applies. A JSON parse error
+    # explicitly reports a drift in the response schema instead of getting lost
+    # inside a test.
     completed = subprocess.run(
         [
             sys.executable,
@@ -139,7 +141,7 @@ def basedpyright_report(*check_paths: Path) -> BasedPyrightReport:
         return pydantic.TypeAdapter(BasedPyrightReport).validate_json(completed.stdout)
     except pydantic.ValidationError as exc:
         msg = (
-            "JSON-ответ basedpyright больше не соответствует ожидаемой форме "
+            "basedpyright's JSON output no longer matches the expected shape "
             f"(exit code {completed.returncode}): {exc}\n"
             f"stdout={completed.stdout!r}\nstderr={completed.stderr!r}"
         )
@@ -356,6 +358,7 @@ def _check_generated(module: ModuleType, schema_path: Path) -> None:
     assert_module_is_self_contained(module)
     assert_method_namespaces_are_closed(module)
     assert_each_module_imported_once(module)
+    assert_builtins_read_are_claimed(module)
     schema = graphql.build_schema(schema_path.read_text(encoding="utf-8"))
     assert_documents_are_valid(module, schema)
 

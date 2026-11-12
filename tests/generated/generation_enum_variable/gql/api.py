@@ -57,15 +57,15 @@ class GQLModel(pydantic.BaseModel):
 type Status = Literal['ACTIVE', 'INACTIVE']
 
 
-class SearchResult(GQLModel):
+class SearchQueryResult(GQLModel):
     search: bool | None
 
 
-class Search(runtime.GQLOperation):
+class SearchQuery(runtime.GQLOperation):
     # See: queries.py:3
-    async def execute(self, *, status: Status) -> SearchResult:
+    async def execute(self, *, status: Status) -> SearchQueryResult:
         return await _client.query(
-            SearchResult,
+            SearchQueryResult,
             'query Search($status: Status!) {\n  search(status: $status)\n}',
             variables={"status": status},
             headers=self.headers,
@@ -73,13 +73,13 @@ class Search(runtime.GQLOperation):
 
 
 @overload
-def api_gql(stmt: Literal['\n    query Search($status: Status!) {\n        search(status: $status)\n    }\n    ']) -> Search: ...
+def api_gql(stmt: Literal['\n    query Search($status: Status!) {\n        search(status: $status)\n    }\n    ']) -> SearchQuery: ...
 @overload
 def api_gql(stmt: str) -> runtime.GQLOperation: ...
 
 
 _statement_factories: dict[str, Callable[[], runtime.GQLOperation]] = {
-    '\n    query Search($status: Status!) {\n        search(status: $status)\n    }\n    ': Search,
+    '\n    query Search($status: Status!) {\n        search(status: $status)\n    }\n    ': SearchQuery,
 }
 
 

@@ -62,25 +62,25 @@ class GQLSlotModel[TOffered](GQLOpenModel, slots.GQLSlotNode[TOffered]):
     pass
 
 
-class GetAttachmentResultPostAttachmentSlotImageAttachment[TSlotAttachment = Never](GQLSlotModel[TSlotAttachment]):
+class GetAttachmentQueryResultPostAttachmentSlotImageAttachment[TSlotAttachment = Never](GQLSlotModel[TSlotAttachment]):
     slot_name__: ClassVar[str] = "attachment"
     typename__: Annotated[Literal["ImageAttachment"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
 
 
-class GetAttachmentResultPostAttachmentSlotLinkAttachment[TSlotAttachment = Never](GQLSlotModel[TSlotAttachment]):
+class GetAttachmentQueryResultPostAttachmentSlotLinkAttachment[TSlotAttachment = Never](GQLSlotModel[TSlotAttachment]):
     slot_name__: ClassVar[str] = "attachment"
     typename__: Annotated[Literal["LinkAttachment"], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
 
 
-type GetAttachmentResultPostAttachmentSlot[TSlotAttachment] = Annotated[GetAttachmentResultPostAttachmentSlotImageAttachment[TSlotAttachment] | GetAttachmentResultPostAttachmentSlotLinkAttachment[TSlotAttachment], pydantic.Field(discriminator="typename__")]
+type Attachment[TSlotAttachment] = Annotated[GetAttachmentQueryResultPostAttachmentSlotImageAttachment[TSlotAttachment] | GetAttachmentQueryResultPostAttachmentSlotLinkAttachment[TSlotAttachment], pydantic.Field(discriminator="typename__")]
 
 
 class Post[TSlotAttachment = Never](GQLModel):
     id: builtins.str
-    attachment: GetAttachmentResultPostAttachmentSlot[TSlotAttachment] | None
+    attachment: Attachment[TSlotAttachment] | None
 
 
-class GetAttachmentResult[TSlotAttachment = Never](GQLModel):
+class GetAttachmentQueryResult[TSlotAttachment = Never](GQLModel):
     post: Post[TSlotAttachment] | None
 
 
@@ -120,78 +120,78 @@ class OnImageAttachment(slots.GQLBindableFragment[TModel, TReads], ABC):
 
 
 @final
-class SizedImage(slots.GQLFragment[SizedImageData, "_SizedImageApplied"]):
+class SizedImageFragment(slots.GQLFragment[SizedImageData, "_SizedImageFragmentApplied"]):
     adapter__: ClassVar[pydantic.TypeAdapter[SizedImageData]] = pydantic.TypeAdapter(SizedImageData)
 
     @override
     def __init__(self) -> None:
         super().__init__(
             fragment_name='SizedImage',
-            definition_type=SizedImage,
+            definition_type=SizedImageFragment,
             adapter=self.adapter__,
         )
 
-    def with_args(self, *, width: int) -> _SizedImageApplied:
-        return _SizedImageApplied({"width": width})
+    def with_args(self, *, width: int) -> _SizedImageFragmentApplied:
+        return _SizedImageFragmentApplied({"width": width})
 
 
 @final
-class _SizedImageApplied(OnImageAttachment[SizedImageData, "_SizedImageApplied"]):
+class _SizedImageFragmentApplied(OnImageAttachment[SizedImageData, "_SizedImageFragmentApplied"]):
     @override
     def __init__(self, fragment_args: dict[str, object], /) -> None:
         super().__init__(
             fragment_name='SizedImage',
-            definition_type=SizedImage,
-            adapter=SizedImage.adapter__,
+            definition_type=SizedImageFragment,
+            adapter=SizedImageFragment.adapter__,
         )
         self._set_fragment_args(fragment_args)
 
 
 @final
-class ImageCaption(OnImageAttachment[ImageCaptionData, "ImageCaption"]):
+class ImageCaptionFragment(OnImageAttachment[ImageCaptionData, "ImageCaptionFragment"]):
     adapter__: ClassVar[pydantic.TypeAdapter[ImageCaptionData]] = pydantic.TypeAdapter(ImageCaptionData)
 
     @override
     def __init__(self) -> None:
         super().__init__(
             fragment_name='ImageCaption',
-            definition_type=ImageCaption,
+            definition_type=ImageCaptionFragment,
             adapter=self.adapter__,
         )
 
 
 @final
-class Wrapper(slots.GQLFragment[WrapperData, "_WrapperApplied | _SizedImageApplied"]):
+class WrapperFragment(slots.GQLFragment[WrapperData, "_WrapperFragmentApplied | _SizedImageFragmentApplied"]):
     adapter__: ClassVar[pydantic.TypeAdapter[WrapperData]] = pydantic.TypeAdapter(WrapperData)
 
     @override
     def __init__(self) -> None:
         super().__init__(
             fragment_name='Wrapper',
-            definition_type=Wrapper,
+            definition_type=WrapperFragment,
             adapter=self.adapter__,
         )
 
-    def with_args(self, *, width: int) -> _WrapperApplied:
-        return _WrapperApplied({"width": width})
+    def with_args(self, *, width: int) -> _WrapperFragmentApplied:
+        return _WrapperFragmentApplied({"width": width})
 
 
 @final
-class _WrapperApplied(OnImageAttachment[WrapperData, "_WrapperApplied | _SizedImageApplied"]):
+class _WrapperFragmentApplied(OnImageAttachment[WrapperData, "_WrapperFragmentApplied | _SizedImageFragmentApplied"]):
     @override
     def __init__(self, fragment_args: dict[str, object], /) -> None:
         super().__init__(
             fragment_name='Wrapper',
-            definition_type=Wrapper,
-            adapter=Wrapper.adapter__,
+            definition_type=WrapperFragment,
+            adapter=WrapperFragment.adapter__,
         )
         self._set_fragment_args(fragment_args)
 
 
-class GetAttachmentBound[TResult: pydantic.BaseModel](runtime.GQLBoundOperation):
+class GetAttachmentQueryBound[TResult: pydantic.BaseModel](runtime.GQLBoundOperation):
     async def execute(self, *, id: builtins.str) -> TResult:
         return await _client.query(
-            typing.cast("type[TResult]", GetAttachmentResult),
+            typing.cast("type[TResult]", GetAttachmentQueryResult),
             self.exec_source,
             variables={"id": id, **self.fragment_args},
             headers=self.headers,
@@ -199,51 +199,51 @@ class GetAttachmentBound[TResult: pydantic.BaseModel](runtime.GQLBoundOperation)
         )
 
 
-class GetAttachment(runtime.GQLTemplate):
+class GetAttachmentQuery(runtime.GQLTemplate):
     _binding_specs: ClassVar[dict[slots.BindingKey, runtime.BoundSpec]] = {
         # See: queries.py:3
         (): ('query GetAttachment($id: ID!) {\n  post(id: $id) {\n    id\n    attachment {\n      __typename\n    }\n  }\n}', {"attachment": ()}),
         # See: queries.py:3, queries.py:18
-        (('attachment', (ImageCaption,)),): ('query GetAttachment($id: ID!) {\n  post(id: $id) {\n    id\n    attachment {\n      __typename\n      ...ImageCaption\n    }\n  }\n}\n\nfragment ImageCaption on ImageAttachment {\n  caption\n}', {"attachment": ((ImageCaption, frozenset({'ImageAttachment'})),)}),
+        (('attachment', (ImageCaptionFragment,)),): ('query GetAttachment($id: ID!) {\n  post(id: $id) {\n    id\n    attachment {\n      __typename\n      ...ImageCaption\n    }\n  }\n}\n\nfragment ImageCaption on ImageAttachment {\n  caption\n}', {"attachment": ((ImageCaptionFragment, frozenset({'ImageAttachment'})),)}),
         # See: queries.py:3, queries.py:12
-        (('attachment', (_SizedImageApplied,)),): ('query GetAttachment($id: ID!, $width: Int!) {\n  post(id: $id) {\n    id\n    attachment {\n      __typename\n      ...SizedImage\n    }\n  }\n}\n\nfragment SizedImage on ImageAttachment {\n  thumbnail(width: $width)\n}', {"attachment": ((SizedImage, frozenset({'ImageAttachment'})),)}),
+        (('attachment', (_SizedImageFragmentApplied,)),): ('query GetAttachment($id: ID!, $width: Int!) {\n  post(id: $id) {\n    id\n    attachment {\n      __typename\n      ...SizedImage\n    }\n  }\n}\n\nfragment SizedImage on ImageAttachment {\n  thumbnail(width: $width)\n}', {"attachment": ((SizedImageFragment, frozenset({'ImageAttachment'})),)}),
         # See: queries.py:3, queries.py:24
-        (('attachment', (_WrapperApplied,)),): ('query GetAttachment($id: ID!, $width: Int!) {\n  post(id: $id) {\n    id\n    attachment {\n      __typename\n      ...Wrapper\n    }\n  }\n}\n\nfragment SizedImage on ImageAttachment {\n  thumbnail(width: $width)\n}\n\nfragment Wrapper on ImageAttachment {\n  caption\n  ...SizedImage\n}', {"attachment": ((SizedImage, frozenset({'ImageAttachment'})), (Wrapper, frozenset({'ImageAttachment'})))}),
+        (('attachment', (_WrapperFragmentApplied,)),): ('query GetAttachment($id: ID!, $width: Int!) {\n  post(id: $id) {\n    id\n    attachment {\n      __typename\n      ...Wrapper\n    }\n  }\n}\n\nfragment SizedImage on ImageAttachment {\n  thumbnail(width: $width)\n}\n\nfragment Wrapper on ImageAttachment {\n  caption\n  ...SizedImage\n}', {"attachment": ((SizedImageFragment, frozenset({'ImageAttachment'})), (WrapperFragment, frozenset({'ImageAttachment'})))}),
         # See: queries.py:31
-        (('attachment', (ImageCaption, _SizedImageApplied)),): ('query GetAttachment($id: ID!, $width: Int!) {\n  post(id: $id) {\n    id\n    attachment {\n      __typename\n      ...ImageCaption\n      ...SizedImage\n    }\n  }\n}\n\nfragment ImageCaption on ImageAttachment {\n  caption\n}\n\nfragment SizedImage on ImageAttachment {\n  thumbnail(width: $width)\n}', {"attachment": ((ImageCaption, frozenset({'ImageAttachment'})), (SizedImage, frozenset({'ImageAttachment'})))}),
+        (('attachment', (ImageCaptionFragment, _SizedImageFragmentApplied)),): ('query GetAttachment($id: ID!, $width: Int!) {\n  post(id: $id) {\n    id\n    attachment {\n      __typename\n      ...ImageCaption\n      ...SizedImage\n    }\n  }\n}\n\nfragment ImageCaption on ImageAttachment {\n  caption\n}\n\nfragment SizedImage on ImageAttachment {\n  thumbnail(width: $width)\n}', {"attachment": ((ImageCaptionFragment, frozenset({'ImageAttachment'})), (SizedImageFragment, frozenset({'ImageAttachment'})))}),
     }
 
     @overload
-    def bind(self, *, attachment: Sequence[Never] = ()) -> GetAttachmentBound[GetAttachmentResult[Never]]: ...
+    def bind(self, *, attachment: Sequence[Never] = ()) -> GetAttachmentQueryBound[GetAttachmentQueryResult[Never]]: ...
     @overload
-    def bind[TModelAttachment: pydantic.BaseModel, TReadsAttachment](self, *, attachment: OnImageAttachment[TModelAttachment, TReadsAttachment]) -> GetAttachmentBound[GetAttachmentResult[OnImageAttachment[TModelAttachment, TReadsAttachment] | TReadsAttachment]]: ...
+    def bind[TModelAttachment: pydantic.BaseModel, TReadsAttachment](self, *, attachment: OnImageAttachment[TModelAttachment, TReadsAttachment]) -> GetAttachmentQueryBound[GetAttachmentQueryResult[OnImageAttachment[TModelAttachment, TReadsAttachment] | TReadsAttachment]]: ...
     @overload
-    def bind[TFillAttachment1: (ImageCaption, _SizedImageApplied), TFillAttachment2: (ImageCaption, _SizedImageApplied)](self, *, attachment: tuple[TFillAttachment1, TFillAttachment2]) -> GetAttachmentBound[GetAttachmentResult[TFillAttachment1 | TFillAttachment2]]: ...
+    def bind[TFillAttachment1: (ImageCaptionFragment, _SizedImageFragmentApplied), TFillAttachment2: (ImageCaptionFragment, _SizedImageFragmentApplied)](self, *, attachment: tuple[TFillAttachment1, TFillAttachment2]) -> GetAttachmentQueryBound[GetAttachmentQueryResult[TFillAttachment1 | TFillAttachment2]]: ...
     def bind(self, *, attachment: slots.GQLBindableFragment[pydantic.BaseModel, Any] | Sequence[slots.GQLBindableFragment[pydantic.BaseModel, Any]] = ()) -> runtime.GQLBoundOperation:
         if slots.binding_key({'attachment': attachment}) not in self._binding_specs:
-            raise LookupError("unknown bind combination for GetAttachment; single-fragment and empty combinations are generated from the schema, so this is a tuple combination no call site writes literally - write it, then regenerate the module. A call whose template is an expression the scan cannot follow is never read either: those are listed, with the reason, in the debug run's ignored_binds.json")
-        return GetAttachmentBound[GetAttachmentResult].bound__(
+            raise LookupError("unknown bind combination for GetAttachmentQuery; single-fragment and empty combinations are generated from the schema, so this is a tuple combination no call site writes literally - write it, then regenerate the module. A call whose template is an expression the scan cannot follow is never read either: those are listed, with the reason, in the debug run's ignored_binds.json")
+        return GetAttachmentQueryBound[GetAttachmentQueryResult].bound__(
             self._binding_specs[slots.binding_key({'attachment': attachment})], {'attachment': slots.as_bindable_fragments(attachment)},
         )
 
 
 @overload
-def api_gql(stmt: Literal['\n    fragment SizedImage on ImageAttachment {\n        thumbnail(width: $width)\n    }\n']) -> SizedImage: ...
+def api_gql(stmt: Literal['\n    fragment SizedImage on ImageAttachment {\n        thumbnail(width: $width)\n    }\n']) -> SizedImageFragment: ...
 @overload
-def api_gql(stmt: Literal['\n    fragment ImageCaption on ImageAttachment {\n        caption\n    }\n']) -> ImageCaption: ...
+def api_gql(stmt: Literal['\n    fragment ImageCaption on ImageAttachment {\n        caption\n    }\n']) -> ImageCaptionFragment: ...
 @overload
-def api_gql(stmt: Literal['\n    fragment Wrapper on ImageAttachment {\n        caption\n        ...SizedImage\n    }\n']) -> Wrapper: ...
+def api_gql(stmt: Literal['\n    fragment Wrapper on ImageAttachment {\n        caption\n        ...SizedImage\n    }\n']) -> WrapperFragment: ...
 @overload
-def api_gql(stmt: Literal['\n    query GetAttachment($id: ID!) {\n        post(id: $id) {\n            id\n            attachment @slot { __typename }\n        }\n    }\n']) -> GetAttachment: ...
+def api_gql(stmt: Literal['\n    query GetAttachment($id: ID!) {\n        post(id: $id) {\n            id\n            attachment @slot { __typename }\n        }\n    }\n']) -> GetAttachmentQuery: ...
 @overload
 def api_gql(stmt: str) -> runtime.GQLOperation | slots.GQLFragment[pydantic.BaseModel, Any] | runtime.GQLTemplate: ...
 
 
 _statement_factories: dict[str, Callable[[], runtime.GQLOperation | slots.GQLFragment[pydantic.BaseModel, Any] | runtime.GQLTemplate]] = {
-    '\n    fragment SizedImage on ImageAttachment {\n        thumbnail(width: $width)\n    }\n': lambda: SizedImage(),
-    '\n    fragment ImageCaption on ImageAttachment {\n        caption\n    }\n': lambda: ImageCaption(),
-    '\n    fragment Wrapper on ImageAttachment {\n        caption\n        ...SizedImage\n    }\n': lambda: Wrapper(),
-    '\n    query GetAttachment($id: ID!) {\n        post(id: $id) {\n            id\n            attachment @slot { __typename }\n        }\n    }\n': GetAttachment,
+    '\n    fragment SizedImage on ImageAttachment {\n        thumbnail(width: $width)\n    }\n': lambda: SizedImageFragment(),
+    '\n    fragment ImageCaption on ImageAttachment {\n        caption\n    }\n': lambda: ImageCaptionFragment(),
+    '\n    fragment Wrapper on ImageAttachment {\n        caption\n        ...SizedImage\n    }\n': lambda: WrapperFragment(),
+    '\n    query GetAttachment($id: ID!) {\n        post(id: $id) {\n            id\n            attachment @slot { __typename }\n        }\n    }\n': GetAttachmentQuery,
 }
 
 

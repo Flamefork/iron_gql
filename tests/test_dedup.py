@@ -198,10 +198,12 @@ def test_union_variants_with_same_shape_across_queries_collapse():
     assert len(alpha_models) == 1
     assert len(beta_models) == 1
 
+    # The alias is a shape too (ADR 0003): one alias over the same variants,
+    # named after its union, and one `Container` referring to it.
     union_aliases = [
         artifact
         for artifact in ir.result_artifacts
         if isinstance(artifact, CollectedUnionAlias)
     ]
-    assert len(union_aliases) == 2
-    assert union_aliases[0].variants == union_aliases[1].variants
+    assert [alias.name for alias in union_aliases] == ["Item"]
+    assert len(_models_by_graphql_type(ir.result_artifacts, "Container")) == 1

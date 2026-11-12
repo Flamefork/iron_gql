@@ -14,6 +14,7 @@ module's imports.
 """
 
 import ast
+import builtins
 import inspect
 import symtable
 import typing
@@ -25,6 +26,7 @@ from typing import cast
 
 import graphql
 
+from iron_gql.codegen.render import BUILTIN_NAMES
 from iron_gql.codegen.render import method_body_fixed_names
 from iron_gql.runtime import BoundSpec
 from iron_gql.runtime import GQLTemplate
@@ -189,6 +191,64 @@ def assert_each_module_imported_once(module: ModuleType) -> None:
     if repeated:
         msg = f"generated module {module.__name__} imports more than once:"
         msg += f" {', '.join(repeated)}"
+        raise AssertionError(msg)
+
+
+def assert_builtins_read_are_claimed(module: ModuleType) -> None:
+    # A model or enum named like a builtin the module reads rebinds it for
+    # every annotation and body in the module, so each builtin read has to be
+    # claimed (`render.BUILTIN_NAMES`) and none of them bound by the module.
+    # Asked of CPython rather than of the renderer: the symbol table says
+    # which names code reads from the module or builtins, the parser which
+    # names annotations spell -- under
+    # `from __future__ import annotations` they are never evaluated, so the
+    # symbol table does not see them.
+    source = Path(str(module.__file__)).read_text(encoding="utf-8")
+    top = symtable.symtable(source, str(module.__file__), "exec")
+    read = {
+        symbol.get_name()
+        for table in (top, *_tables(top))
+        for symbol in table.get_symbols()
+        if symbol.is_referenced() and (symbol.is_global() or table is top)
+    }
+    for node in ast.walk(ast.parse(source)):
+        match node:
+            case ast.AnnAssign(annotation=annotation):
+                annotations = [annotation]
+            case (
+                ast.FunctionDef(args=args, returns=returns)
+                | ast.AsyncFunctionDef(args=args, returns=returns)
+            ):
+                params = [*args.posonlyargs, *args.args, *args.kwonlyargs]
+                annotations = [
+                    *(param.annotation for param in params),
+                    returns,
+                ]
+            case _:
+                annotations = []
+        read.update(
+            name.id
+            for annotation in annotations
+            if annotation is not None
+            for name in ast.walk(annotation)
+            if isinstance(name, ast.Name)
+        )
+    # A name the module binds and reads is its own unless the renderer
+    # writes it as a builtin: then the binding is the shadowing.
+    bound = {
+        symbol.get_name()
+        for symbol in top.get_symbols()
+        if symbol.is_assigned() or symbol.is_imported()
+    }
+    problems: list[str] = []
+    unclaimed = sorted((read & set(dir(builtins))) - bound - set(BUILTIN_NAMES))
+    if unclaimed:
+        problems.append(f"reads unclaimed builtins: {', '.join(unclaimed)}")
+    rebound = sorted(read & bound & set(BUILTIN_NAMES))
+    if rebound:
+        problems.append(f"rebinds the builtins it reads: {', '.join(rebound)}")
+    if problems:
+        msg = f"generated module {module.__name__} " + "; ".join(problems)
         raise AssertionError(msg)
 
 

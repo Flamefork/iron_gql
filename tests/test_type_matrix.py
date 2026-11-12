@@ -34,7 +34,7 @@ generated_package(
 )
 
 from tests.generated.type_matrix import queries
-from tests.generated.type_matrix.gql.api import EveryCellResult
+from tests.generated.type_matrix.gql.api import EveryCellQueryResult
 from tests.generated.type_matrix.gql.api import Payload
 
 
@@ -49,11 +49,11 @@ def _spread_execute(
     return cast("Callable[..., Coroutine[object, object, object]]", execute)
 
 
-async def _execute_every_cell() -> EveryCellResult:
+async def _execute_every_cell() -> EveryCellQueryResult:
     result = await _spread_execute(queries.every_cell.execute)(
         **type_matrix.call_arguments()
     )
-    assert isinstance(result, EveryCellResult)
+    assert isinstance(result, EveryCellQueryResult)
     return result
 
 

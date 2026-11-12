@@ -135,8 +135,8 @@ CHECK_SOURCES = {
         from tests.generated.bindings_overlap.gql import api as plain_api
         from tests.generated.fragment_factory_typing.gql import api as factory_api
 
-        _plain = plain_api.ImageCaption()
-        _factory = factory_api.SizedImage()
+        _plain = plain_api.ImageCaptionFragment()
+        _factory = factory_api.SizedImageFragment()
     """,
     "check_defaulted_fragment_variables.py": """
         from tests.generated.bindings_fragment_var_nullability import queries
@@ -158,7 +158,7 @@ CHECK_SOURCES = {
 
         _forged = api.OnImageAttachment[api.SizedImageData, Any](
             fragment_name="SizedImage",
-            definition_type=api.SizedImage,
+            definition_type=api.SizedImageFragment,
             adapter=pydantic.TypeAdapter(api.SizedImageData),
         )
     """,
@@ -166,15 +166,15 @@ CHECK_SOURCES = {
         from tests.generated.fragment_factory_typing.gql import api
 
 
-        _direct_applied = api._SizedImageApplied(width=1)
-        _empty_bound = api.GetAttachmentBound[api.GetAttachmentResult]()
+        _direct_applied = api._SizedImageFragmentApplied(width=1)
+        _empty_bound = api.GetAttachmentQueryBound[api.GetAttachmentQueryResult]()
     """,
     "check_generic_bind.py": """
         import pydantic
 
         from tests.generated.bindings_composition import queries
         from tests.generated.bindings_composition.gql.api import (
-            GetAttachmentResult,
+            GetAttachmentQueryResult,
         )
         from tests.generated.bindings_composition.gql.api import (
             OnImageAttachment,
@@ -195,7 +195,7 @@ CHECK_SOURCES = {
 
         async def forward[TModel: pydantic.BaseModel, TReads](
             details: OnImageAttachment[TModel, TReads],
-        ) -> GetAttachmentResult[OnImageAttachment[TModel, TReads] | TReads]:
+        ) -> GetAttachmentQueryResult[OnImageAttachment[TModel, TReads] | TReads]:
             bound = queries.get_attachment.bind(attachment=details)
             return await bound.execute(id="1")
 
@@ -256,9 +256,9 @@ CHECK_SOURCES = {
         from tests.generated.bindings_composition import queries as composition_gql
         from tests.generated.bindings_overlap import queries as overlap_gql
         from tests.generated.bindings_overlap.gql.api import (
-            GetAttachmentResult,
-            ImageCaption,
-            ImageSize,
+            GetAttachmentQueryResult,
+            ImageCaptionFragment,
+            ImageSizeFragment,
         )
         from tests.generated.bindings_two_templates import queries as two_tpl_gql
         from tests.generated.slots_multi import queries
@@ -266,7 +266,7 @@ CHECK_SOURCES = {
 
         def use_erased(
             fragment: slots.GQLFragment[pydantic.BaseModel, Any],
-            result: GetAttachmentResult[ImageCaption | ImageSize],
+            result: GetAttachmentQueryResult[ImageCaptionFragment | ImageSizeFragment],
         ) -> None:
             assert result.post is not None
             _err_type_erased = fragment.read(result.post.attachment)
@@ -332,7 +332,7 @@ CHECK_SOURCES = {
 
 
         def read_any_binding[TData: pydantic.BaseModel](
-            result: GetAttachmentResult[Any],
+            result: GetAttachmentQueryResult[Any],
             fragment: slots.GQLFragment[TData, Any],
         ) -> TData | None:
             assert result.post is not None
@@ -341,9 +341,16 @@ CHECK_SOURCES = {
 }
 
 
+IMAGE = "ImagePartsFragment"
+LINK = "LinkPartsFragment"
+OTHER = "OtherPartsFragment"
+
+
 def _write_check_files(check_dir: Path) -> dict[str, Path]:
     (generic_block,) = [
-        block for block in readme_fenced_blocks() if "GetPostAttachmentBound[" in block
+        block
+        for block in readme_fenced_blocks()
+        if "GetPostAttachmentQueryBound[" in block
     ]
     (parameter_block,) = [
         block for block in readme_fenced_blocks() if "OnImageAttachment[" in block
@@ -353,7 +360,7 @@ def _write_check_files(check_dir: Path) -> dict[str, Path]:
             "import pydantic",
             "",
             "from tests.generated.readme_fragment_slots.gql.api import (",
-            "    GetPostAttachmentBound,",
+            "    GetPostAttachmentQueryBound,",
             ")",
             "from tests.generated.readme_fragment_slots.queries import (",
             "    get_post_attachment_image,",
@@ -429,37 +436,37 @@ def test_generated_and_scratch_typing_contracts(tmp_path: Path):
 
     diagnostics = _diagnostics(report, check_paths["check_overlapping_tuples.py"])
     errors = [item for item in diagnostics if item.severity == "error"]
-    assert errors == [], f"неожиданные ошибки: {errors}"
+    assert errors == [], f"unexpected errors: {errors}"
     infos = [item for item in diagnostics if item.severity == "information"]
-    bound_type = "GetAttachmentBound[GetAttachmentResult["
+    bound_type = "GetAttachmentQueryBound[GetAttachmentQueryResult["
     assert [info.message for info in infos] == [
-        f'Type of "with_link" is "{bound_type}ImageParts | LinkParts, Never]]"',
-        f'Type of "with_other" is "{bound_type}ImageParts | OtherParts, Never]]"',
+        f'Type of "with_link" is "{bound_type}{IMAGE} | {LINK}, Never]]"',
+        f'Type of "with_other" is "{bound_type}{IMAGE} | {OTHER}, Never]]"',
     ]
 
     diagnostics = _diagnostics(report, check_paths["check_bind_spellings.py"])
     errors = [item for item in diagnostics if item.severity == "error"]
-    assert errors == [], f"неожиданные ошибки: {errors}"
+    assert errors == [], f"unexpected errors: {errors}"
     infos = [item for item in diagnostics if item.severity == "information"]
-    image_type = "OnImageAttachment[ImagePartsData, ImageParts] | ImageParts"
+    image_type = f"OnImageAttachment[ImagePartsData, {IMAGE}] | {IMAGE}"
     assert [info.message for info in infos] == [
         f'Type of "omitted" is "{bound_type}{image_type}, Never]]"',
         f'Type of "one_fragment" is "{bound_type}{image_type}, {image_type}]]"',
-        f'Type of "several" is "{bound_type}Never, OtherParts | LinkParts]]"',
+        f'Type of "several" is "{bound_type}Never, {OTHER} | {LINK}]]"',
         f'Type of "explicit_empty" is "{bound_type}{image_type}, Never]]"',
         f'Type of "bare_call" is "{bound_type}Never, Never]]"',
-        f'Type of "pair_tuple" is "{bound_type}ImageParts | LinkParts, Never]]"',
+        f'Type of "pair_tuple" is "{bound_type}{IMAGE} | {LINK}, Never]]"',
     ]
 
     diagnostics = _diagnostics(report, check_paths["check_one_element_list.py"])
     errors = [item for item in diagnostics if item.severity == "error"]
     errors = [item for item in errors if item.rule == "reportCallIssue"]
-    assert len(errors) == 1, f"ожидалась одна ошибка вызова: {diagnostics}"
+    assert len(errors) == 1, f"expected one call error: {diagnostics}"
     assert errors[0].range.start.line == 4, errors
     [info] = [item for item in diagnostics if item.severity == "information"]
     assert info.message == (
-        'Type of "bare" is "GetAttachmentBound[GetAttachmentResult['
-        'OnImageAttachment[ImagePartsData, ImageParts] | ImageParts]]"'
+        f'Type of "bare" is "{bound_type}'
+        f'OnImageAttachment[ImagePartsData, {IMAGE}] | {IMAGE}]]"'
     )
 
     diagnostics = _diagnostics(report, check_paths["check_catch_all.py"])
@@ -474,34 +481,36 @@ def test_generated_and_scratch_typing_contracts(tmp_path: Path):
     assert [item for item in diagnostics if item.severity == "error"] == []
     [info] = [item for item in diagnostics if item.severity == "information"]
     assert info.message == (
-        'Type of "unwritten" is "GetAttachmentBound[GetAttachmentResult['
-        "OnImageAttachment[ImagePartsData, ImageParts] | ImageParts, "
-        'OtherParts | LinkParts]]"'
+        f'Type of "unwritten" is "{bound_type}'
+        f"OnImageAttachment[ImagePartsData, {IMAGE}] | {IMAGE}, "
+        f'{OTHER} | {LINK}]]"'
     )
 
     assert _errors(report, check_paths["check_tuple_scope_leak.py"]) != [], (
-        "чужая tuple-форма протекла в GetPageAttachment"
+        "a foreign tuple form leaked into GetPageAttachment"
     )
     assert _errors(report, check_paths["check_tuple_scope_own.py"]) == []
 
     errors = _errors(report, check_paths["check_sub_tuple.py"])
     assert {
         error.range.start.line for error in errors if error.rule == "reportCallIssue"
-    } == {2, 5}, f"отклонены не те вызовы: {errors}"
+    } == {2, 5}, f"the wrong calls were rejected: {errors}"
     assert _errors(report, check_paths["check_tuple_order.py"]) == []
     assert _errors(report, check_paths["check_tuple_repeat.py"]) == []
 
     diagnostics = _diagnostics(report, check_paths["check_slots.py"])
     errors = [item for item in diagnostics if item.severity == "error"]
     errors = [item for item in errors if item.rule == "reportArgumentType"]
-    assert len(errors) == 1, f"ожидалась одна ошибка типа аргумента: {diagnostics}"
+    assert len(errors) == 1, f"expected one argument type error: {diagnostics}"
     assert errors[0].range.start.line == 7, errors[0]
     assert "AlbumSummary" in errors[0].message, errors[0].message
     assert "OnOwner" in errors[0].message, errors[0].message
     infos = [item for item in diagnostics if item.severity == "information"]
-    assert len(infos) == 2, f"ожидались два reveal_type: {diagnostics}"
+    assert len(infos) == 2, f"expected two reveal_type: {diagnostics}"
     assert infos[0].message == 'Type of "title" is "AlbumTitleData | None"'
-    assert infos[1].message == ('Type of "queries.album_summary" is "AlbumSummary"')
+    assert infos[1].message == (
+        'Type of "queries.album_summary" is "AlbumSummaryFragment"'
+    )
 
     assert _errors(report, check_paths["check_readme_generic.py"]) == []
     diagnostics = _diagnostics(report, check_paths["check_readme_parameter_helper.py"])
@@ -511,7 +520,7 @@ def test_generated_and_scratch_typing_contracts(tmp_path: Path):
 
     diagnostics = _diagnostics(report, check_paths["check_slot_phantom.py"])
     errors = [item for item in diagnostics if item.severity == "error"]
-    assert len(errors) == 4, f"ожидались четыре ошибки: {diagnostics}"
+    assert len(errors) == 4, f"expected four errors: {diagnostics}"
     assert [item.range.start.line for item in errors] == [30, 31, 34, 45], errors
     infos = [item.message for item in diagnostics if item.severity == "information"]
     assert infos == [
@@ -527,7 +536,7 @@ def test_generated_and_scratch_typing_contracts(tmp_path: Path):
 
     diagnostics = _diagnostics(report, check_paths["check_generic_bind.py"])
     errors = [item for item in diagnostics if item.severity == "error"]
-    assert len(errors) == 2, f"ожидались две ошибки: {diagnostics}"
+    assert len(errors) == 2, f"expected two errors: {diagnostics}"
     assert [item.range.start.line for item in errors] == [18, 41], errors
     infos = [item.message for item in diagnostics if item.severity == "information"]
     assert infos == [

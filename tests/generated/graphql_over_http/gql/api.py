@@ -54,30 +54,30 @@ class GQLModel(pydantic.BaseModel):
     )
 
 
-class PingResult(GQLModel):
+class PingQueryResult(GQLModel):
     ping: str
 
 
-class CounterResult(GQLModel):
+class CounterSubscriptionResult(GQLModel):
     counter: int
 
 
-class Ping(runtime.GQLOperation):
+class PingQuery(runtime.GQLOperation):
     # See: queries.py:3
-    async def execute(self) -> PingResult:
+    async def execute(self) -> PingQueryResult:
         return await _client.query(
-            PingResult,
+            PingQueryResult,
             'query Ping {\n  ping\n}',
             variables={},
             headers=self.headers,
         )
 
 
-class Counter(runtime.GQLOperation):
+class CounterSubscription(runtime.GQLOperation):
     # See: queries.py:4
-    def execute(self) -> AbstractAsyncContextManager[AsyncGenerator[CounterResult]]:
+    def execute(self) -> AbstractAsyncContextManager[AsyncGenerator[CounterSubscriptionResult]]:
         return _client.subscribe(
-            CounterResult,
+            CounterSubscriptionResult,
             'subscription Counter {\n  counter\n}',
             variables={},
             headers=self.headers,
@@ -85,16 +85,16 @@ class Counter(runtime.GQLOperation):
 
 
 @overload
-def api_gql(stmt: Literal['query Ping { ping }']) -> Ping: ...
+def api_gql(stmt: Literal['query Ping { ping }']) -> PingQuery: ...
 @overload
-def api_gql(stmt: Literal['subscription Counter { counter }']) -> Counter: ...
+def api_gql(stmt: Literal['subscription Counter { counter }']) -> CounterSubscription: ...
 @overload
 def api_gql(stmt: str) -> runtime.GQLOperation: ...
 
 
 _statement_factories: dict[str, Callable[[], runtime.GQLOperation]] = {
-    'query Ping { ping }': Ping,
-    'subscription Counter { counter }': Counter,
+    'query Ping { ping }': PingQuery,
+    'subscription Counter { counter }': CounterSubscription,
 }
 
 

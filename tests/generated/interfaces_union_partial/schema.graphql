@@ -1,0 +1,18 @@
+union SearchResult = User | Post | Comment
+
+type User {
+    id: ID!
+    name: String!
+}
+
+type Post {
+    id: ID!
+}
+
+type Comment {
+    id: ID!
+}
+
+type Query {
+    search: SearchResult
+}

@@ -13,6 +13,7 @@ from iron_gql.codegen.ir import GraphQLGenerationError
 from iron_gql.codegen.ir import ImportRef
 from iron_gql.codegen.ir import StrTransform
 from iron_gql.codegen.naming import apply_rename
+from iron_gql.codegen.naming import validate_class_scopes
 from iron_gql.codegen.naming import validate_module_names
 from iron_gql.codegen.naming import validate_signature_names
 from iron_gql.codegen.parser import parse_gql_queries
@@ -165,6 +166,10 @@ def render_gql_module(  # noqa: PLR0913 -- keyword-only options of the entry poi
     ]
     if ir_errors:
         raise GraphQLGenerationError(ir_errors)
+    # Read off the rendered classes, so asked only once every name in them is
+    # a usable identifier.
+    if errors := validate_class_scopes(collected):
+        raise GraphQLGenerationError(errors)
 
     new_content = render_module(
         mode=mode,

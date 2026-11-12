@@ -60,15 +60,15 @@ class User(GQLModel):
     email: str
 
 
-class GetViewerResult(GQLModel):
+class GetViewerQueryResult(GQLModel):
     viewer: User
 
 
-class GetViewer(runtime.GQLOperation):
+class GetViewerQuery(runtime.GQLOperation):
     # See: queries.py:3
-    async def execute(self) -> GetViewerResult:
+    async def execute(self) -> GetViewerQueryResult:
         return await _client.query(
-            GetViewerResult,
+            GetViewerQueryResult,
             'query GetViewer {\n  viewer {\n    id\n    ... {\n      name\n      email\n    }\n  }\n}',
             variables={},
             headers=self.headers,
@@ -76,13 +76,13 @@ class GetViewer(runtime.GQLOperation):
 
 
 @overload
-def api_gql(stmt: Literal['\n    query GetViewer {\n        viewer {\n            id\n            ... {\n                name\n                email\n            }\n        }\n    }\n    ']) -> GetViewer: ...
+def api_gql(stmt: Literal['\n    query GetViewer {\n        viewer {\n            id\n            ... {\n                name\n                email\n            }\n        }\n    }\n    ']) -> GetViewerQuery: ...
 @overload
 def api_gql(stmt: str) -> runtime.GQLOperation: ...
 
 
 _statement_factories: dict[str, Callable[[], runtime.GQLOperation]] = {
-    '\n    query GetViewer {\n        viewer {\n            id\n            ... {\n                name\n                email\n            }\n        }\n    }\n    ': GetViewer,
+    '\n    query GetViewer {\n        viewer {\n            id\n            ... {\n                name\n                email\n            }\n        }\n    }\n    ': GetViewerQuery,
 }
 
 

@@ -54,15 +54,15 @@ class GQLModel(pydantic.BaseModel):
     )
 
 
-class PingResult(GQLModel):
+class PingQueryResult(GQLModel):
     ping: str
 
 
-class Ping(runtime.GQLOperation):
+class PingQuery(runtime.GQLOperation):
     # See: queries.py:3
-    def execute(self) -> PingResult:
+    def execute(self) -> PingQueryResult:
         return _client.query(
-            PingResult,
+            PingQueryResult,
             'query Ping {\n  ping\n}',
             variables={},
             headers=self.headers,
@@ -70,13 +70,13 @@ class Ping(runtime.GQLOperation):
 
 
 @overload
-def api_gql(stmt: Literal['\n    query Ping {\n        ping\n    }\n    ']) -> Ping: ...
+def api_gql(stmt: Literal['\n    query Ping {\n        ping\n    }\n    ']) -> PingQuery: ...
 @overload
 def api_gql(stmt: str) -> runtime.GQLOperation: ...
 
 
 _statement_factories: dict[str, Callable[[], runtime.GQLOperation]] = {
-    '\n    query Ping {\n        ping\n    }\n    ': Ping,
+    '\n    query Ping {\n        ping\n    }\n    ': PingQuery,
 }
 
 

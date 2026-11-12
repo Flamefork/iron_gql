@@ -66,18 +66,18 @@ class User(GQLModel):
     name: str
 
 
-type GetNodesResultNodes = Annotated[Post | User, pydantic.Field(discriminator="typename__")]
+type Node = Annotated[Post | User, pydantic.Field(discriminator="typename__")]
 
 
-class GetNodesResult(GQLModel):
-    nodes: list[GetNodesResultNodes]
+class GetNodesQueryResult(GQLModel):
+    nodes: list[Node]
 
 
-class GetNodes(runtime.GQLOperation):
+class GetNodesQuery(runtime.GQLOperation):
     # See: queries.py:3
-    async def execute(self) -> GetNodesResult:
+    async def execute(self) -> GetNodesQueryResult:
         return await _client.query(
-            GetNodesResult,
+            GetNodesQueryResult,
             'query GetNodes {\n  nodes {\n    __typename\n    ... on User {\n      id\n      name\n    }\n    ... on Post {\n      id\n      title\n    }\n  }\n}',
             variables={},
             headers=self.headers,
@@ -85,13 +85,13 @@ class GetNodes(runtime.GQLOperation):
 
 
 @overload
-def api_gql(stmt: Literal['\n    query GetNodes {\n        nodes {\n            __typename\n            ... on User {\n                id\n                name\n            }\n            ... on Post {\n                id\n                title\n            }\n        }\n    }\n    ']) -> GetNodes: ...
+def api_gql(stmt: Literal['\n    query GetNodes {\n        nodes {\n            __typename\n            ... on User {\n                id\n                name\n            }\n            ... on Post {\n                id\n                title\n            }\n        }\n    }\n    ']) -> GetNodesQuery: ...
 @overload
 def api_gql(stmt: str) -> runtime.GQLOperation: ...
 
 
 _statement_factories: dict[str, Callable[[], runtime.GQLOperation]] = {
-    '\n    query GetNodes {\n        nodes {\n            __typename\n            ... on User {\n                id\n                name\n            }\n            ... on Post {\n                id\n                title\n            }\n        }\n    }\n    ': GetNodes,
+    '\n    query GetNodes {\n        nodes {\n            __typename\n            ... on User {\n                id\n                name\n            }\n            ... on Post {\n                id\n                title\n            }\n        }\n    }\n    ': GetNodesQuery,
 }
 
 

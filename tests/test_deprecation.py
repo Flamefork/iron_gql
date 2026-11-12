@@ -350,3 +350,47 @@ def test_no_deprecated_no_warnings(test_project: ProjectBuilder):
     with warnings.catch_warnings():
         warnings.simplefilter("error", GraphQLDeprecationWarning)
         test_project.generate()
+
+
+def test_deprecation_warning_names_an_anonymous_operation_by_its_hash(
+    test_project: ProjectBuilder,
+):
+    # ADR 0004: an anonymous operation is `anonymous<hash>` whatever its kind,
+    # in a diagnosis as in its class name.
+    schema = """
+        type Query {
+            user: User
+        }
+
+        type Mutation {
+            touch: User
+        }
+
+        type User {
+            id: ID!
+            name: String @deprecated(reason: "Use fullName instead")
+        }
+    """
+
+    test_project.prepare(
+        schema=schema,
+        queries="""
+        from sample_app.gql.api import api_gql
+
+        touch = api_gql(
+            '''
+            mutation {
+                touch {
+                    name
+                }
+            }
+            '''
+        )
+        """,
+    )
+
+    with pytest.warns(
+        GraphQLDeprecationWarning,
+        match=r"Query 'anonymous[0-9A-F][0-9a-f]{31}': field 'User\.name'",
+    ):
+        test_project.generate()

@@ -142,6 +142,7 @@ def _collect_one_of_input_type(
     artifacts.append(
         CollectedUnionAlias(
             name=gql_type.name,
+            graphql_type_name=gql_type.name,
             variants=tuple(NamedRef(name=name) for name in variant_names),
         )
     )

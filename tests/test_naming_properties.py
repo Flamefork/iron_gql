@@ -10,9 +10,15 @@ while the family stayed open.
 
 So the question is asked of the family: over shapes drawn from an alphabet
 built to collide -- underscores, casing, and the very words the encoder uses
-as markers -- two different shapes must never end up under one name.
+as markers -- two different shapes must never end up under one name, and
+generation must not give up on them either: a spelling two shapes share is
+told apart by a suffix from each shape's own key.
+
+ADR 0001 adds the second question: a name may vanish when another query
+arrives, but it never moves to a different shape.
 """
 
+from hypothesis import example
 from hypothesis import given
 from hypothesis import settings
 from hypothesis import strategies as st
@@ -20,7 +26,6 @@ from hypothesis import strategies as st
 from iron_gql.codegen.ir import CollectedField
 from iron_gql.codegen.ir import CollectedModel
 from iron_gql.codegen.ir import CollectedModuleIR
-from iron_gql.codegen.ir import GraphQLGenerationError
 from iron_gql.codegen.ir import ListRef
 from iron_gql.codegen.ir import NamedRef
 from iron_gql.codegen.ir import ScalarRef
@@ -78,8 +83,37 @@ def _fields() -> st.SearchStrategy[list[CollectedField]]:
     )
 
 
-def _model(index: int, fields: list[CollectedField]) -> CollectedModel:
-    return CollectedModel(name=f"Raw{index}", graphql_type_name="T", fields=fields)
+def _model(
+    index: int, fields: list[CollectedField], gql_type: str = "T"
+) -> CollectedModel:
+    return CollectedModel(name=f"Raw{index}", graphql_type_name=gql_type, fields=fields)
+
+
+def _module(models: list[CollectedModel]) -> CollectedModuleIR:
+    return CollectedModuleIR(
+        result_artifacts=list(models),
+        input_artifacts=[],
+        operations=[],
+        fragments=[],
+        on_type_bases=[],
+        templates=[],
+        bindings=[],
+        enums=[],
+        open_model_names=frozenset(),
+        discovered_texts=(),
+    )
+
+
+type Shape = tuple[str | None, tuple[CollectedField, ...]]
+
+
+def _shapes_by_name(models: list[CollectedModel]) -> dict[str, Shape]:
+    renamed = apply_rename(_module(models), frozenset()).result_artifacts
+    return {
+        model.name: (model.graphql_type_name, model.shape_key)
+        for model in renamed
+        if isinstance(model, CollectedModel)
+    }
 
 
 @settings(max_examples=400, deadline=None)
@@ -92,25 +126,63 @@ def test_two_shapes_are_never_named_alike(
         # Identical shapes are *meant* to converge -- that is what lets two
         # selections of one type share a class.
         return
-    ir = CollectedModuleIR(
-        result_artifacts=[first, second],
-        input_artifacts=[],
-        operations=[],
-        fragments=[],
-        on_type_bases=[],
-        templates=[],
-        bindings=[],
-        enums=[],
-        open_model_names=frozenset(),
-        discovered_texts=(),
+    names = list(_shapes_by_name([first, second]))
+    assert len(names) == 2, f"two shapes share a name: {names}"
+
+
+# `TWithA_String` is a legal GraphQL type name that spells the detailed name
+# of a `T` shape: a bare name and a detailed one can meet.
+GRAPHQL_TYPES = st.sampled_from(["T", "U", "TWithA_String"])
+
+
+def _crowded_fields() -> st.SearchStrategy[list[CollectedField]]:
+    # Few types, so that shapes keep meeting on one spelling: a name can only
+    # move where a newcomer contests it.
+    types = st.builds(_scalar, st.just("String"), st.booleans())
+    return st.lists(
+        st.builds(_field, FIELD_NAMES, types),
+        min_size=1,
+        max_size=3,
+        unique_by=lambda field: field.name,
     )
-    # The whole contract, not half of it: the encoder is allowed to run out of
-    # distinguishable names -- it concatenates tokens, and a schema is free to
-    # spell one of them -- but then generation must *say so*. What it may
-    # never do is hand two shapes one class.
-    try:
-        renamed = apply_rename(ir, frozenset())
-    except GraphQLGenerationError:
-        return
-    names = [artifact.name for artifact in renamed.result_artifacts]
-    assert len(set(names)) == len(names), f"two shapes share a name: {names}"
+
+
+def _string(name: str, nullable: bool) -> CollectedField:
+    return _field(name, _scalar("String", nullable))
+
+
+@settings(max_examples=400, deadline=None)
+@example(
+    # `{a_b, c}` and `{a, b_c}` spell one detailed name; with a second shape
+    # in each slot neither collapses, so a newcomer could only take the
+    # name `TWithABC_StringString` from its holder by winning a contest.
+    [
+        ("T", [_string("a_b", False), _string("c", False)]),
+        ("T", [_string("a_b", True), _string("c", False)]),
+        ("T", [_string("a", True), _string("b_c", False)]),
+    ],
+    ("T", [_string("a", False), _string("b_c", False)]),
+)
+@example(
+    # A type spelled like another type's detailed name: the bare name
+    # `TWithA_String` it holds must not pass to the `T` shape that spells it
+    # once `T` has two shapes.
+    [("TWithA_String", [_string("a", False)]), ("T", [_string("a", True)])],
+    ("T", [_string("a", False)]),
+)
+@given(
+    st.lists(st.tuples(GRAPHQL_TYPES, _crowded_fields()), min_size=1, max_size=4),
+    st.tuples(GRAPHQL_TYPES, _crowded_fields()),
+)
+def test_another_query_never_moves_a_name_to_another_shape(
+    existing: list[tuple[str, list[CollectedField]]],
+    added: tuple[str, list[CollectedField]],
+):
+    models = [
+        _model(index, fields, gql_type)
+        for index, (gql_type, fields) in enumerate(existing)
+    ]
+    before = _shapes_by_name(models)
+    after = _shapes_by_name([*models, _model(len(models), added[1], added[0])])
+    for name, shape in before.items():
+        assert after.get(name, shape) == shape, f"{name!r} moved to another shape"

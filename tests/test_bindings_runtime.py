@@ -132,15 +132,15 @@ async def test_disjoint_tuple_binding_reads_each_slice_and_rejects_foreign_defin
         image_node = image_result.post.attachment
         link_node = link_result.post.attachment
 
-        # Каждый definition читает свою projection напрямую.
+        # Each definition reads its own projection directly.
         image = disjoint_queries.image_parts.read(image_node)
         link = disjoint_queries.link_parts.read(link_node)
         assert isinstance(image, ImagePartsData)
         assert isinstance(link, LinkPartsData)
         assert image.url == "u1"
         assert link.href == "h1"
-        # Предложенный definition возвращает None для typename вне coverage;
-        # definition, которого в этом slot не было, остаётся wiring bug.
+        # An offered definition returns None for a typename outside its
+        # coverage; a definition that was not in this slot stays a wiring bug.
         assert disjoint_queries.image_parts.read(link_node) is None
         assert disjoint_queries.link_parts.read(image_node) is None
 
@@ -452,8 +452,8 @@ async def test_composed_fragment_inner_definition_reads_its_own_slice(
         assert inner is not None
         assert inner.url == "u1"
 
-        # Стирание типа definition убирает только static check: runtime
-        # продолжает находить projection по generated definition class.
+        # Erasing the definition's type removes only the static check: the
+        # runtime still finds the projection by the generated definition class.
         erased: GQLFragment[pydantic.BaseModel, Any] = composition_queries.image_parts
         erased_read = read_type_erased(erased, node)
         assert isinstance(erased_read, composition_api.ImagePartsData)
@@ -789,7 +789,7 @@ async def test_bound_operation_validation_error_names_the_shared_result_class(
         with pytest.raises(pydantic.ValidationError) as exc_info:
             _ = await boundary_queries.bound.execute(id="1")
     title = str(exc_info.value).splitlines()[0]
-    assert title == "1 validation error for GetAttachmentResult"
+    assert title == "1 validation error for GetAttachmentQueryResult"
 
 
 async def test_execute_validates_with_the_templates_shared_result_class(
@@ -808,7 +808,7 @@ async def test_execute_validates_with_the_templates_shared_result_class(
         "bindings_composition_boundary", httpserver.url_for("/graphql/")
     ):
         result = await boundary_queries.bound.execute(id="1")
-    assert type(result) is boundary_api.GetAttachmentResult
+    assert type(result) is boundary_api.GetAttachmentQueryResult
 
 
 async def test_a_helper_generic_over_the_binding_reads_what_it_was_handed(
@@ -820,7 +820,7 @@ async def test_a_helper_generic_over_the_binding_reads_what_it_was_handed(
     # fragment it was given. That annotation is the whole of what it gives up:
     # the same `read`, and the runtime guard below still answers.
     def first_attachment[TData: pydantic.BaseModel](
-        result: boundary_api.GetAttachmentResult[Any],
+        result: boundary_api.GetAttachmentQueryResult[Any],
         fragment: GQLFragment[TData, Any],
     ) -> TData | None:
         assert result.post is not None
@@ -847,7 +847,7 @@ async def test_a_bound_result_with_a_populated_slot_does_not_pickle(
     httpserver: HTTPServer,
 ):
     # `execute` always validates against the template's one bare result class
-    # (`GetAttachmentResult`, no combination-specific parametrisation exists
+    # (`GetAttachmentQueryResult`, no combination-specific parametrisation exists
     # any more -- see `render_template_bases`'s comment on the `cast`), so a
     # populated path to the slot instantiates a nested model off that class's
     # own unbound slot phantom rather than off a concrete union of fragment
@@ -870,12 +870,12 @@ async def test_a_bound_result_with_a_populated_slot_does_not_pickle(
 def test_a_bound_result_with_a_null_slot_path_pickles_across_processes():
     # No nested parametrized model is instantiated when the nullable parent is
     # null, and the root class itself is the plain module-level
-    # `GetAttachmentResult` -- `execute` never subscripts a
+    # `GetAttachmentQueryResult` -- `execute` never subscripts a
     # combination-specific parametrisation at module scope any more (there is
     # no more per-combination class whose base-list expression used to do
     # that; see `render_template_bases`'s comment on the `cast`), so a fresh
     # interpreter can import the bare class as-is and restore the result.
-    result = boundary_api.GetAttachmentResult.model_validate({"post": None})
+    result = boundary_api.GetAttachmentQueryResult.model_validate({"post": None})
     assert result.post is None
 
     child = """
@@ -1026,9 +1026,9 @@ async def test_applied_fragment_carries_its_arguments_to_the_request(
 async def test_two_applications_of_one_factory_share_a_projection(
     httpserver: HTTPServer,
 ):
-    # Applications хранят request variables для `bind()`, но projection
-    # принадлежит общей generated definition. Поэтому другая application той
-    # же factory читает response независимо от своих arguments.
+    # Applications keep request variables for `bind()`, but the projection
+    # belongs to the shared generated definition. So another application of the
+    # same factory reads the response regardless of its own arguments.
     httpserver.expect_request("/graphql/", method="POST").respond_with_handler(
         _fragment_vars_handler([])
     )
@@ -1070,7 +1070,7 @@ def test_bindable_base_constructor_cannot_accept_fragment_variables():
 
 
 def test_generated_bound_cannot_be_created_without_binding_state():
-    constructor = cast("Callable[[], object]", fragvars_api.GetAttachmentBound)
+    constructor = cast("Callable[[], object]", fragvars_api.GetAttachmentQueryBound)
     with pytest.raises(TypeError):
         constructor()
 
@@ -1166,14 +1166,14 @@ def test_user_on_type_subclass_cannot_select_a_generated_combination():
         fragvars_queries.get_attachment.bind(attachment=ForgedImageParts())
 
 
-# Четыре позиции, два поведения. `$width` nullable без default, поэтому ведёт
-# себя как operation variable в `execute`: keyword обязателен, а `None`
-# отправляется как явный null. `$height` non-null: schema default его не
-# освобождает, keyword обязателен (`test_binding_expansion` объясняет почему).
-# `$pad` и `$slots` nullable со schema default и могут быть пропущены. `$slots`
-# намеренно совпадает с именем runtime-модуля, который импортирует generated
-# code: допустимое GraphQL-имя не должно менять разрешение sentinel в теле
-# `with_args`.
+# Four positions, two behaviors. `$width` is nullable without a default, so it
+# behaves like an operation variable in `execute`: the keyword is required, and
+# `None` is sent as an explicit null. `$height` is non-null: a schema default
+# does not exempt it, and the keyword is required (`test_binding_expansion`
+# explains why). `$pad` and `$slots` are nullable with a schema default and can
+# be omitted. `$slots` deliberately matches the name of the runtime module the
+# generated code imports: a valid GraphQL name must not change how the sentinel
+# resolves in the body of `with_args`.
 FRAGMENT_VAR_NULLABILITY_SCHEMA = """
 type Query {
     post(id: ID!): Post
@@ -1282,10 +1282,10 @@ async def test_only_a_nullable_defaulted_fragment_variable_may_be_omitted(
         assert image is not None
         assert image.url == "5-20-1-21"
 
-        # Каждая application задаёт весь набор: пропущенные здесь `pad` и
-        # `slots` возвращаются к schema defaults независимо от предыдущей
-        # application. Повторное применение создаёт новую application и bind, а не
-        # изменяет предыдущий.
+        # Each application sets the whole set: `pad` and `slots`, omitted here,
+        # fall back to the schema defaults regardless of the previous
+        # application. Applying again creates a new application and bind rather
+        # than changing the previous one.
         again_applied = nullability_queries.image_parts.with_args(width=5, height=10)
         again_bound = nullability_queries.get_attachment.bind(attachment=again_applied)
         result = await again_bound.execute(id="1")
@@ -1444,10 +1444,10 @@ def test_applications_with_equal_secrets_bind(kind: SecretKind):
 async def test_mixed_mapping_keys_are_compared_after_wire_json_normalization(
     httpserver: HTTPServer,
 ):
-    # Python не сортирует вместе int и str keys, а HTTP JSON encoder сначала
-    # превращает оба в строки имён JSON object. Две applications с этим value
-    # задают один request и обязаны bind-иться; execute доказывает, что сравнение
-    # и transport используют одну normalized shape.
+    # Python does not sort int and str keys together, and the HTTP JSON encoder
+    # first turns both into JSON object name strings. Two applications with this
+    # value describe one request and must bind; execute proves that the
+    # comparison and the transport use one normalized shape.
     seen: list[dict[str, object]] = []
 
     def handler(request: Request) -> Response:

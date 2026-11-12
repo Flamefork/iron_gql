@@ -66,23 +66,23 @@ class User(GQLModel):
     name: str | None
 
 
-class Node(GQLModel):
+class NodeWithIdTypename(GQLModel):
     typename__: Annotated[Literal['Comment'], pydantic.Field(validation_alias="__typename", serialization_alias="__typename")]
     id: builtins.str
 
 
-type GetNodeResultNode = Annotated[Post | User | Node, pydantic.Field(discriminator="typename__")]
+type Node_d4a2497e = Annotated[Post | User | NodeWithIdTypename, pydantic.Field(discriminator="typename__")]
 
 
-class GetNodeResult(GQLModel):
-    node: GetNodeResultNode | None
+class GetNodeQueryResult(GQLModel):
+    node: Node_d4a2497e | None
 
 
-class GetNode(runtime.GQLOperation):
+class GetNodeQuery(runtime.GQLOperation):
     # See: queries.py:3
-    async def execute(self, *, id: builtins.str) -> GetNodeResult:
+    async def execute(self, *, id: builtins.str) -> GetNodeQueryResult:
         return await _client.query(
-            GetNodeResult,
+            GetNodeQueryResult,
             'query GetNode($id: ID!) {\n  node(id: $id) {\n    __typename\n    id\n    ... on User {\n      name\n    }\n    ... on Post {\n      title\n    }\n  }\n}',
             variables={"id": id},
             headers=self.headers,
@@ -90,13 +90,13 @@ class GetNode(runtime.GQLOperation):
 
 
 @overload
-def api_gql(stmt: Literal['\n    query GetNode($id: ID!) {\n        node(id: $id) {\n            __typename\n            id\n            ... on User {\n                name\n            }\n            ... on Post {\n                title\n            }\n        }\n    }\n    ']) -> GetNode: ...
+def api_gql(stmt: Literal['\n    query GetNode($id: ID!) {\n        node(id: $id) {\n            __typename\n            id\n            ... on User {\n                name\n            }\n            ... on Post {\n                title\n            }\n        }\n    }\n    ']) -> GetNodeQuery: ...
 @overload
 def api_gql(stmt: str) -> runtime.GQLOperation: ...
 
 
 _statement_factories: dict[str, Callable[[], runtime.GQLOperation]] = {
-    '\n    query GetNode($id: ID!) {\n        node(id: $id) {\n            __typename\n            id\n            ... on User {\n                name\n            }\n            ... on Post {\n                title\n            }\n        }\n    }\n    ': GetNode,
+    '\n    query GetNode($id: ID!) {\n        node(id: $id) {\n            __typename\n            id\n            ... on User {\n                name\n            }\n            ... on Post {\n                title\n            }\n        }\n    }\n    ': GetNodeQuery,
 }
 
 

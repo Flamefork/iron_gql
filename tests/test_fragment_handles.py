@@ -108,17 +108,21 @@ def test_fragment_statement_returns_a_new_definition_value():
     }
     """
     )
-    assert isinstance(first, api.UserFields)
-    assert isinstance(second, api.UserFields)
+    assert isinstance(first, api.UserFieldsFragment)
+    assert isinstance(second, api.UserFieldsFragment)
     assert first is not second
 
 
 def test_fragment_class_declares_its_on_type_base_and_closure():
-    # Public definition class — обычный concrete value type. `api_gql()`
-    # хранит сам class и создаёт новый instance для каждого вызова.
+    # The public definition class is an ordinary concrete value type.
+    # `api_gql()` stores the class itself and creates a new instance for each
+    # call.
     source = generated_source("fragment_handles")
     assert "class OnUser(slots.GQLBindableFragment[TModel, TReads], ABC):" in source
-    assert '@final\nclass UserFields(OnUser[UserFieldsData, "UserFields"]):' in source
+    assert (
+        "@final\nclass UserFieldsFragment("
+        'OnUser[UserFieldsData, "UserFieldsFragment"]):'
+    ) in source
     assert "class _UserFields(UserFields):" not in source
     assert "USER_FIELDS" not in source
     assert "FRAGMENTS_BY_NAME" not in source
@@ -159,8 +163,8 @@ def test_closure_narrows_to_the_intersection_over_every_compatible_slot_type(
     # actually hold, so `readable_fragments` drops it there. The closure
     # written into `NodeParts`'s own base is the *intersection* over both
     # slots, not just the one it happens to be bound into, so `ImageBits` must
-    # исчезнуть из него. Это доказывает narrowing на нескольких slot types, а
-    # не no-op случай пакета с единственным slot type.
+    # drop out of it. This proves narrowing over several slot types, not the
+    # no-op case of a package with a single slot type.
     test_project.prepare(
         schema=NARROWING_SCHEMA,
         queries="""
@@ -211,14 +215,10 @@ def test_closure_narrows_to_the_intersection_over_every_compatible_slot_type(
     # about what `NodeParts` may promise, not about which fragments exist --
     # so its absence from the closure below is a fact about that promise and
     # not about a fragment the generator happened to drop.
-    assert (
-        '@final\nclass ImageBits(OnImageAttachment[ImageBitsData, "ImageBits"]):'
-        in generated
-    )
-    assert (
-        '@final\nclass NodeParts(OnAttachment[NodePartsData, "NodeParts"]):'
-        in generated
-    )
+    image_base = 'OnImageAttachment[ImageBitsData, "ImageBitsFragment"]'
+    assert f"@final\nclass ImageBitsFragment({image_base}):" in generated
+    node_base = 'OnAttachment[NodePartsData, "NodePartsFragment"]'
+    assert f"@final\nclass NodePartsFragment({node_base}):" in generated
 
 
 def test_definition_carries_its_fragment_name():
@@ -226,7 +226,7 @@ def test_definition_carries_its_fragment_name():
 
 
 def test_definition_validates_its_own_selection():
-    data = api.UserFields().validate__({"id": "u-1", "name": "Alice"})
+    data = api.UserFieldsFragment().validate__({"id": "u-1", "name": "Alice"})
     assert isinstance(data, api.UserFieldsData)
     assert data.name == "Alice"
 
@@ -234,7 +234,7 @@ def test_definition_validates_its_own_selection():
 def test_definition_model_ignores_other_readers_fields():
     # The payload a definition validates carries the other passed fragments'
     # fields next to its own; the model keeps exactly its own selection.
-    data = api.UserFields().validate__({
+    data = api.UserFieldsFragment().validate__({
         "id": "u-1",
         "name": "Alice",
         "email": "alice@example.com",
@@ -250,7 +250,7 @@ def test_interface_fragment_covers_every_possible_type():
     # `ClassVar`.
     (reader,) = fragment_queries.with_node_fields.slot_readers["node"]
     assert reader.typenames == frozenset({"Admin", "User"})
-    user = api.NodeFields().validate__({
+    user = api.NodeFieldsFragment().validate__({
         "__typename": "User",
         "id": "u-1",
         "permissions": ["root"],
@@ -259,7 +259,7 @@ def test_interface_fragment_covers_every_possible_type():
 
 
 def test_interface_fragment_model_is_a_discriminated_union():
-    admin = api.NodeFields().validate__({
+    admin = api.NodeFieldsFragment().validate__({
         "__typename": "Admin",
         "id": "a-1",
         "permissions": ["root"],
@@ -271,7 +271,7 @@ def test_interface_fragment_model_is_a_discriminated_union():
         "permissions": ["root"],
     }
 
-    user = api.NodeFields().validate__({
+    user = api.NodeFieldsFragment().validate__({
         "__typename": "User",
         "id": "u-1",
     })
@@ -280,7 +280,7 @@ def test_interface_fragment_model_is_a_discriminated_union():
 
 
 def test_statement_with_an_operation_is_not_a_definition():
-    assert isinstance(fragment_queries.combined, api.GetViewer)
+    assert isinstance(fragment_queries.combined, api.GetViewerQuery)
     assert not isinstance(fragment_queries.combined, slots.GQLFragment)
     assert not hasattr(api, "ViewerFields")
 
@@ -508,15 +508,15 @@ def test_duplicate_fragment_with_different_spelling_returns_new_definitions(
         """,
     )
     api_module, queries_module = test_project.generate_and_import()
-    assert isinstance(queries_module.first, api_module.UserBits)  # pyright: ignore[reportAny]
-    assert isinstance(queries_module.second, api_module.UserBits)  # pyright: ignore[reportAny]
+    assert isinstance(queries_module.first, api_module.UserBitsFragment)  # pyright: ignore[reportAny]
+    assert isinstance(queries_module.second, api_module.UserBitsFragment)  # pyright: ignore[reportAny]
     assert queries_module.first is not queries_module.second  # pyright: ignore[reportAny]
 
 
 def test_fragment_pinning_a_generated_model_name_is_rejected(
     test_project: ProjectBuilder,
 ):
-    # Fragment `qResultUser` pins `QResultUserData` — the same raw name the
+    # Fragment `qQueryResultUser` pins `QQueryResultUserData` — the same raw name the
     # path `q.user.data` generates for its model. The rename map is keyed by
     # name, so it cannot move one while keeping the other; the collision has
     # to be resolved by the developer.
@@ -546,7 +546,7 @@ def test_fragment_pinning_a_generated_model_name_is_rejected(
 
         f = api_gql(
             '''
-            fragment qResultUser on User { name }
+            fragment qQueryResultUser on User { name }
             '''
         )
 
@@ -563,10 +563,10 @@ def test_fragment_pinning_a_generated_model_name_is_rejected(
         test_project.generate()
 
 
-def test_fragment_named_python_keyword_is_rejected(test_project: ProjectBuilder):
-    # `fragment none` is valid GraphQL, but capitalize_first turns it into
-    # `class None(...)` — the module must be rejected before it is written,
-    # not discovered broken at import.
+def test_fragment_named_python_keyword_generates(test_project: ProjectBuilder):
+    # `fragment none` is valid GraphQL; its class carries the kind suffix
+    # (ADR 0004), so it is `NoneFragment` rather than a `class None(...)`
+    # the module would fail to compile.
     test_project.prepare(
         schema=SCHEMA,
         queries="""
@@ -589,10 +589,8 @@ def test_fragment_named_python_keyword_is_rejected(test_project: ProjectBuilder)
         bound = with_slot.bind(node=f)
         """,
     )
-    with pytest.raises(
-        GraphQLGenerationError, match=r"'None'.*not a usable Python identifier"
-    ):
-        test_project.generate()
+    api_module, _queries = test_project.generate_and_import()
+    assert hasattr(api_module, "NoneFragment")
 
 
 def test_statically_empty_fragment_is_rejected(test_project: ProjectBuilder):

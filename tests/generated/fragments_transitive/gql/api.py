@@ -61,15 +61,15 @@ class User(GQLModel):
     role: str
 
 
-class GetUserResult(GQLModel):
+class GetUserQueryResult(GQLModel):
     user: User | None
 
 
-class GetUser(runtime.GQLOperation):
+class GetUserQuery(runtime.GQLOperation):
     # See: queries.py:30
-    async def execute(self, *, id: builtins.str) -> GetUserResult:
+    async def execute(self, *, id: builtins.str) -> GetUserQueryResult:
         return await _client.query(
-            GetUserResult,
+            GetUserQueryResult,
             'query GetUser($id: ID!) {\n  user(id: $id) {\n    ...UserFields\n  }\n}\n\nfragment ContactFields on User {\n  email\n  ...RoleFields\n}\n\nfragment RoleFields on User {\n  role\n}\n\nfragment UserFields on User {\n  id\n  name\n  ...ContactFields\n}',
             variables={"id": id},
             headers=self.headers,
@@ -77,7 +77,7 @@ class GetUser(runtime.GQLOperation):
 
 
 @overload
-def api_gql(stmt: Literal['\n    query GetUser($id: ID!) {\n        user(id: $id) {\n            ...UserFields\n        }\n    }\n    ']) -> GetUser: ...
+def api_gql(stmt: Literal['\n    query GetUser($id: ID!) {\n        user(id: $id) {\n            ...UserFields\n        }\n    }\n    ']) -> GetUserQuery: ...
 @overload
 def api_gql(stmt: Literal['\n    fragment RoleFields on User {\n        role\n    }\n    ']) -> runtime.GQLOperation: ...
 @overload
@@ -89,7 +89,7 @@ def api_gql(stmt: str) -> runtime.GQLOperation: ...
 
 
 _statement_factories: dict[str, Callable[[], runtime.GQLOperation]] = {
-    '\n    query GetUser($id: ID!) {\n        user(id: $id) {\n            ...UserFields\n        }\n    }\n    ': GetUser,
+    '\n    query GetUser($id: ID!) {\n        user(id: $id) {\n            ...UserFields\n        }\n    }\n    ': GetUserQuery,
     '\n    fragment RoleFields on User {\n        role\n    }\n    ': runtime.GQLOperation,
     '\n    fragment ContactFields on User {\n        email\n        ...RoleFields\n    }\n    ': runtime.GQLOperation,
     '\n    fragment UserFields on User {\n        id\n        name\n        ...ContactFields\n    }\n    ': runtime.GQLOperation,

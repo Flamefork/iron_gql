@@ -59,15 +59,15 @@ class User(GQLModel):
     name: str
 
 
-class GetUserResult(GQLModel):
+class GetUserQueryResult(GQLModel):
     user: User | None
 
 
-class GetUser(runtime.GQLOperation):
+class GetUserQuery(runtime.GQLOperation):
     # See: queries.py:12
-    async def execute(self, *, id: builtins.str) -> GetUserResult:
+    async def execute(self, *, id: builtins.str) -> GetUserQueryResult:
         return await _client.query(
-            GetUserResult,
+            GetUserQueryResult,
             'query GetUser($id: ID!) {\n  user(id: $id) {\n    ...UserFields\n  }\n}\n\nfragment UserFields on User {\n  id\n  name\n}',
             variables={"id": id},
             headers=self.headers,
@@ -75,7 +75,7 @@ class GetUser(runtime.GQLOperation):
 
 
 @overload
-def api_gql(stmt: Literal['\n    query GetUser($id: ID!) {\n        user(id: $id) {\n            ...UserFields\n        }\n    }\n    ']) -> GetUser: ...
+def api_gql(stmt: Literal['\n    query GetUser($id: ID!) {\n        user(id: $id) {\n            ...UserFields\n        }\n    }\n    ']) -> GetUserQuery: ...
 @overload
 def api_gql(stmt: Literal['\n    fragment UserFields on User {\n        id\n        name\n    }\n    ']) -> runtime.GQLOperation: ...
 @overload
@@ -83,7 +83,7 @@ def api_gql(stmt: str) -> runtime.GQLOperation: ...
 
 
 _statement_factories: dict[str, Callable[[], runtime.GQLOperation]] = {
-    '\n    query GetUser($id: ID!) {\n        user(id: $id) {\n            ...UserFields\n        }\n    }\n    ': GetUser,
+    '\n    query GetUser($id: ID!) {\n        user(id: $id) {\n            ...UserFields\n        }\n    }\n    ': GetUserQuery,
     '\n    fragment UserFields on User {\n        id\n        name\n    }\n    ': runtime.GQLOperation,
 }
 

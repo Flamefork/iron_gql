@@ -75,7 +75,7 @@ pip install iron-gql[testing]   # + uvicorn for the loopback test server
    This writes `myapp/gql/client.py`. The module contains:
    - a client singleton for the chosen mode,
    - Pydantic result and input models,
-   - a query class per operation with typed `execute` methods,
+   - a class per operation with typed `execute` methods (see [Generated Names](#generated-names)),
    - overloads for the helper function, so editors can infer return types.
 
    To check that a committed module is current without writing it, call `diff()` instead of `write()`. It returns a unified diff from the file to the rendered module, or an empty string if the file is current.
@@ -93,6 +93,24 @@ pip install iron-gql[testing]   # + uvicorn for the loopback test server
        result = query.execute(id=user_id)
        return result.user
    ```
+
+## Generated Names
+
+Classes named after what you wrote carry their kind, without exceptions. `query GetUser` gives the operation class `GetUserQuery` and its result model `GetUserQueryResult`; `query GetUserQuery` gives `GetUserQueryQuery`. Mutations and subscriptions end in `Mutation` and `Subscription`, a template adds the bound base `GetUserQueryBound`, and `fragment ImageUrl` gives `ImageUrlFragment` with the data model `ImageUrlData`. You get these classes from `<module>_gql("...")`, so you rarely write their names.
+
+Result models are shared by every operation of the module that selects the same shape, and are named after their GraphQL type:
+
+- `User` — the module holds one shape of `User`;
+- `UserWithIdName` — the module holds one shape of `User` with exactly the fields `id` and `name`;
+- otherwise `UserWithIdName_<tokens>`, which spells each field's type one level deep (`PostWithAuthor_Opt_UserWithName`), and a digest of the shape (`…_1a2b3c4d`) after it when two shapes still spell alike.
+
+An interface selection that gives some of its possible types an `... on X` variant gives the rest one fallback model; its detailed name spells its `__typename` as `Except` and the types that do get a variant: `NodeWithTypename_ExceptPost`. A union selection has no fallback model: each of its possible types gets its own variant.
+
+A union result, or an interface result with `... on X` variants, is a `type` alias, a result union alias: `Media` when it is the module's one shape of `Media`, `Media_<digest>` otherwise. An interface's fallback model and a result union alias over that interface are two shapes of one type, so neither is named after it.
+
+A name belongs to one shape or to none. Adding a query never hands a name you import to another shape: it can take the name away, and then your import fails. A class you named never moves either — an operation, template or fragment class, their bases and results, an `On{Type}` base, every model of a template slot, and every model and result union alias of a fragment's data. If a model or a result union alias may claim its name, generation fails and asks you to rename the operation, template or fragment.
+
+A model or a result union alias skips a name that would shadow one its module reads: a builtin the module writes (`str`, `list`, `LookupError`, …), and the name of a result field with a default, such as one under `@skip`/`@include`. A type `str` gives `strWithId`.
 
 ## Custom Scalars
 
@@ -228,17 +246,17 @@ The limit of 256 applies to the final canonical set for each template. This set 
 
 ### Executing and reading
 
-The generator writes one class per template, `{Operation}Bound[TResult]`, with a single type parameter: the result this binding returns. `bind()` returns an instance of it carrying that combination's own operation text, and its `execute` answers with exactly the result the parameter names. Which fragments are readable in each slot is recorded by the result type itself, so `result.post.attachment` still knows what was offered — a slot left unfilled is statically unreadable. Code that works over any binding of one template takes the class with its parameter open and hands the result back to a caller who knows which binding it passed:
+The generator writes one class per template, `{Name}{Kind}Bound[TResult]` (`GetPostAttachmentQueryBound` for `query GetPostAttachment`), with a single type parameter: the result this binding returns. `bind()` returns an instance of it carrying that combination's own operation text, and its `execute` answers with exactly the result the parameter names. Which fragments are readable in each slot is recorded by the result type itself, so `result.post.attachment` still knows what was offered — a slot left unfilled is statically unreadable. Code that works over any binding of one template takes the class with its parameter open and hands the result back to a caller who knows which binding it passed:
 
 ```python
-async def fetch[TResult: pydantic.BaseModel](post_id: str, bound: GetPostAttachmentBound[TResult]) -> TResult:
+async def fetch[TResult: pydantic.BaseModel](post_id: str, bound: GetPostAttachmentQueryBound[TResult]) -> TResult:
     return await bound.execute(id=post_id)
 
 result = await fetch("1", get_post_attachment_image)
 image = image_url.read(result.post.attachment) if result.post else None
 ```
 
-The result models belong to the template, not to each binding. `GetPostAttachmentResult` and its nested models have one generic type parameter per slot. A binding fills these parameters, for example `GetPostAttachmentResult[ImageUrl | LinkUrl]`. Thus, one template writes one set of models for all its bindings, and a validation error names that shared model rather than any one combination. A helper can use `GetPostAttachmentResult[Any]` to accept the result of any binding (see below).
+The result models belong to the template, not to each binding. `GetPostAttachmentQueryResult` and its nested models have one generic type parameter per slot. A binding fills these parameters, for example `GetPostAttachmentQueryResult[ImageUrlFragment | LinkUrlFragment]`. Thus, one template writes one set of models for all its bindings, and a validation error names that shared model rather than any one combination. A helper can use `GetPostAttachmentQueryResult[Any]` to accept the result of any binding (see below).
 
 Pickle support depends on which generic models the payload instantiates. A populated path to a slot creates nested Pydantic parametrizations without module-level pickle names. `pickle.dumps()` raises `PicklingError` for such a result. If `None` stops every slot path before a nested generic model is created, only the registered root specialization is instantiated. `{"post": null}` creates no nested model, so its result can cross a process boundary.
 
@@ -258,13 +276,13 @@ attachment = same_definition.read(result.post.attachment)
 
 `fragment.read(node)` is checked statically: the node's type holds the definitions the binding offered for this slot. Reading a definition that was not offered — including any read of an unfilled slot — is a type error. On the type-erased path the same wiring mistake raises `ValueError` instead of returning `None`, so that a wiring bug does not look like an acceptable runtime type mismatch.
 
-This check works as long as the exact type of the definition or application is kept. For a heterogeneous registry, give both type parameters explicitly: `GQLFragment[pydantic.BaseModel, Any]`. If the exact readable contract is already erased, use `{Operation}Result[Any]` as well: it accepts the result of any binding and supports the same `read`. Only the static check is lost; at runtime only a definition the binding offered for the slot is still accepted.
+This check works as long as the exact type of the definition or application is kept. For a heterogeneous registry, give both type parameters explicitly: `GQLFragment[pydantic.BaseModel, Any]`. If the exact readable contract is already erased, use `{Name}{Kind}Result[Any]` as well: it accepts the result of any binding and supports the same `read`. Only the static check is lost; at runtime only a definition the binding offered for the slot is still accepted.
 
 This way shared infrastructure can own an operation and return data instead of the raw result: the helper writes `Any` for the slot it does not know and reads through the fragment its caller passed.
 
 ```python
 def title[TData: pydantic.BaseModel, TReads](
-    result: GetPostAttachmentResult[Any], fragment: GQLFragment[TData, TReads]
+    result: GetPostAttachmentQueryResult[Any], fragment: GQLFragment[TData, TReads]
 ) -> TData | None:
     return fragment.read(result.post.attachment) if result.post else None
 ```
@@ -324,6 +342,8 @@ Generation fails, naming the file and line, for:
 - a source file the scan cannot parse that mentions the gql function or `bind` — it may hold statements or binds, and dropping it would rewrite the module without them. A file that names neither owns nothing the module could lose and is skipped, unless some bind's name resolution has to travel through it;
 - a fragment that is not spread-compatible with the slot — the same mismatch is also a type error at the `bind()` call site, so most callers see it in the editor before they even regenerate;
 - a generated name claimed twice by an actual `On{Type}` base, a factory, a private Applied class, a fragment, a model, or an enum. A fragment name can also collide with a type parameter in another slot's `bind()` overload. Rename the fragment or add an alias to the field that creates the model;
+- a class named after an operation, a template or a fragment — the operation, template or fragment class, its bound base, its result, an `On{Type}` base, a model of a slot, a model or result union alias of a fragment's data — whose name a result model or result union alias may claim, whichever of its names that shape ends up with ([Generated Names](#generated-names)). Rename the operation, template or fragment;
+- an enum named like a builtin the module reads (`enum str`), and a field with a default — under `@skip`/`@include`, or an optional input field — named like anything its model's annotations read: a builtin, a scalar's module, an enum (`str: name @include(if: $full)`). Pydantic would resolve the annotations to the default. Alias the field;
 - a fragment readable at a slot's root reached under `@skip`/`@include` — whether the directive sits on the spread or on an inline fragment around it — at any runtime type where that conditional path is the only way it reaches the root, since such a fragment is requested and validated on every response and so cannot be conditionally absent. Reaching it unconditionally as well — bound directly, or spread again without a directive — covers the types reached that way, and only the types left over are rejected. The same directive on a spread inside a nested field is fine;
 - a bound fragment whose name a template also defines locally, with a different definition — one name is one definition in the expanded document;
 - a factory that a template spreads by name and can also bind to a compatible slot in that template. `execute` and `with_args` would become two sources for one GraphQL variable;

@@ -1,0 +1,13 @@
+type Query {
+    feed: [Post!]!
+}
+
+type Post {
+    id: ID!
+    title: String
+    author: User
+}
+
+type User {
+    posts: [Post!]!
+}
