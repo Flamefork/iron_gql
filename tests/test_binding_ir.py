@@ -1,5 +1,6 @@
 from pathlib import Path
 
+import graphql
 import pytest
 from pydantic import alias_generators
 
@@ -519,6 +520,66 @@ def test_bind_template_ref_to_an_invalid_operation_is_diagnosed_accurately(
     assert not any("is not an operation" in error for error in parse_res.errors)
     assert any("failed to validate" in error for error in parse_res.errors)
     assert any("nonExistentField" in error for error in parse_res.errors)
+
+
+def test_bind_template_ref_to_a_statement_of_several_operations_is_diagnosed(
+    tmp_path: Path,
+):
+    # Operation-shaped, so not "is not an operation"; it is rejected on its own
+    # terms, and the bind points there.
+    schema_path = _write_schema(tmp_path)
+    several_stmt = _stmt(
+        TEMPLATE_TEXT + 'query Other { post(id: "1") { id } }', "several"
+    )
+    bind = BindDecl(template=several_stmt, slot_args=(), locations=("<test:bad>:1",))
+
+    parse_res = parse_gql_queries(
+        schema_path, [several_stmt], [bind], bind_keyword_checks=()
+    )
+
+    assert parse_res.errors == [
+        (
+            "<test:several>:1: the statement holds 2 operations, but a gql call "
+            "takes one -- split it into one call per operation"
+        ),
+        (
+            "Bind at <test:bad>:1: template at <test:several>:1 failed to "
+            "validate; see the error reported for it"
+        ),
+    ]
+
+
+def test_bind_slot_arg_that_is_an_invalid_fragment_gets_its_own_diagnosis(
+    tmp_path: Path,
+):
+    schema_path = _write_schema(tmp_path)
+    template_stmt = _stmt(TEMPLATE_TEXT, "template")
+    invalid_text = "fragment ImageParts on ImageAttachment { caption }"
+    invalid_stmt = _stmt(invalid_text, "invalid")
+    bind = BindDecl(
+        template=template_stmt,
+        slot_args=(("attachment", (invalid_stmt,)),),
+        locations=("<test:bad>:1",),
+    )
+    # The oracle: graphql-core validating the fragment on its own.
+    diagnoses = graphql.validate(
+        graphql.build_schema(SCHEMA),
+        graphql.parse(invalid_text),
+        rules=[
+            rule
+            for rule in graphql.specified_rules
+            if rule is not graphql.NoUnusedFragmentsRule
+        ],
+    )
+
+    parse_res = parse_gql_queries(
+        schema_path, [template_stmt, invalid_stmt], [bind], bind_keyword_checks=()
+    )
+
+    assert parse_res.errors == [
+        "Invalid GraphQL fragment in <test:invalid>:1:\n"
+        + "\n".join(str(error) for error in diagnoses)
+    ]
 
 
 def test_bind_slot_arg_not_a_single_fragment_statement_is_rejected(tmp_path: Path):

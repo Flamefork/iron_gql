@@ -1,6 +1,5 @@
 from pathlib import Path
 
-import graphql
 from pydantic import alias_generators
 
 from iron_gql.codegen.collect import collect_module_ir
@@ -11,31 +10,26 @@ from iron_gql.codegen.ir import CollectedModuleIR
 from iron_gql.codegen.ir import CollectedUnionAlias
 from iron_gql.codegen.ir import ImportRef
 from iron_gql.codegen.naming import apply_rename
-from iron_gql.codegen.parser import build_queries
-from iron_gql.codegen.parser import classify_queries
-from iron_gql.codegen.parser import collect_fragment_statements
-from iron_gql.codegen.parser import collect_fragments
-from iron_gql.codegen.parser import parse_documents
+from iron_gql.codegen.parser import parse_gql_queries
 
 
-def _build_ir(schema_sdl: str, query_sources: list[str]) -> CollectedModuleIR:
-    schema = graphql.build_schema(schema_sdl)
+def _build_ir(
+    tmp_path: Path, schema_sdl: str, query_sources: list[str]
+) -> CollectedModuleIR:
+    schema_path = tmp_path / "schema.graphql"
+    schema_path.write_text(schema_sdl, encoding="utf-8")
     statements = [
         Statement(raw_text=text, file=Path(f"<test:{index}>"), lineno=1)
         for index, text in enumerate(query_sources)
     ]
-    docs = parse_documents(statements)
-    fragments = collect_fragments(docs)
-    operations, templates, errors = classify_queries(
-        build_queries(schema, docs, fragments)
-    )
-    assert errors == []
+    parsed = parse_gql_queries(schema_path, statements, [], bind_keyword_checks=())
+    assert parsed.errors == []
     return apply_rename(
         collect_module_ir(
-            schema=schema,
-            operations=operations,
-            templates=templates,
-            fragment_statements=collect_fragment_statements(schema, docs, fragments),
+            schema=parsed.schema,
+            operations=parsed.operations,
+            templates=parsed.templates,
+            fragment_statements=parsed.bindable_statements,
             binds=[],
             bind_keyword_checks=(),
             discovered_texts=(),
@@ -63,7 +57,7 @@ def _model_names(artifacts: list[CollectedArtifact]) -> list[str]:
     ]
 
 
-def test_within_query_same_union_variant_collapses():
+def test_within_query_same_union_variant_collapses(tmp_path: Path):
     schema = """
         type Query {
             items: ItemResult!
@@ -92,7 +86,7 @@ def test_within_query_same_union_variant_collapses():
             }
         }
     """
-    ir = _build_ir(schema, [query])
+    ir = _build_ir(tmp_path, schema, [query])
 
     fruit_models = _models_by_graphql_type(ir.result_artifacts, "Fruit")
     vegetable_models = _models_by_graphql_type(ir.result_artifacts, "Vegetable")
@@ -104,7 +98,7 @@ def test_within_query_same_union_variant_collapses():
     assert names.count(vegetable_models[0].name) == 1
 
 
-def test_between_queries_same_shape_collapses():
+def test_between_queries_same_shape_collapses(tmp_path: Path):
     schema = """
         type Query {
             feed: [Post!]!
@@ -119,14 +113,14 @@ def test_between_queries_same_shape_collapses():
         "query GetFeed { feed { id title } }",
         "query GetPost($id: ID!) { post(id: $id) { id title } }",
     ]
-    ir = _build_ir(schema, queries)
+    ir = _build_ir(tmp_path, schema, queries)
 
     post_models = _models_by_graphql_type(ir.result_artifacts, "Post")
     assert len(post_models) == 1
     assert _model_names(ir.result_artifacts).count(post_models[0].name) == 1
 
 
-def test_field_aliases_do_not_prevent_dedup():
+def test_field_aliases_do_not_prevent_dedup(tmp_path: Path):
     # shape_key includes aliases, so identical aliased selections must dedup.
     schema = """
         type Query {
@@ -150,14 +144,14 @@ def test_field_aliases_do_not_prevent_dedup():
         }
         """,
     ]
-    ir = _build_ir(schema, queries)
+    ir = _build_ir(tmp_path, schema, queries)
 
     user_models = _models_by_graphql_type(ir.result_artifacts, "User")
     assert len(user_models) == 1
     assert _model_names(ir.result_artifacts).count(user_models[0].name) == 1
 
 
-def test_union_variants_with_same_shape_across_queries_collapse():
+def test_union_variants_with_same_shape_across_queries_collapse(tmp_path: Path):
     schema = """
         type Query {
             a: Container!
@@ -190,7 +184,7 @@ def test_union_variants_with_same_shape_across_queries_collapse():
         }
         """,
     ]
-    ir = _build_ir(schema, queries)
+    ir = _build_ir(tmp_path, schema, queries)
 
     alpha_models = _models_by_graphql_type(ir.result_artifacts, "Alpha")
     beta_models = _models_by_graphql_type(ir.result_artifacts, "Beta")

@@ -1,0 +1,8 @@
+type Query {
+    node: Node
+}
+
+type Node {
+    id: ID!
+    name: String
+}

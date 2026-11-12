@@ -3,8 +3,13 @@
 A schema id names the stage -- `schema=syntax` for a document that does not
 parse, `schema=sdl` for one graphql-core builds no schema from, `schema=type-system`
 for a built schema it finds invalid -- and the defect. A statement id names the
-token the parser stops on. What the diagnosis says comes from graphql-core
-itself, not from the cases.
+stage too: `statement=syntax` with the token the parser stops on, and
+`statement=validation` with the validation rule that rejects it and the form it
+rejects. What the diagnosis says comes from graphql-core itself, not from the
+cases. Statements are written against `type Query { ping: String }`.
+
+Statements holding several operations parse and are rejected before
+validation; their ids name how many operations and fragments they hold.
 """
 
 from dataclasses import dataclass
@@ -55,5 +60,74 @@ REJECTED_STATEMENTS: tuple[RejectedInput, ...] = (
     ),
     RejectedInput(
         id="statement=syntax/stop=fragment-without-type", text="fragment F { ping }"
+    ),
+)
+
+INVALID_STATEMENTS: tuple[RejectedInput, ...] = (
+    RejectedInput(
+        id="statement=validation/rule=known-operation-types/root=mutation",
+        text="mutation Change { ping }",
+    ),
+    RejectedInput(
+        id="statement=validation/rule=known-operation-types/root=subscription",
+        text="subscription Watch { ping }",
+    ),
+    RejectedInput(
+        id="statement=validation/rule=known-type-names/variable=bare",
+        text="query Find($id: Missing) { ping }",
+    ),
+    RejectedInput(
+        id="statement=validation/rule=known-type-names/variable=list-non-null",
+        text="query Find($ids: [Missing!]!) { ping }",
+    ),
+    RejectedInput(
+        id="statement=validation/rule=known-type-names/fragment-on=unknown",
+        text="fragment Fields on Missing { ping }",
+    ),
+    RejectedInput(
+        id="statement=validation/rule=fragments-on-composite-types/fragment-on=scalar",
+        text="fragment Fields on String { ping }",
+    ),
+    RejectedInput(
+        id="statement=validation/rule=known-fragment-names/spread-in=operation",
+        text="query Find { ...Missing }",
+    ),
+    RejectedInput(
+        id="statement=validation/rule=fields-on-correct-type/fragments=2-unused",
+        text="fragment Left on Query { ping }\nfragment Right on Query { absent }",
+    ),
+    RejectedInput(
+        id="statement=validation/rule=no-fragment-cycles/cycle=self",
+        text="fragment Fields on Query { ping ...Fields }",
+    ),
+    RejectedInput(
+        id="statement=validation/rule=no-fragment-cycles/cycle=pair",
+        text=(
+            "fragment Left on Query { ping ...Right }\n"
+            "fragment Right on Query { ping ...Left }"
+        ),
+    ),
+)
+
+SEVERAL_OPERATION_STATEMENTS: tuple[RejectedInput, ...] = (
+    RejectedInput(
+        id="operations=2/named=2/fragments=0",
+        text="query First { ping }\nquery Second { ping }",
+    ),
+    RejectedInput(
+        id="operations=2/named=1/fragments=0",
+        text="{ ping }\nquery Second { ping }",
+    ),
+    RejectedInput(
+        id="operations=2/named=2/fragments=1",
+        text=(
+            "query First { ...Fields }\n"
+            "query Second { ping }\n"
+            "fragment Fields on Query { ping }"
+        ),
+    ),
+    RejectedInput(
+        id="operations=3/named=3/fragments=0/roots=query+mutation",
+        text="query First { ping }\nquery Second { ping }\nmutation Third { ping }",
     ),
 )

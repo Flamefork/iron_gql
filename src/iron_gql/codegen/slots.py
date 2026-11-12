@@ -207,7 +207,7 @@ def validate_no_nested_slots(ir: CollectedModuleIR) -> list[str]:
     # of being given accidental semantics.
     #
     # Walks `ir.templates`, not `ir.operations`: a slot can only ever appear
-    # on a template — that is what `parser.classify_queries` means by the
+    # on a template — that is what `parser._operation` means by the
     # word, and the two kinds have been separate types ever since — so an
     # operation has no slots to nest in the first place.
     artifacts = {artifact.name: artifact for artifact in ir.result_artifacts}

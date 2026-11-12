@@ -5,8 +5,10 @@ import pytest
 
 from iron_gql.codegen import GraphQLGenerationError
 from tests.conftest import ProjectBuilder
+from tests.corpus.rejected_inputs import INVALID_STATEMENTS
 from tests.corpus.rejected_inputs import REJECTED_SCHEMAS
 from tests.corpus.rejected_inputs import REJECTED_STATEMENTS
+from tests.corpus.rejected_inputs import SEVERAL_OPERATION_STATEMENTS
 from tests.corpus.rejected_inputs import RejectedInput
 
 PING_QUERY = """
@@ -203,6 +205,122 @@ def test_statement_syntax_errors_come_without_the_diagnoses_they_cause(
         test_project.render()
     [error] = exc.value.errors
     assert error.startswith("sample_app/queries.py:2: Syntax Error:")
+
+
+STATEMENT_SCHEMA = "type Query { ping: String }"
+
+
+def _prepare_with_statement(test_project: ProjectBuilder, text: str) -> None:
+    test_project.prepare(
+        schema=STATEMENT_SCHEMA,
+        queries=f"""
+        from sample_app.gql.api import api_gql
+        statement = api_gql({text!r})
+        """,
+    )
+
+
+# The oracle: graphql-core validating the statement on its own -- an operation
+# under every specified rule, fragments without the unused-fragment rule, since
+# nothing in a statement of fragments uses them.
+def _graphql_core_validation(text: str) -> tuple[str, list[str]]:
+    doc = graphql.parse(text)
+    schema = graphql.build_schema(STATEMENT_SCHEMA)
+    if _operation_count(text):
+        return "query", [str(error) for error in graphql.validate(schema, doc)]
+    rules = [
+        rule
+        for rule in graphql.specified_rules
+        if rule is not graphql.NoUnusedFragmentsRule
+    ]
+    return "fragment", [
+        str(error) for error in graphql.validate(schema, doc, rules=rules)
+    ]
+
+
+def _operation_count(text: str) -> int:
+    return sum(
+        isinstance(definition, graphql.OperationDefinitionNode)
+        for definition in graphql.parse(text).definitions
+    )
+
+
+@pytest.mark.parametrize(
+    "case", INVALID_STATEMENTS, ids=[case.id for case in INVALID_STATEMENTS]
+)
+def test_invalid_statement_names_the_call_site_and_the_graphql_core_diagnoses(
+    test_project: ProjectBuilder, case: RejectedInput
+):
+    _prepare_with_statement(test_project, case.text)
+    kind, diagnoses = _graphql_core_validation(case.text)
+    assert diagnoses
+
+    with pytest.raises(GraphQLGenerationError) as exc:
+        test_project.render()
+    assert exc.value.errors == [
+        f"Invalid GraphQL {kind} in sample_app/queries.py:2:\n" + "\n".join(diagnoses)
+    ]
+
+
+def _several_operations(location: str, count: int) -> str:
+    return (
+        f"{location}: the statement holds {count} operations, but a gql call "
+        "takes one -- split it into one call per operation"
+    )
+
+
+@pytest.mark.parametrize(
+    "case",
+    SEVERAL_OPERATION_STATEMENTS,
+    ids=[case.id for case in SEVERAL_OPERATION_STATEMENTS],
+)
+def test_a_statement_with_several_operations_is_rejected(
+    test_project: ProjectBuilder, case: RejectedInput
+):
+    # The generated class would follow the first operation while the sent
+    # document carried all of them, with no operation name to pick one.
+    _prepare_with_statement(test_project, case.text)
+
+    with pytest.raises(GraphQLGenerationError) as exc:
+        test_project.render()
+    assert exc.value.errors == [
+        _several_operations("sample_app/queries.py:2", _operation_count(case.text))
+    ]
+
+
+def test_rejections_of_several_statements_come_in_one_error(
+    test_project: ProjectBuilder,
+):
+    test_project.prepare(
+        schema=STATEMENT_SCHEMA,
+        queries="""
+        from sample_app.gql.api import api_gql
+        both = api_gql("query First { ping } query Second { ping }")
+        fields = api_gql("fragment Fields on Query { ping }")
+        """,
+    )
+    test_project.write_file(
+        test_project.root / "sample_app/other.py",
+        """
+        from sample_app.gql.api import api_gql
+        missing = api_gql("query Missing { absent }")
+        fields = api_gql("fragment Fields on Query { __typename }")
+        """,
+    )
+    _kind, [unknown_field] = _graphql_core_validation("query Missing { absent }")
+
+    with pytest.raises(GraphQLGenerationError) as exc:
+        test_project.render()
+    assert sorted(exc.value.errors) == sorted([
+        _several_operations("sample_app/queries.py:2", 2),
+        f"Invalid GraphQL query in sample_app/other.py:2:\n{unknown_field}",
+        (
+            "Fragment 'Fields' is defined differently at sample_app/other.py:3, "
+            "sample_app/queries.py:3; a fragment name means one definition across "
+            "the package -- rename one of the fragments or make their definitions "
+            "agree"
+        ),
+    ])
 
 
 def test_a_rejected_input_is_still_a_value_error(test_project: ProjectBuilder):

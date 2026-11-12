@@ -9,8 +9,8 @@ from iron_gql.codegen.accessors import type_from_ast
 from iron_gql.codegen.accessors import type_info_input_type
 from iron_gql.codegen.accessors import visit_document
 from iron_gql.codegen.ir import GraphQLGenerationError
+from iron_gql.codegen.parser import FragmentStatement
 from iron_gql.codegen.parser import collect_fragments_from_doc
-from iron_gql.codegen.parser import collect_transitive_fragment_names
 from iron_gql.codegen.selection import has_conditional_directive
 from iron_gql.codegen.selection import response_key
 from iron_gql.codegen.slots import has_slot_directive
@@ -170,26 +170,6 @@ def _validate_slot_args(
     ]
     if errors:
         raise GraphQLGenerationError(errors)
-
-
-def _closure_fragments(
-    *,
-    direct_names: Iterable[str],
-    fragments: Mapping[str, graphql.FragmentDefinitionNode],
-    location: str,
-) -> tuple[graphql.FragmentDefinitionNode, ...]:
-    # The document closure contains every definition the expanded operation
-    # needs, regardless of where the spread sits. Which of them are read through
-    # their own definition at the slot root is decided separately by
-    # `readable_fragments`.
-    closure_names, missing = collect_transitive_fragment_names(direct_names, fragments)
-    if missing:
-        # Internal invariant: `parser.bindable_statements` walked this very closure
-        # over this very namespace and reported every unresolvable name, so a
-        # bind that reaches this far has none left.
-        msg = f"unresolvable fragment(s) in the closure of a bind at {location}"
-        raise AssertionError(msg)
-    return tuple(fragments[name] for name in sorted(closure_names))
 
 
 @dataclass(kw_only=True, frozen=True)
@@ -672,29 +652,9 @@ def _direct_variable_collision_error(
     )
 
 
-def _fragment_closure_variable_names(
-    root_name: str,
-    *,
-    fragments: Mapping[str, graphql.FragmentDefinitionNode],
-    schema: graphql.GraphQLSchema,
-) -> frozenset[str]:
-    # The own transitive closure of a directly passed fragment: the fragment
-    # itself and every spread at any depth. It is the direct fragment, not the
-    # flat closure of the whole binding, that decides which application a
-    # variable belongs to. `_missing` is dropped: `_closure_fragments` has
-    # already resolved the binding's whole closure, and the closure of
-    # `root_name` is a subset of it.
-    reachable, _missing = collect_transitive_fragment_names([root_name], fragments)
-    closure_nodes = [fragments[name] for name in reachable]
-    return frozenset(
-        _usages_by_name(closure_nodes, schema=schema, skip_names=frozenset())
-    )
-
-
 def _variable_owner_collisions(
     *,
-    direct_by_name: Mapping[str, graphql.FragmentDefinitionNode],
-    fragments: Mapping[str, graphql.FragmentDefinitionNode],
+    direct_by_name: Mapping[str, FragmentStatement],
     operation: graphql.OperationDefinitionNode,
     template_name: str,
     schema: graphql.GraphQLSchema,
@@ -708,11 +668,18 @@ def _variable_owner_collisions(
     # Two applications of one factory in different compatible slots are checked
     # at runtime: their concrete values are known only at `bind()`, and fully
     # identical applications are allowed.
+    #
+    # It is the direct fragment's own document closure, not the flat closure of
+    # the whole binding, that decides which application a variable belongs to.
     names_by_fragment = {
-        direct_name: _fragment_closure_variable_names(
-            direct_name, fragments=fragments, schema=schema
+        direct_name: frozenset(
+            _usages_by_name(
+                (statement.definition, *statement.dependencies),
+                schema=schema,
+                skip_names=frozenset(),
+            )
         )
-        for direct_name in direct_by_name
+        for direct_name, statement in direct_by_name.items()
     }
     owners: dict[str, list[str]] = defaultdict(list)
     for direct_name, names in names_by_fragment.items():
@@ -783,7 +750,6 @@ def _build_expanded_document(
     *,
     fragment_var_defs: tuple[graphql.VariableDefinitionNode, ...],
     closure: tuple[graphql.FragmentDefinitionNode, ...],
-    location: str,
 ) -> graphql.DocumentNode:
     definitions: list[graphql.DefinitionNode] = []
     for definition in filled.definitions:
@@ -804,44 +770,17 @@ def _build_expanded_document(
             definitions.append(definition)
     # The template document already carries the definitions of every fragment
     # the operation spreads by name, and a bound fragment's closure may reach
-    # the very same ones -- so a shared name is usually the same definition,
-    # not a conflict, and appending blindly produced a document with two
-    # definitions of one fragment that `graphql.validate` rejected as "there
-    # can be only one fragment named X", ruling out exactly the brick reuse the
-    # README recommends. Merged by name here -- but only when the two sides
-    # really are the same definition. A template statement may define a
-    # fragment locally (`make_validation_doc` resolves its own spreads
-    # local-first), and keeping that copy over a same-named bound statement
-    # would ship a document whose `Foo` selects other fields than the `FooData`
-    # model that the definition validates.
-    #
-    # Identity first: brick reuse means the template and the closure usually
-    # arrive at the very same node, and printing both sides of that is the bulk
-    # of the AST printing a module with shared bricks does.
+    # the very same ones -- so a shared name is the same definition, not a
+    # conflict, and appending blindly produced a document with two definitions
+    # of one fragment that `graphql.validate` rejected as "there can be only
+    # one fragment named X", ruling out exactly the brick reuse the README
+    # recommends. Merged by name: a fragment name means one definition across
+    # the package (ADR 0006), which the parser has already enforced.
     by_name = collect_fragments_from_doc(filled)
-    errors = [
-        _fragment_definition_conflict_error(name=fragment.name.value, location=location)
-        for fragment in closure
-        if (other := by_name.get(fragment.name.value)) is not None
-        and other is not fragment
-        and graphql.print_ast(other) != graphql.print_ast(fragment)
-    ]
-    if errors:
-        raise GraphQLGenerationError(errors)
     definitions.extend(
-        fragment
-        for fragment in sorted(closure, key=lambda fragment: fragment.name.value)
-        if fragment.name.value not in by_name
+        fragment for fragment in closure if fragment.name.value not in by_name
     )
     return graphql.DocumentNode(definitions=tuple(definitions))
-
-
-def _fragment_definition_conflict_error(*, name: str, location: str) -> str:
-    return (
-        f"Combination at {location} carries fragment '{name}' in its closure, but the "
-        f"template defines a different fragment under that name; one name is "
-        "one definition in the expanded document -- rename one of them"
-    )
 
 
 def _combination_label(
@@ -892,18 +831,18 @@ def expand_binding(
     *,
     schema: graphql.GraphQLSchema,
     template_doc: graphql.DocumentNode,
-    # The template document's own operation -- `parser.Query.operation_def`,
-    # which is where the rule "the operation is the document's one operation
-    # definition" is stated.
+    # The template document's own operation -- `parser.Template.operation_def`,
+    # the statement's one operation, checked when the statement was parsed.
     template_operation: graphql.OperationDefinitionNode,
     # The template's name as the rest of the pipeline knows it -- `parser.
-    # Query.name`, which falls back to the statement hash for an anonymous
+    # Template.name`, which falls back to the statement hash for an anonymous
     # operation. Passed rather than read off the operation node, so a
     # diagnosis here quotes the same name the generated class carries.
     template_name: str,
     slots: Mapping[str, SlotTarget],
-    spreads: Mapping[str, tuple[graphql.FragmentDefinitionNode, ...]],
-    all_fragments: dict[str, graphql.FragmentDefinitionNode],
+    # The bound statements, each carrying the document closure it validated
+    # with and that `parser.bindable_statements` already checked for a bind.
+    spreads: Mapping[str, tuple[FragmentStatement, ...]],
     location: str,
 ) -> ExpandedBinding:
     # `slots` and `spreads` are both keyed by the `bind()` keyword; everything
@@ -918,14 +857,21 @@ def expand_binding(
     # before the next one starts. The phase boundaries are barriers by
     # necessity, not by taste: past a bad slot key there is no slot type to
     # read (`_readable_by_response_key` below would KeyError on `slots[key]`),
-    # past an unresolvable closure name there is no definition to walk, and
-    # past a variable collision the expanded document is *valid* GraphQL that
-    # means the wrong thing -- `graphql.validate` would pass it in silence.
-    # Within a phase the checks are independent, so stopping at the first one
-    # just costs the developer another regeneration.
+    # and past a variable collision the expanded document is *valid* GraphQL
+    # that means the wrong thing -- `graphql.validate` would pass it in
+    # silence. Within a phase the checks are independent, so stopping at the
+    # first one just costs the developer another regeneration.
     #
+    # The bound definitions by slot: what the slot checks, the readable walk
+    # and the splice read.
+    definitions = {
+        key: tuple(statement.definition for statement in statements)
+        for key, statements in spreads.items()
+    }
     # Phase A -- the bind's own arguments against the template's slots.
-    _validate_slot_args(schema=schema, slots=slots, spreads=spreads, location=location)
+    _validate_slot_args(
+        schema=schema, slots=slots, spreads=definitions, location=location
+    )
     # The translation itself, written once: everything below keys by the
     # response key, and every one of those keyings reads this map rather than
     # reaching into `slots` again. Built over the slots, so it answers for a
@@ -939,29 +885,24 @@ def expand_binding(
     # being silently dropped.
     direct_by_slot: dict[str, tuple[graphql.FragmentDefinitionNode, ...]] = {
         **dict.fromkeys(slots, ()),
-        **spreads,
+        **definitions,
     }
 
     direct_by_name = {
-        fragment.name.value: fragment
-        for fragments in spreads.values()
-        for fragment in fragments
+        statement.name: statement
+        for statements in spreads.values()
+        for statement in statements
     }
-    # Direct fragments take precedence over the module namespace: they are the
-    # exact objects the bind named, and are guaranteed present even if a
-    # caller's `all_fragments` snapshot happens not to carry them. Both the
-    # document closure and the per-slot readable set resolve names against this
-    # one namespace -- the closure needs the union across every slot in this
-    # bind call, the readable set works per slot key.
-    effective_fragments = {**all_fragments, **direct_by_name}
-    # Phase B -- resolving the closure. `collect_transitive_fragment_names`
-    # already reports every unresolvable name from one walk, so this phase is
-    # a single diagnosis by construction.
-    closure = _closure_fragments(
-        direct_names=direct_by_name.keys(),
-        fragments=effective_fragments,
-        location=location,
-    )
+    # Phase B -- the document closure: the bound statements' own closures,
+    # merged by name. Both the document and the per-slot readable set resolve
+    # names against it -- the document needs the union across every slot in
+    # this bind call, the readable set works per slot key.
+    closure_by_name = {
+        definition.name.value: definition
+        for statement in direct_by_name.values()
+        for definition in (statement.definition, *statement.dependencies)
+    }
+    closure = tuple(closure_by_name[name] for name in sorted(closure_by_name))
     # Phase C -- what the resolved closure means. The readable set and the
     # synthesized variables read disjoint parts of it, so their diagnoses are
     # raised together.
@@ -970,7 +911,7 @@ def expand_binding(
         slots=slots,
         direct_by_slot=direct_by_slot,
         response_key_of=response_key_of,
-        fragments=effective_fragments,
+        fragments=closure_by_name,
         location=location,
     )
     fragment_vars, var_errors = _synthesize_var_defs(
@@ -983,7 +924,6 @@ def expand_binding(
     closure_errors.extend(
         _variable_owner_collisions(
             direct_by_name=direct_by_name,
-            fragments=effective_fragments,
             operation=template_operation,
             template_name=template_name,
             schema=schema,
@@ -1003,21 +943,18 @@ def expand_binding(
         )
         for key, fragments in direct_by_slot.items()
     }
-    # Phase D -- assembling the document. Its own conflicts are accumulated
-    # inside; a document assembled around one is again valid GraphQL meaning
-    # the wrong thing, so phase E never sees it.
+    # Phase D -- assembling the document.
     expanded_doc = _build_expanded_document(
         visit_document(template_doc, _SlotFiller(names_by_key=names_by_key)),
         fragment_var_defs=tuple(var.node for var in fragment_vars),
         closure=closure,
-        location=location,
     )
 
     # Phase E -- graphql-core's own accumulator, over a document every earlier
     # phase has passed.
     validation_errors = graphql.validate(schema, expanded_doc)
     if validation_errors:
-        combo = _combination_label(template_name=template_name, spreads=spreads)
+        combo = _combination_label(template_name=template_name, spreads=definitions)
         raise GraphQLGenerationError([
             f"Combination at {location} ({combo}) is invalid:",
             *(str(error) for error in validation_errors),

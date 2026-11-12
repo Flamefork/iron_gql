@@ -1,4 +1,5 @@
 from types import ModuleType
+from typing import cast
 
 import pydantic
 import pytest
@@ -308,51 +309,6 @@ def test_package_without_operations_passes_fragments_through(
     assert isinstance(queries_module.only_user, runtime.GQLOperation)  # pyright: ignore[reportAny]
 
 
-def test_duplicate_fragment_names_across_statements_are_rejected(
-    test_project: ProjectBuilder,
-):
-    test_project.prepare(
-        schema=SCHEMA,
-        queries="""
-        from sample_app.gql.api import api_gql
-
-        first = api_gql(
-            '''
-            fragment UserFields on User {
-                id
-            }
-            '''
-        )
-
-        second = api_gql(
-            '''
-            fragment UserFields on User {
-                name
-            }
-            '''
-        )
-
-        with_slot = api_gql(
-            '''
-            query WithSlot($id: ID!) {
-                node(id: $id) @slot { __typename }
-            }
-            '''
-        )
-
-        # The template is what makes the two fragments typed definitions: a
-        # module with no template compiles no fragment into one, so the name
-        # collision would never surface.
-        """,
-    )
-
-    with pytest.raises(
-        ValueError,
-        match=r"^Cannot compile different GraphQL fragments with same name UserFields",
-    ):
-        test_project.generate()
-
-
 NESTED_HANDLE_SCHEMA = """
 type Query {
     node(id: ID!): Node
@@ -437,45 +393,6 @@ def test_definition_model_names_ignore_unrelated_operations(
     )
     api_module, _queries_module = test_project.generate_and_import()
     assert _nested_model_name(api_module) == baseline
-
-
-def test_local_shadowing_resolves_spreads_local_first(
-    test_project: ProjectBuilder,
-):
-    # The operation defines and spreads its own `Bits`; a different bundle
-    # defines a same-named `Bits` that spreads `Extra`, which is ambiguous
-    # across statements. The operation never reaches that `Extra`: its spread
-    # resolves local-first, the same way `make_validation_doc` builds the
-    # document that is validated and sent.
-    test_project.prepare(
-        schema=SCHEMA,
-        queries="""
-        from sample_app.gql.api import api_gql
-
-        q = api_gql(
-            '''
-            query Q($id: ID!) {
-                node(id: $id) { ...Bits }
-            }
-            fragment Bits on Node { id }
-            '''
-        )
-
-        other_bundle = api_gql(
-            '''
-            fragment Bits on Node { ...Extra }
-            fragment Extra on Node { id }
-            '''
-        )
-
-        another_extra = api_gql(
-            '''
-            fragment Extra on Node { __typename }
-            '''
-        )
-        """,
-    )
-    test_project.generate()
 
 
 def test_duplicate_fragment_with_different_spelling_returns_new_definitions(
@@ -654,42 +571,30 @@ def test_unknown_statement_is_rejected_instead_of_a_bare_operation():
         api.api_gql("query Unknown { viewer { id } }")
 
 
-def test_operation_spreading_an_ambiguous_fragment_is_rejected(
+def test_a_statement_of_several_fragments_validates_with_what_it_spreads(
     test_project: ProjectBuilder,
 ):
-    # The operation defines no local `Common`, so it resolves through the
-    # global fragment index where scan order picks the winner — same ambiguity rule as
-    # a definition's dependencies.
+    # Validated whole even though nothing spreads it, so `Shared` from another
+    # statement has to come along for its spread to resolve.
     test_project.prepare(
         schema=SCHEMA,
         queries="""
         from sample_app.gql.api import api_gql
 
-        one = api_gql(
-            '''
-            fragment Common on User { name }
+        shared = api_gql("fragment Shared on User { id }")
 
-            query UseOne {
-                viewer { id ...Common }
-            }
+        bundle = api_gql(
             '''
-        )
+            fragment WithShared on User { ...Shared }
 
-        other = api_gql("fragment Common on User { id }")
-
-        use = api_gql(
-            '''
-            query UseOther {
-                viewer { ...Common }
-            }
+            fragment WithName on User { name }
             '''
         )
         """,
     )
-    with pytest.raises(
-        GraphQLGenerationError, match=r"spreads fragment 'Common', which is defined"
-    ):
-        test_project.generate()
+    _api_module, queries_module = test_project.generate_and_import()
+    namespace = cast("dict[str, object]", vars(queries_module))
+    assert isinstance(namespace["bundle"], runtime.GQLOperation)
 
 
 def test_bundle_statement_returns_the_untyped_catch_all(

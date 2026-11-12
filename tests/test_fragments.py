@@ -78,46 +78,6 @@ generated_package(
 )
 
 generated_package(
-    "fragments_dup_names",
-    schema="""
-    type User {
-        id: ID!
-        name: String!
-    }
-
-    type Query {
-        user(id: ID!): User
-    }
-    """,
-    queries='''
-    from tests.generated.fragments_dup_names.gql.api import api_gql
-
-    get_user = api_gql(
-        """
-        fragment UserFields on User {
-            id
-            name
-        }
-
-        query GetUser($id: ID!) {
-            user(id: $id) {
-                ...UserFields
-            }
-        }
-        """
-    )
-
-    other_fragment = api_gql(
-        """
-        fragment UserFields on User {
-            id
-        }
-        """
-    )
-    ''',
-)
-
-generated_package(
     "fragments_scoped",
     schema="""
     type User {
@@ -302,7 +262,6 @@ generated_package(
     ''',
 )
 
-from tests.generated.fragments_dup_names import queries as dup_names_queries
 from tests.generated.fragments_exec_source import queries as exec_source_queries
 from tests.generated.fragments_inline import queries as inline_queries
 from tests.generated.fragments_named import queries as named_queries
@@ -344,23 +303,6 @@ async def test_named_fragments(httpserver: HTTPServer):
         assert result.user.id == "u-1"
         assert result.user.name == "Bob"
         assert result.user.email == "bob@example.com"
-
-
-async def test_duplicate_fragment_names_use_local_definition(httpserver: HTTPServer):
-    def resolve_user(
-        _root: None, _info: GraphQLResolveInfo[object], *, id: str
-    ) -> dict[str, str]:
-        return {"id": id, "name": "Bob"}
-
-    async with gql_server(
-        httpserver,
-        "fragments_dup_names",
-        {"Query": {"user": resolve_user}},
-    ):
-        result = await dup_names_queries.get_user.execute(id="u-1")
-        assert result.user is not None
-        assert result.user.id == "u-1"
-        assert result.user.name == "Bob"
 
 
 async def test_fragment_validation_scoped_to_query(httpserver: HTTPServer):

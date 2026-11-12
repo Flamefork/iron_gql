@@ -16,7 +16,8 @@ from iron_gql.codegen.ir import CollectedUnionAlias
 from iron_gql.codegen.ir import NamedRef
 from iron_gql.codegen.ir import StrTransform
 from iron_gql.codegen.ir import TypeRef
-from iron_gql.codegen.parser import Query
+from iron_gql.codegen.parser import Operation
+from iron_gql.codegen.parser import Template
 from iron_gql.codegen.util import capitalize_first
 from iron_gql.codegen.warnings import GraphQLDeprecationWarning
 
@@ -28,7 +29,7 @@ class TypeRefBuilder(Protocol):
 
 
 def collect_input_type_closure(
-    queries: Sequence[Query],
+    queries: Sequence[Operation | Template],
     *,
     extra_types: Iterable[graphql.GraphQLType] = (),
 ) -> list[graphql.GraphQLInputObjectType]:

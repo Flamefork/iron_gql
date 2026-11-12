@@ -65,12 +65,11 @@ from iron_gql.codegen.ir import result_model_name
 from iron_gql.codegen.ir import slot_param_name
 from iron_gql.codegen.ir import slot_roots
 from iron_gql.codegen.names import validate_collected_names
+from iron_gql.codegen.parser import CompositeType
 from iron_gql.codegen.parser import FragmentStatement
 from iron_gql.codegen.parser import GQLVar
 from iron_gql.codegen.parser import Operation
-from iron_gql.codegen.parser import Query
 from iron_gql.codegen.parser import Template
-from iron_gql.codegen.parser import parse_var
 from iron_gql.codegen.selection import ALWAYS
 from iron_gql.codegen.selection import ConditionalNode
 from iron_gql.codegen.selection import SelectionRoots
@@ -252,7 +251,7 @@ class ModuleCollector:
 
     def collect_operation_models(
         self,
-        query: Query,
+        query: Operation | Template,
     ) -> list[CollectedArtifact]:
         ctx = CollectionContext(
             query_name=query.name,
@@ -277,7 +276,7 @@ class ModuleCollector:
         )
         return self._collect_composite_model(
             base_name=fragment_model_name(statement.name),
-            named=self.schema.get_type(statement.type_condition),
+            named=statement.type_condition,
             roots=((statement.definition.selection_set, ALWAYS),),
             ctx=ctx,
             origin=f"fragment {statement.name}",
@@ -458,33 +457,40 @@ class ModuleCollector:
         if not roots:
             return [], self.collect_type(gql_type)
 
-        child_base = model_name_base + capitalize_first(response_key)
-        if slot_name is not None:
-            # Slot models are kept out of the rename pass, so this generated
-            # name is the final one; the suffix marks the slot subtree's root.
-            child_base += "Slot"
-        return (
-            self._collect_composite_model(
-                base_name=child_base,
-                named=graphql.get_named_type(gql_type),
-                roots=roots,
-                ctx=ctx,
-                origin=f"field {response_key}",
-                slot_name=slot_name,
-            ),
-            self.collect_type(gql_type, child_model_name=child_base),
-        )
+        match graphql.get_named_type(gql_type):
+            case (
+                graphql.GraphQLObjectType()
+                | graphql.GraphQLInterfaceType()
+                | graphql.GraphQLUnionType()
+            ) as named:
+                child_base = model_name_base + capitalize_first(response_key)
+                if slot_name is not None:
+                    # Slot models are kept out of the rename pass, so this
+                    # generated name is the final one; the suffix marks the
+                    # slot subtree's root.
+                    child_base += "Slot"
+                return (
+                    self._collect_composite_model(
+                        base_name=child_base,
+                        named=named,
+                        roots=roots,
+                        ctx=ctx,
+                        origin=f"field {response_key}",
+                        slot_name=slot_name,
+                    ),
+                    self.collect_type(gql_type, child_model_name=child_base),
+                )
+            case named:
+                # Internal invariant: `ScalarLeafsRule` rejects a selection set
+                # on a field of any other type before anything is collected.
+                msg = f"selection set on field {response_key} of type {named}"
+                raise AssertionError(msg)
 
     def _collect_composite_model(
         self,
         *,
         base_name: str,
-        # Optional only because `schema.get_type` is: both call sites hand over
-        # a type a validated document has already pinned to a composite one --
-        # a fragment's type condition and a field's named type under a
-        # selection set -- so None reaches the invariant branch below and
-        # nothing else.
-        named: graphql.GraphQLNamedType | None,
+        named: CompositeType,
         roots: SelectionRoots,
         ctx: CollectionContext,
         origin: str,
@@ -567,14 +573,6 @@ class ModuleCollector:
                     require_typename_for=named.name,
                     slot_name=slot_name,
                 )
-            case _:
-                # Internal invariant: a fragment's type condition is checked by
-                # `FragmentsOnCompositeTypes` and a field carrying a selection
-                # set by `ScalarLeafs`, both before anything is collected, so
-                # the name resolved and it resolved to one of the three
-                # composite kinds above.
-                msg = f"Unsupported type {named} for {origin}"
-                raise AssertionError(msg)
 
     def _collect_polymorphic_models(
         self,
@@ -682,27 +680,37 @@ class _NamedStatement(Protocol):
     def stmt(self) -> Statement: ...
 
 
+def _reject_different_queries(queries: list[Operation | Template]) -> None:
+    # Identical (dedented) text under one operation name is a harmless copy,
+    # differing text is ambiguous. A fragment name has its own rule, checked
+    # by the parser: one definition by its parsed GraphQL (ADR 0006).
+    locations: dict[str, list[str]] = defaultdict(list)
+    first_occurrence: dict[str, Operation | Template] = {}
+    for query in queries:
+        locations[query.name].append(query.stmt.location)
+        first = first_occurrence.setdefault(query.name, query)
+        if first.stmt.hash_str != query.stmt.hash_str:
+            msg = (
+                "Cannot compile different GraphQL queries with same name "
+                f"{query.name} at {', '.join(locations[query.name])}"
+            )
+            raise GraphQLGenerationError([msg])
+
+
 def _dedup_statements[T: _NamedStatement](
-    items: list[T], kind: str
+    items: list[T],
 ) -> tuple[list[T], dict[str, list[str]], dict[str, list[str]]]:
-    # Shared by operations and fragment statements: identical (dedented) text
-    # under one name is a harmless copy, differing text is ambiguous. Every
-    # distinct literal spelling is kept per name — the statement factory table
-    # is keyed by the exact literal, so each spelling needs its own entry.
+    # Shared by operations and fragment statements: one entry per name, which
+    # every statement under that name means the same thing as. Every distinct
+    # literal spelling is kept per name -- the statement factory table is
+    # keyed by the exact literal, so each spelling needs its own entry.
     all_locations: dict[str, list[str]] = defaultdict(list)
     spellings: dict[str, dict[str, None]] = defaultdict(dict)
     first_occurrence: dict[str, T] = {}
     for item in items:
         all_locations[item.name].append(item.stmt.location)
         spellings[item.name][item.stmt.raw_text] = None
-        if item.name not in first_occurrence:
-            first_occurrence[item.name] = item
-        elif first_occurrence[item.name].stmt.hash_str != item.stmt.hash_str:
-            msg = (
-                f"Cannot compile different GraphQL {kind} with same name "
-                f"{item.name} at {', '.join(all_locations[item.name])}"
-            )
-            raise GraphQLGenerationError([msg])
+        first_occurrence.setdefault(item.name, item)
     unique = sorted(
         first_occurrence.values(),
         key=lambda item: (item.stmt.file, item.stmt.lineno),
@@ -750,11 +758,13 @@ def _prepare_module(
     # Deduplicated over both kinds at once: an operation and a template
     # sharing a name is the same clash as two operations sharing one, and the
     # generated module has one namespace for both.
-    queries, query_locations, query_spellings = _dedup_statements(
-        [*operations, *templates], "queries"
-    )
+    _reject_different_queries([*operations, *templates])
+    queries, query_locations, query_spellings = _dedup_statements([
+        *operations,
+        *templates,
+    ])
     canonical_fragments, fragment_locations, fragment_spellings = _dedup_statements(
-        discovered_fragments, "fragments"
+        discovered_fragments
     )
     return _PreparedModule(
         operation_queries=[q for q in queries if isinstance(q, Operation)],
@@ -797,11 +807,6 @@ class _ExpandedCombination:
     combination: Combination
     template: CollectedTemplate
     expanded: ExpandedBinding
-    # The synthesized fragment variables, parsed against the schema: their
-    # types feed the input-artifact closure below (`CollectedFragment.
-    # arg_vars`, built per fragment rather than per combination, is what
-    # `with_args`'s own keywords come from).
-    arg_gql_vars: list[GQLVar]
     # The places whose editing creates or removes a combination. For an
     # explicitly written combination these are the `.bind(...)` call sites; for
     # one obtained from schema enumeration, the template statement and the
@@ -928,13 +933,9 @@ def _expand_combinations(
     fragment_locations: dict[str, list[str]],
     literal_locations: dict[Combination, tuple[str, ...]],
 ) -> list[_ExpandedCombination]:
-    # Every fragment a combination's closure can reach is already in
-    # `fragment_statements` -- `parser.bindable_statements` is exactly the set
-    # the enumeration draws from -- so this is a complete namespace for
-    # `expand_binding`'s own closure resolution.
-    all_fragment_defs = {
-        statement.name: statement.definition for statement in fragment_statements
-    }
+    # `parser.bindable_statements` is exactly the set the enumeration draws
+    # from, so every fragment a combination names is here.
+    statement_by_name = {statement.name: statement for statement in fragment_statements}
     expanded_combinations: list[_ExpandedCombination] = []
     # Accumulated across every combination, like parser.py's validate_bind_*
     # family: a user whose module produces several broken pairs sees every
@@ -944,7 +945,7 @@ def _expand_combinations(
         query = template_queries[combination.template_name]
         template = template_by_name[combination.template_name]
         spreads = {
-            key: tuple(all_fragment_defs[name] for name in names)
+            key: tuple(statement_by_name[name] for name in names)
             for key, names in combination.slots
         }
         # Keyed by the keyword a caller writes -- the slot's `python_name`,
@@ -972,7 +973,6 @@ def _expand_combinations(
                 template_name=query.name,
                 slots=slots,
                 spreads=spreads,
-                all_fragments=all_fragment_defs,
                 location=", ".join(locations),
             )
         except GraphQLGenerationError as exc:
@@ -983,10 +983,6 @@ def _expand_combinations(
                 combination=combination,
                 template=template,
                 expanded=expanded,
-                arg_gql_vars=[
-                    parse_var(var.node, schema=schema, context=", ".join(locations))
-                    for var in expanded.fragment_vars
-                ],
                 locations=locations,
             )
         )
@@ -1029,7 +1025,7 @@ def _combination_locations(
 
 def _collect_input_artifacts_with_binds(
     collector: ModuleCollector,
-    queries: Sequence[Query],
+    queries: Sequence[Operation | Template],
     expanded_combinations: list[_ExpandedCombination],
     *,
     fragment_gql_vars: list[GQLVar],
@@ -1041,13 +1037,13 @@ def _collect_input_artifacts_with_binds(
     # `with_args`, and an input-object-typed parameter there needs its class
     # defined somewhere. `fragment_gql_vars` is every factory's own variables
     # (`collect._collect_fragments`), which is always a superset of what any
-    # one combination's `arg_gql_vars` contributes -- both are kept, rather
+    # one combination's synthesized variables contribute -- both are kept, rather
     # than dropping the combination-level walk now that it is redundant,
     # since consolidating the two is a bigger change than this gap calls for.
     extra_var_types = [
-        gql_var.gql_type
-        for expanded in expanded_combinations
-        for gql_var in expanded.arg_gql_vars
+        var.explicit_value_type
+        for combination in expanded_combinations
+        for var in combination.expanded.fragment_vars
     ] + [gql_var.gql_type for gql_var in fragment_gql_vars]
     artifacts = collect_input_artifacts(
         collect_input_type_closure(queries, extra_types=extra_var_types),
@@ -1173,7 +1169,8 @@ def collect_module_ir(
         fragments=fragments,
         on_type_bases=_collect_on_type_bases(
             fragment_type_names=(
-                statement.type_condition for statement in prepared.fragment_statements
+                statement.type_condition.name
+                for statement in prepared.fragment_statements
             ),
         ),
         templates=collected_templates,
@@ -1296,7 +1293,7 @@ def _open_model_names(
 
 
 def _collect_operation_vars(
-    collector: ModuleCollector, gql_vars: list[GQLVar]
+    collector: ModuleCollector, gql_vars: Sequence[GQLVar]
 ) -> tuple[CollectedOperationVar, ...]:
     return tuple(
         CollectedOperationVar(
@@ -1419,7 +1416,7 @@ def _collect_fragments(
                         class_name=class_name,
                         fragment_name=statement.name,
                         model_name=fragment_model_name(statement.name),
-                        on_type=on_type_base_name(statement.type_condition),
+                        on_type=on_type_base_name(statement.type_condition.name),
                         closure=(reader_class_names[statement.name], *rest),
                         applied_class_name=applied_fragment_class_name(class_name),
                         arg_vars=tuple(arg_vars),
@@ -1433,7 +1430,7 @@ def _collect_fragments(
                         class_name=class_name,
                         fragment_name=statement.name,
                         model_name=fragment_model_name(statement.name),
-                        on_type=on_type_base_name(statement.type_condition),
+                        on_type=on_type_base_name(statement.type_condition.name),
                         closure=(reader_class_names[statement.name], *rest),
                     )
                 )

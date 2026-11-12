@@ -3,6 +3,7 @@ import json
 import os
 from typing import cast
 
+import pydantic
 import pytest
 from graphql import GraphQLResolveInfo
 from pydantic import alias_generators
@@ -492,6 +493,69 @@ def test_debug_artifacts_are_written_for_an_invalid_query(
         encoding="utf-8"
     )
     assert json.loads((debug_dir / "out.json").read_text(encoding="utf-8")) == []
+
+
+def test_debug_artifacts_keep_a_statement_of_several_operations_out_of_out_json(
+    test_project: ProjectBuilder,
+):
+    test_project.prepare(
+        schema="""
+        type Query {
+            ping: String
+        }
+        """,
+        queries="""
+        from sample_app.gql.api import api_gql
+        both = api_gql("query First { ...Fields } query Second { ping }")
+        fields = api_gql("fragment Fields on Query { ping }")
+        ok = api_gql("query Ok { ping }")
+        """,
+    )
+
+    debug_dir = test_project.root / "debug_out"
+    with pytest.raises(GraphQLGenerationError, match="holds 2 operations"):
+        render_gql_module(
+            subscription_protocol="graphql-sse",
+            mode="async",
+            schema_path=test_project.root / "schema.graphql",
+            src_path=test_project.root,
+            module_full_name="sample_app.gql.api",
+            base_url_import="sample_app.settings:GRAPHQL_URL",
+            debug_path=debug_dir,
+        )
+
+    # Every statement holding an operation is in the raw text and the AST,
+    # the AST with the fragments it spreads from elsewhere; `out.json` holds
+    # only what was built.
+    assert (debug_dir / "queries.gql").read_text(encoding="utf-8") == (
+        "query First { ...Fields } query Second { ping }\n\nquery Ok { ping }"
+    )
+    asts = pydantic.TypeAdapter(list[_DumpedDocument]).validate_json(
+        (debug_dir / "queries.json").read_bytes()
+    )
+    assert [
+        [definition.name.value for definition in ast.definitions] for ast in asts
+    ] == [["First", "Second", "Fields"], ["Ok"]]
+    out = pydantic.TypeAdapter(list[_DumpedOperation]).validate_json(
+        (debug_dir / "out.json").read_bytes()
+    )
+    assert [entry.name for entry in out] == ["Ok"]
+
+
+class _DumpedName(pydantic.BaseModel):
+    value: str
+
+
+class _DumpedDefinition(pydantic.BaseModel):
+    name: _DumpedName
+
+
+class _DumpedDocument(pydantic.BaseModel):
+    definitions: list[_DumpedDefinition]
+
+
+class _DumpedOperation(pydantic.BaseModel):
+    name: str
 
 
 def test_introspection_query(test_project: ProjectBuilder):
