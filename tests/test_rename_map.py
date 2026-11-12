@@ -335,6 +335,8 @@ def test_fragment_named_like_a_base_is_diagnosed(test_project: ProjectBuilder):
         (
             "Name 'OnPostFragment' is claimed by the on-type base of 'PostFragment' "
             "and by fragment 'OnPost' at sample_app/queries.py:4"
+            "; rename the operation, template, fragment or GraphQL type, or change "
+            "the generator option, behind one of them"
         ),
     ]
 
@@ -444,6 +446,8 @@ def test_fragment_named_like_another_slots_bind_type_param_is_diagnosed(
             "of template 'GetThingQuery' at sample_app/queries.py:6 is claimed by "
             "the bind() type parameter of slot 'postFragment' and by fragment "
             "'TModelPost' at sample_app/queries.py:4"
+            "; rename the variable, fragment, template or GraphQL type behind one of "
+            "them, or alias the field"
         )
     ]
 
@@ -683,5 +687,7 @@ def test_a_slot_completing_the_templates_own_class_name_is_diagnosed(
             f"template '{template}Query' at sample_app/queries.py:4 is claimed by "
             f"the bind() type parameter of slot '{slot}' and by {claimed_by} "
             f"'{template}'"
+            "; rename the variable, fragment, template or GraphQL type behind one of "
+            "them, or alias the field"
         )
     ]

@@ -312,7 +312,9 @@ class ModuleCollector:
             typename_entries = grouped.get("__typename")
             if typename_entries is None:
                 msg = (
-                    f"Missing __typename in selection set for '{require_typename_for}'"
+                    "Missing __typename in selection set for "
+                    f"'{require_typename_for}' in '{ctx.query_name}' at "
+                    f"{ctx.location}; select __typename there"
                 )
                 raise GraphQLGenerationError([msg])
             witness = uncovered_assignment(
@@ -359,7 +361,8 @@ class ModuleCollector:
             msg = (
                 f"Selection for '{model_name_base}' in '{ctx.query_name}' at "
                 f"{ctx.location} is statically empty: every field is excluded "
-                "by @skip/@include"
+                "by @skip/@include; remove the always-false conditions and one "
+                "of each two contradicting ones, or select a field outside them"
             )
             raise GraphQLGenerationError([msg])
 
@@ -560,8 +563,9 @@ class ModuleCollector:
                     merged_selections, ctx.fragments, named.name
                 ):
                     msg = (
-                        f"Missing __typename in selection set for interface"
-                        f" '{named.name}'"
+                        "Missing __typename in selection set for interface "
+                        f"'{named.name}' in '{ctx.query_name}' at {ctx.location}; "
+                        "select __typename there"
                     )
                     raise GraphQLGenerationError([msg])
                 return self._collect_polymorphic_models(
@@ -692,7 +696,8 @@ def _reject_different_queries(queries: list[Operation | Template]) -> None:
         if first.stmt.hash_str != query.stmt.hash_str:
             msg = (
                 "Cannot compile different GraphQL queries with same name "
-                f"{query.name} at {', '.join(locations[query.name])}"
+                f"{query.name} at {', '.join(locations[query.name])}; rename "
+                "one of the operations or make their texts identical"
             )
             raise GraphQLGenerationError([msg])
 
@@ -1530,7 +1535,9 @@ def _excluded_slot_error(slot_name: str, query: Template) -> str:
     return (
         f"Slot '{slot_name}' of template '{query.name}' at "
         f"{query.stmt.location} is statically excluded by its @skip/@include "
-        f"directives"
+        "directives; remove the always-false condition, or one of two "
+        "contradicting ones, on the field or its enclosing selections, or drop "
+        "@slot from the field"
     )
 
 

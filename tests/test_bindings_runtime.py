@@ -1966,6 +1966,9 @@ def test_statically_excluded_slot_is_rejected_even_with_a_bind(
         (
             "Slot 'attachment' of template 'GetAttachment' at sample_app/queries.py:3 "
             "is statically excluded by its @skip/@include directives"
+            "; remove the always-false condition, or one of two contradicting "
+            "ones, on the field or its enclosing selections, or drop @slot from "
+            "the field"
         ),
     ]
 

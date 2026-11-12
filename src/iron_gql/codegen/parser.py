@@ -665,7 +665,8 @@ def validate_bind_templates(
         elif (operation := operation_by_stmt.get(bind.template)) is not None:
             message = (
                 f"Bind at {bind.location}: template '{operation.name}' at "
-                f"{bind.template.location} has no slots"
+                f"{bind.template.location} has no slots; mark a field of the "
+                "template with @slot, or call the operation without bind"
             )
             errors.append(message)
         else:

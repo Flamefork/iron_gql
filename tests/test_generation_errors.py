@@ -10,6 +10,9 @@ from tests.corpus.rejected_inputs import REJECTED_SCHEMAS
 from tests.corpus.rejected_inputs import REJECTED_STATEMENTS
 from tests.corpus.rejected_inputs import SEVERAL_OPERATION_STATEMENTS
 from tests.corpus.rejected_inputs import RejectedInput
+from tests.corpus.static_exclusions import SCHEMA as STATIC_EXCLUSION_SCHEMA
+from tests.corpus.static_exclusions import STATIC_EXCLUSIONS
+from tests.corpus.static_exclusions import StaticExclusion
 
 PING_QUERY = """
 from sample_app.gql.api import api_gql
@@ -370,3 +373,37 @@ def test_writing_the_generated_module_keeps_its_own_error(
 
     with pytest.raises(IsADirectoryError):
         rendered.write()
+
+
+@pytest.mark.parametrize(
+    "case", STATIC_EXCLUSIONS, ids=[case.id for case in STATIC_EXCLUSIONS]
+)
+def test_a_statically_excluded_selection_names_the_condition_to_remove(
+    test_project: ProjectBuilder, case: StaticExclusion
+):
+    test_project.prepare(
+        schema=STATIC_EXCLUSION_SCHEMA,
+        queries=f"""
+from sample_app.gql.api import api_gql
+statement = api_gql('''{case.text}''')
+""",
+    )
+    at = "sample_app/queries.py:2"
+    match case.excluded:
+        case "slot":
+            expected = (
+                f"Slot '{case.target}' of template '{case.operation}' at {at} is "
+                "statically excluded by its @skip/@include directives; remove the "
+                "always-false condition, or one of two contradicting ones, on the "
+                "field or its enclosing selections, or drop @slot from the field"
+            )
+        case "selection":
+            expected = (
+                f"Selection for '{case.target}' in '{case.operation}' at {at} is "
+                "statically empty: every field is excluded by @skip/@include; "
+                "remove the always-false conditions and one of each two "
+                "contradicting ones, or select a field outside them"
+            )
+    with pytest.raises(GraphQLGenerationError) as exc:
+        test_project.generate()
+    assert exc.value.errors == [expected]

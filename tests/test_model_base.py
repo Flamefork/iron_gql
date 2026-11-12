@@ -518,7 +518,11 @@ def test_schema_name_of_the_base_root_module_is_rejected(test_project: ProjectBu
     with pytest.raises(GraphQLGenerationError) as exc:
         test_project.generate(model_base_import="corebase.models:Model")
     assert exc.value.errors == [
-        "Name 'corebase' is claimed by import corebase and by enum 'corebase'",
+        (
+            "Name 'corebase' is claimed by import corebase and by enum 'corebase'; "
+            "rename the operation, template, fragment or GraphQL type, or change "
+            "the generator option, behind one of them"
+        ),
     ]
 
 

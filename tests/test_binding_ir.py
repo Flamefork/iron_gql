@@ -479,7 +479,13 @@ def test_bind_template_ref_with_no_slots_is_rejected(tmp_path: Path):
         schema_path, [plain_stmt], [bind], bind_keyword_checks=()
     )
 
-    assert any("has no slots" in error for error in parse_res.errors)
+    assert parse_res.errors == [
+        (
+            "Bind at <test:bad>:1: template 'Plain' at <test:plain>:1 has no "
+            "slots; mark a field of the template with @slot, or call the "
+            "operation without bind"
+        ),
+    ]
 
 
 def test_bind_template_ref_to_a_fragment_is_rejected(tmp_path: Path):
@@ -830,6 +836,9 @@ def test_statically_excluded_slot_in_a_template_is_rejected(tmp_path: Path):
         (
             "Slot 'attachment' of template 'GetAttachment' at <test:excluded>:1 is "
             "statically excluded by its @skip/@include directives"
+            "; remove the always-false condition, or one of two contradicting "
+            "ones, on the field or its enclosing selections, or drop @slot from "
+            "the field"
         ),
     ]
 
@@ -912,5 +921,6 @@ def test_multiple_broken_binds_are_reported_together(tmp_path: Path):
         (
             "Combination at <test:incompatible>:1: fragment 'PostFields' on 'Post' "
             "cannot be spread into slot 'attachment' of type 'Attachment'"
+            "; pass a fragment on a type that spreads into 'Attachment'"
         ),
     ]

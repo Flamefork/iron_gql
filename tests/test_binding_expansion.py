@@ -253,6 +253,7 @@ def test_incompatible_fragment_rejected():
         (
             "Combination at test:1: fragment 'PostFields' on 'Post' cannot be spread "
             "into slot 'attachment' of type 'Attachment'"
+            "; pass a fragment on a type that spreads into 'Attachment'"
         ),
     ]
 
@@ -300,10 +301,12 @@ def test_every_bad_slot_argument_of_one_bind_is_reported_together():
         (
             "Combination at test:1: fragment 'PostFields' on 'Post' cannot be spread "
             "into slot 'attachment' of type 'Attachment'"
+            "; pass a fragment on a type that spreads into 'Attachment'"
         ),
         (
             "Combination at test:1: fragment 'PostFields' on 'Post' cannot be spread "
             "into slot 'preview' of type 'Attachment'"
+            "; pass a fragment on a type that spreads into 'Attachment'"
         ),
     ]
 
@@ -334,6 +337,7 @@ def test_an_unknown_slot_does_not_hide_another_slots_bad_fragment():
         (
             "Combination at test:1: fragment 'PostFields' on 'Post' cannot be spread "
             "into slot 'attachment' of type 'Attachment'"
+            "; pass a fragment on a type that spreads into 'Attachment'"
         ),
         (
             "Combination at test:1 targets unknown slot 'wrongName'; the template's "
@@ -528,6 +532,7 @@ def test_variable_type_conflict_between_usages_rejected():
             "Combination at test:1: variable $x is used as 'String!' in fragment "
             "'InnerParts' and as 'Int!' in fragment 'OuterParts'; no GraphQL variable "
             "declaration type is allowed at every usage"
+            " -- rename the variable at one of these usages"
         ),
     ]
 
@@ -573,6 +578,7 @@ def test_variable_type_conflict_names_the_incompatible_usage(
             f"Combination at test:1: variable $x is used as '[Int]!' in fragment "
             f"'Parts' and as {expected_type} in fragment 'Parts'; no GraphQL "
             "variable declaration type is allowed at every usage"
+            " -- rename the variable at one of these usages"
         )
     ]
 
@@ -621,11 +627,13 @@ def test_every_conflicting_variable_of_one_bind_is_reported_together():
             "Combination at test:1: variable $x is used as 'String!' in fragment "
             "'InnerParts' and as 'Int!' in fragment 'OuterParts'; no GraphQL variable "
             "declaration type is allowed at every usage"
+            " -- rename the variable at one of these usages"
         ),
         (
             "Combination at test:1: variable $y is used as 'String!' in fragment "
             "'InnerParts' and as 'Int!' in fragment 'OuterParts'; no GraphQL variable "
             "declaration type is allowed at every usage"
+            " -- rename the variable at one of these usages"
         ),
     ]
 
@@ -679,6 +687,7 @@ def test_readable_and_variable_diagnoses_of_one_bind_arrive_together():
             "Combination at test:1: variable $x is used as 'String!' in fragment "
             "'InnerParts' and as 'Int!' in fragment 'OuterParts'; no GraphQL variable "
             "declaration type is allowed at every usage"
+            " -- rename the variable at one of these usages"
         ),
     ]
 

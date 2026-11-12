@@ -198,11 +198,15 @@ def test_duplicate_operations_raise(test_project: ProjectBuilder):
         """,
     )
 
-    with pytest.raises(
-        ValueError,
-        match=r"^Cannot compile different GraphQL queries with same name",
-    ):
+    with pytest.raises(GraphQLGenerationError) as exc:
         test_project.generate()
+    assert exc.value.errors == [
+        (
+            "Cannot compile different GraphQL queries with same name GetUser at "
+            "sample_app/queries.py:3, sample_app/queries.py:13; rename one of the "
+            "operations or make their texts identical"
+        ),
+    ]
 
 
 def test_nested_input_objects_missing():
@@ -909,8 +913,16 @@ def test_statically_empty_selection_is_rejected(test_project: ProjectBuilder):
         )
         """,
     )
-    with pytest.raises(ValueError, match="statically empty"):
+    with pytest.raises(GraphQLGenerationError) as exc:
         test_project.generate()
+    assert exc.value.errors == [
+        (
+            "Selection for 'GetUserQueryResultUser' in 'GetUser' at "
+            "sample_app/queries.py:3 is statically empty: every field is excluded by "
+            "@skip/@include; remove the always-false conditions and one of each two "
+            "contradicting ones, or select a field outside them"
+        ),
+    ]
 
 
 def test_enum_sharing_a_model_raw_name_is_rejected(test_project: ProjectBuilder):
@@ -1146,6 +1158,8 @@ def test_variable_named_after_the_client_binding_is_rejected(
             "Parameter '_client' of execute() of operation 'GetUserQuery' at "
             "sample_app/queries.py:3 is claimed by the generated client binding and by "
             "variable $_client"
+            "; rename the variable, fragment, template or GraphQL type behind one of "
+            "them, or alias the field"
         ),
     ]
 

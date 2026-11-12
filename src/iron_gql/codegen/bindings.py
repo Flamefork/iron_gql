@@ -140,7 +140,8 @@ def _slot_arg_errors(
         (
             f"Combination at {location}: fragment '{fragment.name.value}' on "
             f"'{fragment.type_condition.name.value}' cannot be spread into "
-            f"slot '{key}' of type '{slot_type}'"
+            f"slot '{key}' of type '{slot_type}'; pass a fragment on a type "
+            f"that spreads into '{slot_type}'"
         )
         for fragment in fragments
         if not spreads_into(schema, fragment.type_condition.name.value, slot_type)
@@ -592,7 +593,8 @@ def _variable_type_conflict_error(
         f"Combination at {location}: variable ${name} is used as "
         f"'{first.input_type}' in fragment '{first.fragment_name}' and "
         f"as '{other.input_type}' in fragment '{other.fragment_name}'; "
-        "no GraphQL variable declaration type is allowed at every usage"
+        "no GraphQL variable declaration type is allowed at every usage -- "
+        "rename the variable at one of these usages"
     )
 
 

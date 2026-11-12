@@ -962,6 +962,8 @@ def test_two_fragment_variables_mapping_to_one_python_name_are_rejected(
             "Parameter 'foo_bar' of with_args() of fragment 'ImageParts' at "
             "sample_app/queries.py:3 is claimed by variable $fooBar and by variable "
             "$foo_bar"
+            "; rename the variable, fragment, template or GraphQL type behind one of "
+            "them, or alias the field"
         ),
     ]
 
@@ -1080,6 +1082,7 @@ def test_a_fragments_own_variable_at_two_conflicting_types_is_rejected(
             "Combination at sample_app/queries.py:3: variable $size is used as 'Int!' "
             "in fragment 'ImageParts' and as 'String!' in fragment 'ImageParts'; no "
             "GraphQL variable declaration type is allowed at every usage"
+            " -- rename the variable at one of these usages"
         ),
     ]
 
@@ -1631,6 +1634,8 @@ def test_a_slot_named_after_a_claimed_name_is_rejected(
             f"Parameter '{name}' of bind() of template 'GetAttachmentQuery' "
             "at sample_app/queries.py:15 "
             f"is claimed by {origin} and by slot '{name}'"
+            "; rename the variable, fragment, template or GraphQL type behind one of "
+            "them, or alias the field"
         )
     ]
 
@@ -1717,6 +1722,8 @@ def test_a_template_variable_named_after_a_claimed_name_is_rejected(
             f"Parameter '{name}' of execute() of template 'GetAttachmentQuery' "
             "at sample_app/queries.py:9 "
             f"is claimed by {origin} and by variable ${name}"
+            "; rename the variable, fragment, template or GraphQL type behind one of "
+            "them, or alias the field"
         )
     ]
 
@@ -1739,6 +1746,8 @@ def test_a_fragment_variable_named_after_a_claimed_name_is_rejected(
             f"Parameter '{name}' of with_args() of fragment 'ImageParts' "
             "at sample_app/queries.py:3 "
             f"is claimed by {origin} and by variable ${name}"
+            "; rename the variable, fragment, template or GraphQL type behind one of "
+            "them, or alias the field"
         )
     ]
 

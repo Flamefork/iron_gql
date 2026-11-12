@@ -545,8 +545,16 @@ def test_statically_empty_fragment_is_rejected(test_project: ProjectBuilder):
         bound = with_slot.bind(node=empty_bits)
         """,
     )
-    with pytest.raises(ValueError, match="statically empty"):
+    with pytest.raises(GraphQLGenerationError) as exc:
         test_project.generate()
+    assert exc.value.errors == [
+        (
+            "Selection for 'EmptyBitsData' in 'EmptyBits' at sample_app/queries.py:3 "
+            "is statically empty: every field is excluded by @skip/@include; remove "
+            "the always-false conditions and one of each two contradicting ones, "
+            "or select a field outside them"
+        ),
+    ]
 
 
 def test_invalid_standalone_fragment_is_rejected(test_project: ProjectBuilder):

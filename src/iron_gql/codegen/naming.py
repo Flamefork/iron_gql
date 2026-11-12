@@ -599,8 +599,12 @@ def validate_module_names(
     errors: list[str] = []
     for name, origins in sorted(claims.items()):
         if len(origins) > 1:
-            message = f"Name '{name}' is claimed by {' and by '.join(origins)}"
-            errors.append(message)
+            claimants = " and by ".join(origins)
+            hint = (
+                "rename the operation, template, fragment or GraphQL type, or "
+                "change the generator option, behind one of them"
+            )
+            errors.append(f"Name '{name}' is claimed by {claimants}; {hint}")
         # Every claim becomes a module-level binding of its own.
         if not _is_usable_identifier(name):
             errors.append(
@@ -812,5 +816,11 @@ def validate_signature_names(ir: CollectedModuleIR) -> list[str]:
             errors.append(f"Parameter '{name}' of {scope} {unusable}; {hint}")
         if len(origins) > 1:
             claimed = " and by ".join(origins)
-            errors.append(f"Parameter '{name}' of {scope} is claimed by {claimed}")
+            hint = (
+                "rename the variable, fragment, template or GraphQL type behind "
+                "one of them, or alias the field"
+            )
+            errors.append(
+                f"Parameter '{name}' of {scope} is claimed by {claimed}; {hint}"
+            )
     return errors

@@ -600,7 +600,9 @@ SHADOWING_DIAGNOSES = {
         "default; choose a different alias or schema name"
     ),
     "enum-named-like-a-builtin": (
-        "Name 'str' is claimed by the builtin 'str' and by enum 'str'"
+        "Name 'str' is claimed by the builtin 'str' and by enum 'str'; rename "
+        "the operation, template, fragment or GraphQL type, or change the "
+        "generator option, behind one of them"
     ),
 }
 

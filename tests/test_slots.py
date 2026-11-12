@@ -774,6 +774,8 @@ def test_base_url_symbol_shadowing_the_slots_module_is_rejected(
         (
             "Name 'slots' is claimed by from iron_gql import slots and by from "
             "sample_app.queries import slots"
+            "; rename the operation, template, fragment or GraphQL type, or change "
+            "the generator option, behind one of them"
         ),
     ]
 
@@ -799,8 +801,15 @@ def test_conditional_slot_is_rejected(test_project: ProjectBuilder):
         )
         """,
     )
-    with pytest.raises(ValueError, match="cannot carry @skip/@include"):
+    with pytest.raises(GraphQLGenerationError) as exc:
         test_project.generate()
+    assert exc.value.errors == [
+        (
+            "Slot 'attachment' at sample_app/queries.py:3 cannot carry @skip/@include; "
+            "drop the directive -- a slot field is always requested, and a caller "
+            "that wants no fragment data passes an empty list"
+        ),
+    ]
 
 
 def test_slot_conditional_through_mixed_polarity_variables_is_rejected(
@@ -926,6 +935,9 @@ def test_statically_excluded_slot_is_rejected(test_project: ProjectBuilder):
         (
             "Slot 'attachment' of template 'GetAttachment' at sample_app/queries.py:3 "
             "is statically excluded by its @skip/@include directives"
+            "; remove the always-false condition, or one of two contradicting "
+            "ones, on the field or its enclosing selections, or drop @slot from "
+            "the field"
         ),
     ]
 
@@ -958,6 +970,7 @@ def test_nested_slot_is_rejected(test_project: ProjectBuilder):
             "Slot 'attachment' of template 'GetPostQuery' at sample_app/queries.py:3 "
             "is nested inside slot 'post'; a slot cannot sit inside another slot's "
             "subtree"
+            " -- drop @slot from one of them"
         ),
     ]
 
@@ -1156,6 +1169,7 @@ def test_nested_slot_in_a_merged_response_key_is_rejected(
             "Slot 'attachment' of template 'GetAttachmentQuery' at "
             "sample_app/queries.py:3 is nested inside slot 'post'; a slot cannot sit "
             "inside another slot's subtree"
+            " -- drop @slot from one of them"
         ),
     ]
 
@@ -1259,7 +1273,11 @@ def test_enum_named_after_an_unconditional_import_is_rejected(
     with pytest.raises(GraphQLGenerationError) as exc:
         _ = test_project.generate(to_camel_fn_full_name="sample_app.casing:to_camel")
     assert exc.value.errors == [
-        "Name 'pydantic' is claimed by import pydantic and by enum 'pydantic'",
+        (
+            "Name 'pydantic' is claimed by import pydantic and by enum 'pydantic'; "
+            "rename the operation, template, fragment or GraphQL type, or change "
+            "the generator option, behind one of them"
+        ),
     ]
 
 
@@ -1287,6 +1305,8 @@ def test_variable_named_self_is_rejected(test_project: ProjectBuilder):
             "Parameter 'self' of execute() of operation 'GetAttachmentQuery' at "
             "sample_app/queries.py:3 is claimed by the method receiver and by variable "
             "$self"
+            "; rename the variable, fragment, template or GraphQL type behind one of "
+            "them, or alias the field"
         ),
     ]
 
@@ -1358,6 +1378,8 @@ def test_input_named_after_the_bound_base_parameter_is_rejected(
         (
             "Name 'TResult' is claimed by the type parameter of a template's bound "
             "base and by model 'TResult'"
+            "; rename the operation, template, fragment or GraphQL type, or change "
+            "the generator option, behind one of them"
         ),
     ]
 
@@ -1463,6 +1485,8 @@ def test_slot_parameter_shadowing_a_type_in_a_generic_model_is_rejected(
         (
             "Parameter 'TSlotAttachment' of generic artifact 'Post' is claimed by type "
             "parameter 'TSlotAttachment' and by referenced type 'TSlotAttachment'"
+            "; rename the variable, fragment, template or GraphQL type behind one of "
+            "them, or alias the field"
         ),
     ]
 
@@ -2880,6 +2904,8 @@ def test_two_slots_collapsing_to_one_type_parameter_are_rejected(
             "Parameter 'TSlotDetails' of the type parameters of template "
             "'GetBothQuery' at sample_app/queries.py:3 is claimed by slot 'details' "
             "and by slot '_details'"
+            "; rename the variable, fragment, template or GraphQL type behind one of "
+            "them, or alias the field"
         ),
     ]
 

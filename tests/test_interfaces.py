@@ -948,11 +948,14 @@ def test_interface_fragment_requires_typename(test_project: ProjectBuilder):
         """,
     )
 
-    with pytest.raises(
-        ValueError,
-        match=r"Missing __typename in selection set for interface 'Node'",
-    ):
+    with pytest.raises(GraphQLGenerationError) as exc:
         test_project.generate()
+    assert exc.value.errors == [
+        (
+            "Missing __typename in selection set for interface 'Node' in 'GetNode' "
+            "at sample_app/queries.py:3; select __typename there"
+        ),
+    ]
 
 
 def test_interface_typename_through_a_fragment_spread_twice(
@@ -1070,11 +1073,14 @@ def test_typename_inside_a_concrete_type_fragment_is_not_the_base_one(
         """,
     )
 
-    with pytest.raises(
-        ValueError,
-        match=r"Missing __typename in selection set for interface 'Node'",
-    ):
+    with pytest.raises(GraphQLGenerationError) as exc:
         test_project.generate()
+    assert exc.value.errors == [
+        (
+            "Missing __typename in selection set for interface 'Node' in 'GetNode' "
+            "at sample_app/queries.py:3; select __typename there"
+        ),
+    ]
 
 
 def test_conditional_typename_on_polymorphic_selection_is_rejected(
@@ -1325,11 +1331,14 @@ def test_union_fragment_requires_typename(test_project: ProjectBuilder):
         """,
     )
 
-    with pytest.raises(
-        ValueError,
-        match=r"Missing __typename in selection set for 'SearchResult'",
-    ):
+    with pytest.raises(GraphQLGenerationError) as exc:
         test_project.generate()
+    assert exc.value.errors == [
+        (
+            "Missing __typename in selection set for 'SearchResult' in 'Search' at "
+            "sample_app/queries.py:3; select __typename there"
+        ),
+    ]
 
 
 def test_union_fragment_typename_in_variants(test_project: ProjectBuilder):

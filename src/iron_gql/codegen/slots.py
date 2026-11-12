@@ -136,8 +136,8 @@ class _SlotCollector(graphql.Visitor):
         if has_conditional_directive(node):
             msg = (
                 f"Slot '{name}' at {location} cannot carry @skip/@include; "
-                "a slot field is always requested — a caller that wants no "
-                "fragment data passes an empty list"
+                "drop the directive -- a slot field is always requested, and a "
+                "caller that wants no fragment data passes an empty list"
             )
             raise GraphQLGenerationError([msg])
         if not _selects_typename(node):
@@ -241,7 +241,8 @@ def validate_no_nested_slots(ir: CollectedModuleIR) -> list[str]:
 def _nested_slot_error(*, template_name: str, at: str, outer: str, inner: str) -> str:
     return (
         f"Slot '{inner}' of template '{template_name}' at {at} is nested inside "
-        f"slot '{outer}'; a slot cannot sit inside another slot's subtree"
+        f"slot '{outer}'; a slot cannot sit inside another slot's subtree -- "
+        "drop @slot from one of them"
     )
 
 
