@@ -74,8 +74,15 @@ def _config(app: ASGIApp) -> uvicorn.Config:
 # Binding before uvicorn starts and handing over the bound socket keeps the
 # port ours the whole time; probing for a free port and passing the number
 # would leave a window for another process to take it.
+#
+# uvicorn writes a response's head and body separately, and asyncio turns Nagle
+# off on an accepted connection only on Linux and only for a listener created
+# with IPPROTO_TCP: with Nagle on, the body waits for the client's delayed ACK,
+# about 40 ms per response on Linux. TCP_NODELAY set on the listener is
+# inherited by every connection it accepts, on Linux and macOS alike.
 def _loopback_listener() -> tuple[socket.socket, int]:
     listener = socket.socket()
+    listener.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
     listener.bind(("127.0.0.1", 0))
     _host, port = _SOCKET_ADDRESS.validate_python(listener.getsockname())
     return listener, port

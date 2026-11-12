@@ -1,8 +1,11 @@
 import asyncio
+import errno
 import importlib
 import json
+import os
 import re
 import socket
+import stat
 import sys
 from collections.abc import AsyncGenerator
 from collections.abc import Awaitable
@@ -13,6 +16,7 @@ from collections.abc import MutableMapping
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import ExitStack
 from contextlib import suppress
+from pathlib import Path
 from types import ModuleType
 from typing import Literal
 from typing import cast
@@ -573,6 +577,85 @@ async def test_async_live_asgi_server_reraises_a_failed_startup():
     with pytest.raises(ValueError, match="broken app"):
         async with async_live_asgi_server(_broken_app):
             pass
+
+
+_REQUEST = b"GET /graphql HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n"
+
+_ADDRESS = pydantic.TypeAdapter(tuple[str, int])
+
+
+def _descriptors() -> set[int]:
+    return {int(entry.name) for entry in Path("/dev/fd").iterdir()}
+
+
+def _server_address(base_url: str) -> tuple[str, int]:
+    port = urlsplit(base_url).port
+    assert port is not None
+    return "127.0.0.1", port
+
+
+# The server runs in this process, so its end of a connection is one of the
+# descriptors opened since the server started: the socket whose local and peer
+# addresses mirror the client's. The option is then read from the OS, not from
+# the helper.
+def _server_nodelay(client: socket.socket, opened: set[int]) -> int:
+    client_end = (
+        _ADDRESS.validate_python(client.getsockname()),
+        _ADDRESS.validate_python(client.getpeername()),
+    )
+    for fd in opened:
+        try:
+            mode = os.fstat(fd).st_mode
+        except OSError as exc:
+            # The descriptor a listing of /dev/fd reads the directory through
+            # is closed once the listing is done.
+            if exc.errno != errno.EBADF:
+                raise
+            continue
+        if not stat.S_ISSOCK(mode):
+            continue
+        with socket.socket(fileno=os.dup(fd)) as candidate:
+            if candidate.family != socket.AF_INET:
+                continue
+            try:
+                peer = _ADDRESS.validate_python(candidate.getpeername())
+            except OSError as exc:
+                # A listener has no peer to compare.
+                if exc.errno != errno.ENOTCONN:
+                    raise
+                continue
+            candidate_end = (peer, _ADDRESS.validate_python(candidate.getsockname()))
+            if candidate_end == client_end:
+                return candidate.getsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY)
+    msg = f"no descriptor opened by the server is the server end of {client_end}"
+    raise AssertionError(msg)
+
+
+def test_live_asgi_server_accepts_connections_without_nagle_delay():
+    before = _descriptors()
+    with (
+        live_asgi_server(_ok_app) as base_url,
+        socket.create_connection(_server_address(base_url)) as client,
+    ):
+        client.sendall(_REQUEST)
+        received = b""
+        while b"pong" not in received:
+            received += client.recv(4096)
+        assert _server_nodelay(client, _descriptors() - before) != 0
+
+
+async def test_async_live_asgi_server_accepts_connections_without_nagle_delay():
+    loop = asyncio.get_running_loop()
+    before = _descriptors()
+    async with async_live_asgi_server(_ok_app) as base_url:
+        with socket.socket() as client:
+            client.setblocking(False)
+            await loop.sock_connect(client, _server_address(base_url))
+            await loop.sock_sendall(client, _REQUEST)
+            received = b""
+            while b"pong" not in received:
+                received += await loop.sock_recv(client, 4096)
+            assert _server_nodelay(client, _descriptors() - before) != 0
 
 
 def test_server_import_without_the_extra_names_the_extra(
