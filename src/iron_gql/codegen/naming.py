@@ -8,7 +8,6 @@ from collections import defaultdict
 from collections.abc import Iterator
 from collections.abc import Mapping
 from graphlib import TopologicalSorter
-from typing import Literal
 
 from iron_gql.codegen.ir import CollectedArtifact
 from iron_gql.codegen.ir import CollectedBinding
@@ -28,7 +27,6 @@ from iron_gql.codegen.ir import slot_param_name
 from iron_gql.codegen.ir import slot_roots
 from iron_gql.codegen.render import bind_body_free_names
 from iron_gql.codegen.render import bind_signatures
-from iron_gql.codegen.render import fragment_init_body_free_names
 from iron_gql.codegen.render import operation_execute_free_names
 from iron_gql.codegen.render import render_artifacts
 from iron_gql.codegen.render import template_execute_free_names
@@ -438,61 +436,29 @@ def build_rename_map(
     }
 
 
-# What kind of thing claims a module-level name. The classification the
-# collision hints below branch on: carried beside the message rather than
-# recovered from it, so rewording an origin cannot silently switch a hint off.
-type ClaimKind = Literal[
-    "operation",
-    "fragment",
-    "applied_fragment",
-    "on_type_base",
-    "template",
-    "bound_base",
-    "scaffold",
-    "model",
-    "enum",
-]
-
-
-def _fixed_name_claims(ir: CollectedModuleIR) -> Iterator[tuple[str, ClaimKind, str]]:
-    # (name, kind, what claims it) for every name the IR pins. The one
+def _fixed_name_claims(ir: CollectedModuleIR) -> Iterator[tuple[str, str]]:
+    # (name, what claims it) for every name the IR pins. The one
     # enumeration of those sources: `_developer_named` guards them against
     # the rename pass and `_module_name_claims` reports collisions between them,
     # and a source listed in only one of the two silently drops the other's
     # protection for every name it contributes.
     for operation in ir.operations:
         at = operation.location
-        yield (
-            operation.class_name,
-            "operation",
-            f"operation '{operation.class_name}' at {at}",
-        )
+        yield operation.class_name, f"operation '{operation.class_name}' at {at}"
     for base in ir.on_type_bases:
         # A base is named by the GraphQL type condition shared by all fragments
         # on that type, so it has no single source location.
-        yield (
-            base.name,
-            "on_type_base",
-            f"the on-type base of '{base.graphql_type_name}'",
-        )
+        yield base.name, f"the on-type base of '{base.graphql_type_name}'"
     for fragment in ir.fragments:
         origin = f"fragment '{fragment.fragment_name}' at {fragment.location}"
-        yield fragment.class_name, "fragment", origin
+        yield fragment.class_name, origin
         if isinstance(fragment, CollectedFactoryFragment):
-            yield (
-                fragment.applied_class_name,
-                "applied_fragment",
-                f"the applied class of {origin}",
-            )
+            yield fragment.applied_class_name, f"the applied class of {origin}"
     for template in ir.templates:
         at = template.location
-        yield (
-            template.class_name,
-            "template",
-            f"template '{template.class_name}' at {at}",
-        )
+        yield template.class_name, f"template '{template.class_name}' at {at}"
         origin = f"the bound base of template '{template.class_name}' at {at}"
-        yield template.bound_base_name, "bound_base", origin
+        yield template.bound_base_name, origin
     # A binding no longer creates a class of its own: it is an entry in the
     # matching template's `_binding_specs`, so there is no module-level Python
     # name here.
@@ -509,7 +475,7 @@ def _developer_named(ir: CollectedModuleIR) -> dict[str, str]:
     # (ADR 0001). An on-type base names a GraphQL type rather than anything
     # written for this module, but a fragment's own class derives from it by
     # that exact name, so it cannot move either.
-    named = {name: origin for name, _kind, origin in _fixed_name_claims(ir)}
+    named = dict(_fixed_name_claims(ir))
     for operation in ir.operations:
         named[operation.result_type] = (
             f"the result class of operation '{operation.class_name}' "
@@ -608,15 +574,15 @@ def _is_usable_identifier(name: str) -> bool:
 
 def _module_name_claims(
     ir: CollectedModuleIR, scaffold: Mapping[str, tuple[str, ...]]
-) -> Iterator[tuple[str, ClaimKind, str]]:
+) -> Iterator[tuple[str, str]]:
     for name in sorted(scaffold):
         for origin in scaffold[name]:
-            yield name, "scaffold", origin
+            yield name, origin
     yield from _fixed_name_claims(ir)
     for artifact in (*ir.result_artifacts, *ir.input_artifacts):
-        yield artifact.name, "model", f"model '{artifact.name}'"
+        yield artifact.name, f"model '{artifact.name}'"
     for enum in ir.enums:
-        yield enum.name, "enum", f"enum '{enum.name}'"
+        yield enum.name, f"enum '{enum.name}'"
 
 
 def validate_module_names(
@@ -627,13 +593,12 @@ def validate_module_names(
     # scaffold land in one namespace. Python keeps the last binding, so any
     # overlap here is an error. Scaffold claims keep the origin of each binding
     # and are checked by the same rule.
-    claims: dict[str, list[tuple[ClaimKind, str]]] = defaultdict(list)
-    for name, kind, origin in _module_name_claims(ir, scaffold):
-        claims[name].append((kind, origin))
+    claims: dict[str, list[str]] = defaultdict(list)
+    for name, origin in _module_name_claims(ir, scaffold):
+        claims[name].append(origin)
     errors: list[str] = []
-    for name, entries in sorted(claims.items()):
-        origins = [origin for _kind, origin in entries]
-        if len(entries) > 1:
+    for name, origins in sorted(claims.items()):
+        if len(origins) > 1:
             message = f"Name '{name}' is claimed by {' and by '.join(origins)}"
             errors.append(message)
         # Every claim becomes a module-level binding of its own.
@@ -709,8 +674,10 @@ def _signature_claims(ir: CollectedModuleIR) -> Iterator[tuple[str, str, str]]:
     # applies instead: two of them snaking to the same Python name is a
     # collision within *this* fragment's own closure, unrelated to any other
     # fragment or combination that might also declare a variable.
+    # A fragment's `__init__` -- the definition's and the applied class's --
+    # takes only parameters the renderer spells itself, so no GraphQL name
+    # reaches its namespace and nothing there is claimed.
     for fragment in ir.fragments:
-        yield from _fragment_init_claims(fragment)
         yield from _fragment_with_args_claims(fragment)
 
 
@@ -811,24 +778,6 @@ def _fragment_with_args_claims(
         yield scope, name, origin
     for arg in fragment.arg_vars:
         yield scope, arg.python_name, f"variable ${arg.gql_name}"
-
-
-def _fragment_init_claims(
-    fragment: CollectedFragment,
-) -> Iterator[tuple[str, str, str]]:
-    at = fragment.location
-    scope = f"__init__() of fragment '{fragment.fragment_name}' at {at}"
-    yield scope, "self", "the method receiver"
-    for name, origin in fragment_init_body_free_names(fragment):
-        yield scope, name, origin
-    if isinstance(fragment, CollectedFactoryFragment):
-        applied_scope = (
-            f"__init__() of applied fragment '{fragment.fragment_name}' at {at}"
-        )
-        yield applied_scope, "self", "the method receiver"
-        yield applied_scope, "fragment_args", "the fragment arguments"
-        for name, origin in fragment_init_body_free_names(fragment):
-            yield applied_scope, name, origin
 
 
 def validate_signature_names(ir: CollectedModuleIR) -> list[str]:

@@ -710,8 +710,16 @@ def test_a_template_whose_product_exceeds_the_limit_is_rejected(
     test_project.prepare(schema=_many_slot_schema(6), queries=_many_slot_queries(6))
     with pytest.raises(GraphQLGenerationError) as exc:
         test_project.generate()
-    assert "729 combinations" in str(exc.value)
-    assert "6 slots" in str(exc.value)
+    assert exc.value.errors == [
+        (
+            "Template 'ManyQuery' at sample_app/queries.py:15 enumerates to 729 "
+            "combinations, over the limit of 256 (729 schema-derived): it has 6 slots, "
+            "each ranging over nothing plus every fragment compatible with it (slot_0: "
+            "2, slot_1: 2, slot_2: 2, slot_3: 2, slot_4: 2, slot_5: 2). Split the "
+            "template into smaller ones, or narrow the slots' types so fewer fragments "
+            "are compatible"
+        ),
+    ]
 
 
 def test_literal_tuple_combinations_are_part_of_the_same_limit(
@@ -753,9 +761,15 @@ def test_literal_tuple_combinations_are_part_of_the_same_limit(
 
     with pytest.raises(GraphQLGenerationError) as exc_info:
         test_project.generate()
-    message = str(exc_info.value)
-    assert "277 combinations" in message
-    assert "253 literal-only" in message
+    assert exc_info.value.errors == [
+        (
+            "Template 'ManyQuery' at sample_app/queries.py:3 enumerates to 277 "
+            "combinations, over the limit of 256 (24 schema-derived, 253 "
+            "literal-only): it has 1 slots, each ranging over nothing plus every "
+            "fragment compatible with it (image: 23). Split the template into smaller "
+            "ones, or narrow the slots' types so fewer fragments are compatible"
+        ),
+    ]
 
 
 def test_a_template_one_slot_under_the_limit_still_generates(
@@ -856,15 +870,21 @@ def test_a_conditional_brick_path_valid_in_a_tuple_is_rejected_alone(
     )
     with pytest.raises(GraphQLGenerationError) as exc:
         test_project.generate()
-    assert "Outer" in str(exc.value)
-    assert "Brick" in str(exc.value)
     # And it has to name a remedy that can still be carried out: "move it into
     # a fragment no binding reaches" was one until combinations came from the
     # schema, and now every fragment on a slot-compatible type is reached.
-    assert "no binding reaches" not in str(exc.value)
-    assert "drop the directive" in str(exc.value)
-    assert "nested under a field" in str(exc.value)
-    assert "inline fragment" in str(exc.value)
+    assert exc.value.errors == [
+        (
+            "Combination at sample_app/queries.py:15, sample_app/queries.py:9: "
+            "fragment 'Outer' spreads 'Brick' under @skip/@include, and at "
+            "ImageAttachment that is the only way 'Brick' reaches the slot's root; a "
+            "fragment readable there is always requested and always validated, so it "
+            "cannot be conditional -- drop the directive, or move the conditional part "
+            "off 'Outer's own root: a spread nested under a field, or an inline "
+            "fragment selecting those fields directly, is conditional without offering "
+            "a readable fragment"
+        ),
+    ]
 
 
 @pytest.mark.parametrize(
@@ -935,14 +955,15 @@ def test_two_fragment_variables_mapping_to_one_python_name_are_rejected(
         )
         """,
     )
-    with pytest.raises(
-        GraphQLGenerationError,
-        match=(
-            r"Parameter 'foo_bar' of with_args\(\) of fragment 'ImageParts'"
-            r".*claimed by"
-        ),
-    ):
+    with pytest.raises(GraphQLGenerationError) as exc:
         test_project.generate()
+    assert exc.value.errors == [
+        (
+            "Parameter 'foo_bar' of with_args() of fragment 'ImageParts' at "
+            "sample_app/queries.py:3 is claimed by variable $fooBar and by variable "
+            "$foo_bar"
+        ),
+    ]
 
 
 def test_a_fragment_variable_named_args_is_accepted(test_project: ProjectBuilder):
@@ -1052,13 +1073,15 @@ def test_a_fragments_own_variable_at_two_conflicting_types_is_rejected(
         )
         """,
     )
-    with pytest.raises(
-        GraphQLGenerationError,
-        match=(
-            r"\$size.*no GraphQL variable declaration type is allowed at every usage"
-        ),
-    ):
+    with pytest.raises(GraphQLGenerationError) as exc:
         test_project.generate()
+    assert exc.value.errors == [
+        (
+            "Combination at sample_app/queries.py:3: variable $size is used as 'Int!' "
+            "in fragment 'ImageParts' and as 'String!' in fragment 'ImageParts'; no "
+            "GraphQL variable declaration type is allowed at every usage"
+        ),
+    ]
 
 
 WIDE_TUPLE_ARITY = 8
@@ -1601,14 +1624,15 @@ def test_a_slot_named_after_a_claimed_name_is_rejected(
         schema=SLOT_NAME_SCHEMA,
         queries=_slot_name_queries(name, binds=form.format(name=name)),
     )
-    with pytest.raises(
-        GraphQLGenerationError,
-        match=(
-            rf"Parameter '{name}' of bind\(\) of template 'GetAttachmentQuery'"
-            rf".*{re.escape(origin)}"
-        ),
-    ):
+    with pytest.raises(GraphQLGenerationError) as exc:
         test_project.generate(to_snake_fn=lambda name: name)
+    assert exc.value.errors == [
+        (
+            f"Parameter '{name}' of bind() of template 'GetAttachmentQuery' "
+            "at sample_app/queries.py:15 "
+            f"is claimed by {origin} and by slot '{name}'"
+        )
+    ]
 
 
 # `SLOT_NAME_SCHEMA` with a field argument, so a fragment can declare a
@@ -1620,11 +1644,13 @@ WIDTH_ARG_SCHEMA = SLOT_NAME_SCHEMA.replace("url: String!", "url(width: Int!): S
 # client, the typing module and the result class, and a factory's `with_args`
 # reads only its own Applied class.
 CLAIMED_TEMPLATE_EXECUTE_NAMES = (
+    ("self", "the method receiver"),
     *template_execute_fixed_names(),
     ("GetAttachmentQueryResult", "the result class this execute() validates against"),
 )
 
 CLAIMED_WITH_ARGS_NAMES = (
+    ("self", "the method receiver"),
     (applied_fragment_class_name("ImagePartsFragment"), "the applied fragment class"),
 )
 
@@ -1684,14 +1710,15 @@ def test_a_template_variable_named_after_a_claimed_name_is_rejected(
     test_project: ProjectBuilder, name: str, origin: str
 ):
     test_project.prepare(schema=SLOT_NAME_SCHEMA, queries=_variable_name_queries(name))
-    with pytest.raises(
-        GraphQLGenerationError,
-        match=(
-            rf"Parameter '{name}' of execute\(\) of template 'GetAttachmentQuery'"
-            rf".*{re.escape(origin)}"
-        ),
-    ):
+    with pytest.raises(GraphQLGenerationError) as exc:
         test_project.generate(to_snake_fn=lambda name: name)
+    assert exc.value.errors == [
+        (
+            f"Parameter '{name}' of execute() of template 'GetAttachmentQuery' "
+            "at sample_app/queries.py:9 "
+            f"is claimed by {origin} and by variable ${name}"
+        )
+    ]
 
 
 @pytest.mark.parametrize(
@@ -1705,14 +1732,15 @@ def test_a_fragment_variable_named_after_a_claimed_name_is_rejected(
     test_project.prepare(
         schema=WIDTH_ARG_SCHEMA, queries=_fragment_variable_queries(name)
     )
-    with pytest.raises(
-        GraphQLGenerationError,
-        match=(
-            rf"Parameter '{name}' of with_args\(\) of fragment 'ImageParts'"
-            rf".*{re.escape(origin)}"
-        ),
-    ):
+    with pytest.raises(GraphQLGenerationError) as exc:
         test_project.generate(to_snake_fn=lambda name: name)
+    assert exc.value.errors == [
+        (
+            f"Parameter '{name}' of with_args() of fragment 'ImageParts' "
+            "at sample_app/queries.py:3 "
+            f"is claimed by {origin} and by variable ${name}"
+        )
+    ]
 
 
 def test_a_bound_fragment_spreading_a_bundled_fragment_is_rejected(
@@ -1757,11 +1785,15 @@ def test_a_bound_fragment_spreading_a_bundled_fragment_is_rejected(
         bound = get_attachment.bind(attachment=image_parts)
         """,
     )
-    with pytest.raises(
-        GraphQLGenerationError,
-        match=r"spreads fragment\(s\) Brick in its closure, but they are not",
-    ):
+    with pytest.raises(GraphQLGenerationError) as exc:
         test_project.generate()
+    assert exc.value.errors == [
+        (
+            "Fragment 'ImageParts' at sample_app/queries.py:10 spreads fragment(s) "
+            "Brick in its closure, but they are not single-fragment statements a bind "
+            "can see -- split each into its own statement"
+        ),
+    ]
 
 
 def test_fragment_reached_by_both_the_template_and_the_binding_composes(
@@ -1875,9 +1907,13 @@ def test_two_templates_whose_class_names_collide_say_so(test_project: ProjectBui
     )
     with pytest.raises(GraphQLGenerationError) as exc_info:
         test_project.generate()
-    message = str(exc_info.value)
-    assert "GetPostQueryResult" in message
-    assert "unknown slot" not in message
+    assert exc_info.value.errors == [
+        (
+            "Model name 'GetPostQueryResult' is generated by colliding field paths "
+            "with different shapes; alias one of the fields to give the models "
+            "distinct names"
+        ),
+    ]
 
 
 def test_a_factory_the_template_also_spreads_by_name_is_rejected(
@@ -1947,11 +1983,16 @@ def test_a_factory_the_template_also_spreads_by_name_is_rejected(
 
         """,
     )
-    with pytest.raises(
-        GraphQLGenerationError,
-        match=(r"Fragment 'ImageParts'.*variable \$size.*template 'GetAttachment'"),
-    ):
+    with pytest.raises(GraphQLGenerationError) as exc:
         test_project.generate()
+    assert exc.value.errors == [
+        (
+            "Combination at sample_app/queries.py:11, sample_app/queries.py:3: "
+            "Fragment 'ImageParts' owns variable $size through with_args, but template "
+            "'GetAttachment' owns the same variable through execute; rename the "
+            "fragment variable"
+        ),
+    ]
 
 
 def test_static_factory_spread_without_a_compatible_slot_is_allowed(
@@ -2046,11 +2087,16 @@ def test_static_factory_spread_conflicts_with_a_compatible_transitive_owner(
         """,
     )
 
-    with pytest.raises(
-        GraphQLGenerationError,
-        match=(r"Fragment 'OuterParts'.*variable \$size.*template 'GetPage'"),
-    ):
+    with pytest.raises(GraphQLGenerationError) as exc:
         test_project.generate()
+    assert exc.value.errors == [
+        (
+            "Combination at sample_app/queries.py:19, sample_app/queries.py:11: "
+            "Fragment 'OuterParts' owns variable $size through with_args, but template "
+            "'GetPage' owns the same variable through execute; rename the fragment "
+            "variable"
+        ),
+    ]
 
 
 def test_factory_with_a_leading_underscore_name_imports(

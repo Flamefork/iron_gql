@@ -245,5 +245,13 @@ def test_a_misspelled_slot_is_diagnosed_whatever_else_the_tree_holds(
     # silence. Whether an unrelated line exists in another statement must not
     # decide whether this line is an error.
     test_project.prepare(schema=SCHEMA, queries=_misspelled_source(extra=extra))
-    with pytest.raises(GraphQLGenerationError, match="unknown slot 'typo'"):
+    with pytest.raises(GraphQLGenerationError) as exc:
         _ = test_project.generate()
+    # The bind is one line further down when the other bind is written.
+    line = 15 if extra else 14
+    assert exc.value.errors == [
+        (
+            f"Combination at sample_app/queries.py:{line} targets unknown slot "
+            "'typo'; the template's slots are: attachment"
+        )
+    ]

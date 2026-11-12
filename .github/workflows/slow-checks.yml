@@ -2,7 +2,8 @@ name: "Slow checks"
 
 # The full scan of external Python code, mutation testing and the scoping fuzzer
 # cost more than the main suite, so they run on a schedule and on demand. The
-# mutation step fails while any mutant is left unkilled.
+# mutation step reports the mutants left unkilled and fails only when the run
+# itself does (ADR 0007).
 on:
   workflow_dispatch:
   schedule:

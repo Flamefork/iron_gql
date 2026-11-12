@@ -288,11 +288,12 @@ def _operation_defs(
 def _single_fragment(
     doc: graphql.DocumentNode,
 ) -> graphql.FragmentDefinitionNode | None:
-    match doc.definitions:
-        case [graphql.FragmentDefinitionNode() as definition]:
-            return definition
-        case _:
-            return None
+    definitions = doc.definitions
+    if len(definitions) == 1 and isinstance(
+        definition := definitions[0], graphql.FragmentDefinitionNode
+    ):
+        return definition
+    return None
 
 
 # A standalone fragment has no operation to be used by, so the unused rule

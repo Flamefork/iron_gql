@@ -549,16 +549,18 @@ def _common_nullable_type(
     left: graphql.NamedTypeNode | graphql.ListTypeNode,
     right: graphql.NamedTypeNode | graphql.ListTypeNode,
 ) -> graphql.NamedTypeNode | graphql.ListTypeNode | None:
-    match left, right:
-        case graphql.ListTypeNode(), graphql.ListTypeNode():
-            common = _common_input_type(left.type, right.type)
-            return None if common is None else graphql.ListTypeNode(type=common)
-        case graphql.NamedTypeNode(), graphql.NamedTypeNode() if (
-            left.name.value == right.name.value
-        ):
-            return left
-        case _:
-            return None
+    if isinstance(left, graphql.ListTypeNode) and isinstance(
+        right, graphql.ListTypeNode
+    ):
+        common = _common_input_type(left.type, right.type)
+        return None if common is None else graphql.ListTypeNode(type=common)
+    if (
+        isinstance(left, graphql.NamedTypeNode)
+        and isinstance(right, graphql.NamedTypeNode)
+        and left.name.value == right.name.value
+    ):
+        return left
+    return None
 
 
 def _location_type(entry: _VariableUsage) -> graphql.TypeNode:

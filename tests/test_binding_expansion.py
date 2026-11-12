@@ -210,7 +210,7 @@ def test_unknown_slot_kwarg_lists_slots():
     template_doc = graphql.parse(TEMPLATE)
     image_parts = _fragment("fragment ImageParts on ImageAttachment { url }")
 
-    with pytest.raises(GraphQLGenerationError, match="attachment"):
+    with pytest.raises(GraphQLGenerationError) as exc:
         expand_binding(
             schema=schema,
             template_doc=template_doc,
@@ -222,6 +222,12 @@ def test_unknown_slot_kwarg_lists_slots():
             ),
             location="test:1",
         )
+    assert exc.value.errors == [
+        (
+            "Combination at test:1 targets unknown slot 'wrongName'; the template's "
+            "slots are: attachment"
+        ),
+    ]
 
 
 def test_incompatible_fragment_rejected():
@@ -231,7 +237,7 @@ def test_incompatible_fragment_rejected():
     template_doc = graphql.parse(TEMPLATE)
     post_fields = _fragment("fragment PostFields on Post { id }")
 
-    with pytest.raises(GraphQLGenerationError, match="cannot be spread into slot"):
+    with pytest.raises(GraphQLGenerationError) as exc:
         expand_binding(
             schema=schema,
             template_doc=template_doc,
@@ -243,6 +249,12 @@ def test_incompatible_fragment_rejected():
             ),
             location="test:1",
         )
+    assert exc.value.errors == [
+        (
+            "Combination at test:1: fragment 'PostFields' on 'Post' cannot be spread "
+            "into slot 'attachment' of type 'Attachment'"
+        ),
+    ]
 
 
 TWO_SLOT_TEMPLATE = """
@@ -284,10 +296,16 @@ def test_every_bad_slot_argument_of_one_bind_is_reported_together():
             location="test:1",
         )
 
-    assert len(exc_info.value.errors) == 2
-    assert all("cannot be spread into" in error for error in exc_info.value.errors)
-    assert any("slot 'attachment'" in error for error in exc_info.value.errors)
-    assert any("slot 'preview'" in error for error in exc_info.value.errors)
+    assert exc_info.value.errors == [
+        (
+            "Combination at test:1: fragment 'PostFields' on 'Post' cannot be spread "
+            "into slot 'attachment' of type 'Attachment'"
+        ),
+        (
+            "Combination at test:1: fragment 'PostFields' on 'Post' cannot be spread "
+            "into slot 'preview' of type 'Attachment'"
+        ),
+    ]
 
 
 def test_an_unknown_slot_does_not_hide_another_slots_bad_fragment():
@@ -312,9 +330,16 @@ def test_an_unknown_slot_does_not_hide_another_slots_bad_fragment():
             location="test:1",
         )
 
-    assert len(exc_info.value.errors) == 2
-    assert any("slot 'attachment'" in error for error in exc_info.value.errors)
-    assert any("unknown slot 'wrongName'" in error for error in exc_info.value.errors)
+    assert exc_info.value.errors == [
+        (
+            "Combination at test:1: fragment 'PostFields' on 'Post' cannot be spread "
+            "into slot 'attachment' of type 'Attachment'"
+        ),
+        (
+            "Combination at test:1 targets unknown slot 'wrongName'; the template's "
+            "slots are: attachment, preview"
+        ),
+    ]
 
 
 def test_a_slot_the_bind_leaves_empty_still_gets_a_readable_entry():
@@ -443,14 +468,21 @@ def test_merge_conflict_across_fragments_reported():
             ),
             location="test:1",
         )
-    message = str(exc_info.value)
-    assert "test:1" in message
-    assert "thumbnail" in message
-    # The combination is labeled template × fragments,
-    # so a reader knows which template produced the conflict without cross-
-    # referencing the bind location against the source.
-    assert "GetAttachment" in message
-    assert "ThumbWrapper" in message
+    # The combination is labeled template × fragments, so a reader knows which
+    # template produced the conflict without cross-referencing the bind
+    # location against the source.
+    assert exc_info.value.errors == [
+        "Combination at test:1 (GetAttachment × attachment=[ThumbWrapper]) is invalid:",
+        (
+            "Fields 'thumbnail' conflict because they have differing arguments. Use "
+            "different aliases on the fields to fetch both if this was "
+            "intentional.\n\nGraphQL request:3:13\n2 |         fragment ThumbWrapper "
+            "on ImageAttachment {\n3 |             thumbnail(size: 200)\n  |           "
+            "  ^\n4 |             ...ThumbSmall\n\nGraphQL request:1:42\n1 | fragment "
+            "ThumbSmall on ImageAttachment { thumbnail(size: 100) }\n  |               "
+            "                           ^"
+        ),
+    ]
 
 
 SCHEMA_WITH_TYPED_ARGS = _schema(
@@ -474,10 +506,7 @@ def test_variable_type_conflict_between_usages_rejected():
     # this test green, since graphql-core's error for the resulting document
     # also mentions `$x`. Pinned on text only this check's own message
     # produces.
-    with pytest.raises(
-        GraphQLGenerationError,
-        match="no GraphQL variable declaration type is allowed at every usage",
-    ):
+    with pytest.raises(GraphQLGenerationError) as exc:
         expand_binding(
             schema=schema,
             template_doc=template_doc,
@@ -494,6 +523,13 @@ def test_variable_type_conflict_between_usages_rejected():
             ),
             location="test:1",
         )
+    assert exc.value.errors == [
+        (
+            "Combination at test:1: variable $x is used as 'String!' in fragment "
+            "'InnerParts' and as 'Int!' in fragment 'OuterParts'; no GraphQL variable "
+            "declaration type is allowed at every usage"
+        ),
+    ]
 
 
 @pytest.mark.parametrize(
@@ -532,10 +568,13 @@ def test_variable_type_conflict_names_the_incompatible_usage(
             location="test:1",
         )
 
-    message = str(exc_info.value)
-    assert "'[Int]!'" in message
-    assert expected_type in message
-    assert "'[Int]' in fragment" not in message
+    assert exc_info.value.errors == [
+        (
+            f"Combination at test:1: variable $x is used as '[Int]!' in fragment "
+            f"'Parts' and as {expected_type} in fragment 'Parts'; no GraphQL "
+            "variable declaration type is allowed at every usage"
+        )
+    ]
 
 
 SCHEMA_WITH_TWO_TYPED_ARGS = _schema(
@@ -577,13 +616,18 @@ def test_every_conflicting_variable_of_one_bind_is_reported_together():
             location="test:1",
         )
 
-    assert len(exc_info.value.errors) == 2
-    assert all(
-        "no GraphQL variable declaration type is allowed at every usage" in error
-        for error in exc_info.value.errors
-    )
-    assert any("$x" in error for error in exc_info.value.errors)
-    assert any("$y" in error for error in exc_info.value.errors)
+    assert exc_info.value.errors == [
+        (
+            "Combination at test:1: variable $x is used as 'String!' in fragment "
+            "'InnerParts' and as 'Int!' in fragment 'OuterParts'; no GraphQL variable "
+            "declaration type is allowed at every usage"
+        ),
+        (
+            "Combination at test:1: variable $y is used as 'String!' in fragment "
+            "'InnerParts' and as 'Int!' in fragment 'OuterParts'; no GraphQL variable "
+            "declaration type is allowed at every usage"
+        ),
+    ]
 
 
 def test_readable_and_variable_diagnoses_of_one_bind_arrive_together():
@@ -621,12 +665,22 @@ def test_readable_and_variable_diagnoses_of_one_bind_arrive_together():
             location="test:1",
         )
 
-    assert len(exc_info.value.errors) == 2
-    assert any("under @skip/@include" in error for error in exc_info.value.errors)
-    assert any(
-        "no GraphQL variable declaration type is allowed at every usage" in error
-        for error in exc_info.value.errors
-    )
+    assert exc_info.value.errors == [
+        (
+            "Combination at test:1: fragment 'OuterParts' spreads 'Alt' under "
+            "@skip/@include, and at ImageAttachment that is the only way 'Alt' reaches "
+            "the slot's root; a fragment readable there is always requested and always "
+            "validated, so it cannot be conditional -- drop the directive, or move the "
+            "conditional part off 'OuterParts's own root: a spread nested under a "
+            "field, or an inline fragment selecting those fields directly, is "
+            "conditional without offering a readable fragment"
+        ),
+        (
+            "Combination at test:1: variable $x is used as 'String!' in fragment "
+            "'InnerParts' and as 'Int!' in fragment 'OuterParts'; no GraphQL variable "
+            "declaration type is allowed at every usage"
+        ),
+    ]
 
 
 def test_variable_used_by_two_fragments_at_agreeing_type_merges_into_one_declaration():
@@ -797,12 +851,15 @@ def test_two_directly_bound_fragments_sharing_a_variable_are_rejected():
             location="test:1",
         )
 
-    message = str(exc_info.value)
-    assert "test:1" in message
-    assert "$width" in message
-    assert "ImageUrl" in message
-    assert "ImageAlt" in message
-    assert "rename" in message
+    assert exc_info.value.errors == [
+        (
+            "Combination at test:1: variable $width is used by fragments 'ImageAlt, "
+            "ImageUrl', each named directly in this bind; every directly-named "
+            "fragment is applied independently, through its own with_args, so their "
+            "values cannot be merged into the query's one declaration of the variable "
+            "-- rename it in one of them"
+        ),
+    ]
 
 
 SCHEMA_WITH_ID_ARG = _schema("byId(id: ID!): String!")
@@ -833,12 +890,13 @@ def test_variable_name_collision_with_template_var_is_rejected():
             location="test:1",
         )
 
-    message = str(exc_info.value)
-    assert "test:1" in message
-    assert "$id" in message
-    assert "ImageParts" in message
-    assert "GetAttachment" in message
-    assert "rename" in message
+    assert exc_info.value.errors == [
+        (
+            "Combination at test:1: Fragment 'ImageParts' owns variable $id through "
+            "with_args, but template 'GetAttachment' owns the same variable through "
+            "execute; rename the fragment variable"
+        ),
+    ]
 
 
 SCHEMA_WITH_DEFAULT_ARG = _schema(
@@ -936,9 +994,27 @@ def test_fragment_variable_on_unknown_argument_defers_to_validate():
     # Proves the error genuinely comes from
     # `graphql.validate` (both the unknown argument itself and the variable
     # it silently left undeclared), not a second diagnosis invented here.
-    message = str(exc_info.value)
-    assert "Unknown argument 'bogus'" in message
-    assert "Variable '$x' is not defined" in message
+    assert exc_info.value.errors == [
+        "Combination at test:1 (GetAttachment × attachment=[ImageParts]) is invalid:",
+        (
+            "Variable '$x' is not defined by operation 'GetAttachment'.\n\nGraphQL "
+            "request:1:62\n1 | fragment ImageParts on ImageAttachment { url "
+            "@include(bogus: $x) }\n  |                                                "
+            "              ^"
+        ),
+        (
+            "Unknown argument 'bogus' on directive '@include'.\n\nGraphQL "
+            "request:1:55\n1 | fragment ImageParts on ImageAttachment { url "
+            "@include(bogus: $x) }\n  |                                                "
+            "       ^"
+        ),
+        (
+            "Argument '@include(if:)' of type 'Boolean!' is required, but it was not "
+            "provided.\n\nGraphQL request:1:46\n1 | fragment ImageParts on "
+            "ImageAttachment { url @include(bogus: $x) }\n  |                          "
+            "                    ^"
+        ),
+    ]
 
 
 TEMPLATE_WITH_LOCAL_FRAGMENT = """
@@ -1133,10 +1209,7 @@ def test_a_conditional_root_level_path_to_a_brick_is_rejected(spread: str):
     )
     node_id = _fragment(NODE_ID)
 
-    with pytest.raises(
-        GraphQLGenerationError,
-        match=r"fragment 'ImageParts' spreads 'NodeId' under @skip/@include",
-    ):
+    with pytest.raises(GraphQLGenerationError) as exc:
         expand_binding(
             schema=schema,
             template_doc=template_doc,
@@ -1150,6 +1223,17 @@ def test_a_conditional_root_level_path_to_a_brick_is_rejected(spread: str):
             ),
             location="test:1",
         )
+    assert exc.value.errors == [
+        (
+            "Combination at test:1: fragment 'ImageParts' spreads 'NodeId' under "
+            "@skip/@include, and at ImageAttachment that is the only way 'NodeId' "
+            "reaches the slot's root; a fragment readable there is always requested "
+            "and always validated, so it cannot be conditional -- drop the directive, "
+            "or move the conditional part off 'ImageParts's own root: a spread nested "
+            "under a field, or an inline fragment selecting those fields directly, is "
+            "conditional without offering a readable fragment"
+        ),
+    ]
 
 
 def test_a_conditional_spread_is_allowed_when_the_brick_is_also_bound_directly():
@@ -1204,13 +1288,7 @@ def test_a_conditional_path_to_a_typename_reached_no_other_way_is_rejected():
     )
     node_id = _fragment(NODE_ID)
 
-    with pytest.raises(
-        GraphQLGenerationError,
-        match=(
-            r"fragment 'LinkParts' spreads 'NodeId' under @skip/@include, and "
-            r"at LinkAttachment that is the only way"
-        ),
-    ):
+    with pytest.raises(GraphQLGenerationError) as exc:
         expand_binding(
             schema=schema,
             template_doc=template_doc,
@@ -1228,6 +1306,17 @@ def test_a_conditional_path_to_a_typename_reached_no_other_way_is_rejected():
             ),
             location="test:1",
         )
+    assert exc.value.errors == [
+        (
+            "Combination at test:1: fragment 'LinkParts' spreads 'NodeId' under "
+            "@skip/@include, and at LinkAttachment that is the only way 'NodeId' "
+            "reaches the slot's root; a fragment readable there is always requested "
+            "and always validated, so it cannot be conditional -- drop the directive, "
+            "or move the conditional part off 'LinkParts's own root: a spread nested "
+            "under a field, or an inline fragment selecting those fields directly, is "
+            "conditional without offering a readable fragment"
+        ),
+    ]
 
 
 def test_a_brick_reachable_at_no_typename_of_the_slot_is_not_offered():
@@ -1337,10 +1426,13 @@ def test_a_bound_fragment_the_template_already_spreads_has_two_owners():
             location="test:1",
         )
 
-    message = str(exc_info.value)
-    assert "Fragment 'ImageParts'" in message
-    assert "$size" in message
-    assert "template 'GetAttachment'" in message
+    assert exc_info.value.errors == [
+        (
+            "Combination at test:1: Fragment 'ImageParts' owns variable $size through "
+            "with_args, but template 'GetAttachment' owns the same variable through "
+            "execute; rename the fragment variable"
+        ),
+    ]
 
 
 TEMPLATE_WITH_LOCAL_IMAGE_PARTS = """

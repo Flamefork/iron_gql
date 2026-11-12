@@ -446,5 +446,7 @@ class-keyword-holder bound:query Q { f @slot { __typename } }
 class-keyword-tmpl refused
 lambda-default-holder bound:query Q { f @slot { __typename } }
 lambda-default-tmpl refused
+relative-two-levels-three-deep bound:query R { g @slot { __typename } }
+nested-package-init bound:query Q { f @slot { __typename } }
 genexp-iterated-after-rebind bound:query R { g @slot { __typename } }
 nonlocal-through-a-function-that-binds-nothing refused

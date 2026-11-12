@@ -350,7 +350,8 @@ def _case(
         prefix=(
             f"Name '{owner.name}' of {owner.description.format(at=at)} is also "
             f"claimed by a selection of GraphQL type '{claimant_type}' "
-            f"(its own name '{own_name}"
+            # A known own name is closed off, so the prefix holds all of it.
+            f"(its own name '{own_name}{"')" if own_name else ''}"
         ),
         claims=claims,
         resolved=(*owner.resolved, *resolved),
@@ -378,6 +379,8 @@ def _owner_case(owner: _Owner, claimant: str, order: str) -> PinnedNameClaim:
         order=order,
         query_fields=f"    claim: {owner.name}",
         types=types.format(name=owner.name),
+        # A model's detailed name; an alias has only digest names of its own.
+        own_name=f"{owner.name}WithId_ID" if claimant == "model" else "",
     )
 
 

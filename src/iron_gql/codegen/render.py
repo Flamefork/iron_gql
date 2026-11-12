@@ -1416,12 +1416,6 @@ def with_args_body_free_names(
     return ((fragment.applied_class_name, "the applied fragment class"),)
 
 
-def fragment_init_body_free_names(
-    fragment: CollectedFragment,
-) -> tuple[tuple[str, str], ...]:
-    return ((fragment.class_name, "the fragment definition class"),)
-
-
 def method_body_fixed_names() -> frozenset[str]:
     # Every schema-independent name some generated method body reads, together.
     # The oracle over a rendered module checks against this whole set rather

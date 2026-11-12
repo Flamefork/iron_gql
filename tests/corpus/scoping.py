@@ -593,3 +593,62 @@ def build_placement_corpus() -> list[ScopeCase]:
                 )
             )
     return cases
+
+
+# Where the module that holds the template sits in its package, which the
+# other corpora keep fixed at `app/templates.py`: a two-dot relative import
+# from three packages deep, which climbs to a package below the root one, and
+# a template written in a nested package's `__init__.py`, which is imported by
+# the package's own dotted name. Each case is ordinary code the scan must bind.
+# Both stay under `app`, the package the recorder forgets between cases.
+PACKAGE_LAYOUTS: dict[str, tuple[tuple[tuple[str, str], ...], str, str]] = {
+    "relative-two-levels-three-deep": (
+        (
+            ("app/a/__init__.py", ""),
+            (
+                "app/a/templates.py",
+                # Not `app/templates.py`'s template, so a climb that lands one
+                # package too high binds the wrong statement.
+                f"from {_RECORDER} import api_gql\ntmpl = {SHADOW_TEMPLATE}\n",
+            ),
+            ("app/a/sub/__init__.py", ""),
+        ),
+        "app/a/sub/mod.py",
+        "from ..templates import tmpl",
+    ),
+    "nested-package-init": (
+        (
+            (
+                "app/sub/__init__.py",
+                f"from {_RECORDER} import api_gql\ntmpl = {TEMPLATE}\n",
+            ),
+        ),
+        "app/mod.py",
+        "from app.sub import tmpl",
+    ),
+}
+
+
+def build_package_corpus() -> list[ScopeCase]:
+    cases: list[ScopeCase] = []
+    for layout, (files, path, import_line) in PACKAGE_LAYOUTS.items():
+        source = "".join(
+            line + "\n"
+            for line in [
+                f"from {_RECORDER} import api_gql",
+                import_line,
+                f"frag = {FRAGMENT}",
+                BIND_LINE,
+            ]
+        )
+        compile(source, "<corpus>", "exec")
+        cases.append(
+            ScopeCase(
+                axes=(("package", layout),),
+                files=(*SUPPORT_FILES, *files, (path, source)),
+                module=path.removesuffix(".py").replace("/", "."),
+                invoke=(),
+                must_bind=True,
+            )
+        )
+    return cases

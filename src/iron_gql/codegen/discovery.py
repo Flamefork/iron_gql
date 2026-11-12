@@ -378,13 +378,15 @@ def _gql_call(
     # so the shape they recognize is spelled here rather than at each of them.
     # `None` is a legal argument (a bare `x: Foo` annotation has no value) and
     # answers the question the same way anything else that is not a call does.
-    match node:
-        case ast.Call(func=ast.Name(id=called)) if called == gql_fn_name:
-            return _gql_statement(
-                node, gql_fn_name=gql_fn_name, relative_path=relative_path
-            )
-        case _:
-            return None
+    if (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == gql_fn_name
+    ):
+        return _gql_statement(
+            node, gql_fn_name=gql_fn_name, relative_path=relative_path
+        )
+    return None
 
 
 def _dotted(package: str, name: str) -> str:
@@ -1633,22 +1635,16 @@ def _bind_resolution_mode(
     # A named `**opts` is excluded on purpose: its contents are statically
     # unknown, and including it would send every third-party `.bind(**opts)` to
     # base resolution.
-    has_empty_sequence = False
-    for kw in candidate.call.keywords:
-        match kw.value:
-            case ast.Tuple(elts=elts):
-                if elts:
-                    return "arguments"
-                has_empty_sequence = True
-            case ast.List(elts=elts):
-                if elts:
-                    return "arguments"
-                has_empty_sequence = True
-            case ast.Dict() if kw.arg is None:
-                return "arguments"
-            case _:
-                pass
-    return "keywords" if has_empty_sequence else "none"
+    keywords = candidate.call.keywords
+    if any(
+        (isinstance(kw.value, ast.Tuple | ast.List) and kw.value.elts)
+        or (isinstance(kw.value, ast.Dict) and kw.arg is None)
+        for kw in keywords
+    ):
+        return "arguments"
+    if any(isinstance(kw.value, ast.Tuple | ast.List) for kw in keywords):
+        return "keywords"
+    return "none"
 
 
 def _resolve_binds(

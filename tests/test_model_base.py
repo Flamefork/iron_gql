@@ -515,8 +515,11 @@ def test_schema_name_of_the_base_root_module_is_rejected(test_project: ProjectBu
         get_entry = api_gql("query GetEntry { entry { kind } }")
         """,
     )
-    with pytest.raises(GraphQLGenerationError, match="'corebase' is claimed by"):
+    with pytest.raises(GraphQLGenerationError) as exc:
         test_project.generate(model_base_import="corebase.models:Model")
+    assert exc.value.errors == [
+        "Name 'corebase' is claimed by import corebase and by enum 'corebase'",
+    ]
 
 
 _BASE_FORM_SCHEMA = """

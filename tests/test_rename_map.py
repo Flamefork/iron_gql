@@ -237,6 +237,14 @@ def _taken_suffixes(count: int) -> frozenset[str]:
     return taken
 
 
+def _exhausted(*names: tuple[str, str]) -> str:
+    blocked = ", ".join(f"'{name}' ({why})" for name, why in names)
+    return (
+        f"No name is left for the selection named '{TWINS_CANDIDATE}': {blocked}; "
+        "rename the operation, fragment or GraphQL type that holds one of them"
+    )
+
+
 def test_every_name_of_a_shape_taken_is_diagnosed():
     # Fixed names are valid input -- an operation may be named anything. A
     # shape whose every suffix is taken gets no name rather than a count past
@@ -245,12 +253,13 @@ def test_every_name_of_a_shape_taken_is_diagnosed():
     assert max(len(name) for name in taken) == len(TWINS_CANDIDATE) + 65
     with pytest.raises(GraphQLGenerationError) as exc_info:
         _ = _rename_twins(taken)
-    [error] = exc_info.value.errors
-    assert error.startswith(
-        f"No name is left for the selection named '{TWINS_CANDIDATE}'"
-    )
-    assert "(taken)" in error
-    assert "rename the operation, fragment or GraphQL type" in error
+    # The bare candidate is spelled by the other twin; every suffix is taken.
+    assert exc_info.value.errors == [
+        _exhausted(
+            (TWINS_CANDIDATE, "also spelled elsewhere"),
+            *((name, "taken") for name in sorted(taken, key=len)),
+        )
+    ]
 
 
 def test_type_spelled_like_the_last_suffix_is_diagnosed():
@@ -263,8 +272,15 @@ def test_type_spelled_like_the_last_suffix_is_diagnosed():
         graphql_type_name=full,
         fields=[_field("id", _scalar("str"))],
     )
-    with pytest.raises(GraphQLGenerationError, match="also spelled elsewhere"):
+    with pytest.raises(GraphQLGenerationError) as exc_info:
         _ = build_rename_map([*_underscore_twins(), spelled_alike], taken, {})
+    assert exc_info.value.errors == [
+        _exhausted(
+            (TWINS_CANDIDATE, "also spelled elsewhere"),
+            *((name, "taken") for name in sorted(taken, key=len)),
+            (full, "also spelled elsewhere"),
+        )
+    ]
 
 
 def test_shapes_with_one_full_digest_are_diagnosed(monkeypatch: pytest.MonkeyPatch):
@@ -274,7 +290,14 @@ def test_shapes_with_one_full_digest_are_diagnosed(monkeypatch: pytest.MonkeyPat
     monkeypatch.setattr(hashlib, "sha256", sha256)
     with pytest.raises(GraphQLGenerationError) as exc_info:
         _ = _rename_twins(frozenset())
-    assert len(exc_info.value.errors) == 2
+    shared = _exhausted(
+        (TWINS_CANDIDATE, "also spelled elsewhere"),
+        *(
+            (f"{TWINS_CANDIDATE}_{'0' * length}", "also spelled elsewhere")
+            for length in (8, 16, 32, 64)
+        ),
+    )
+    assert exc_info.value.errors == [shared, shared]
 
 
 def test_fragment_named_like_a_base_is_diagnosed(test_project: ProjectBuilder):
@@ -308,10 +331,12 @@ def test_fragment_named_like_a_base_is_diagnosed(test_project: ProjectBuilder):
     )
     with pytest.raises(GraphQLGenerationError) as exc_info:
         test_project.generate()
-    message = str(exc_info.value)
-    assert "OnPostFragment" in message
-    assert "on-type base" in message
-    assert "fragment 'OnPost'" in message
+    assert exc_info.value.errors == [
+        (
+            "Name 'OnPostFragment' is claimed by the on-type base of 'PostFragment' "
+            "and by fragment 'OnPost' at sample_app/queries.py:4"
+        ),
+    ]
 
 
 def test_private_applied_name_does_not_force_public_model_rename(
@@ -413,12 +438,14 @@ def test_fragment_named_like_another_slots_bind_type_param_is_diagnosed(
     )
     with pytest.raises(GraphQLGenerationError) as exc_info:
         test_project.generate()
-    message = str(exc_info.value)
-    assert "'TModelPostFragment'" in message
-    assert "the type parameters of overload" in message
-    assert "of template 'GetThingQuery'" in message
-    assert "the bind() type parameter of slot 'postFragment'" in message
-    assert "fragment 'TModelPost'" in message
+    assert exc_info.value.errors == [
+        (
+            "Parameter 'TModelPostFragment' of the type parameters of overload 8 "
+            "of template 'GetThingQuery' at sample_app/queries.py:6 is claimed by "
+            "the bind() type parameter of slot 'postFragment' and by fragment "
+            "'TModelPost' at sample_app/queries.py:4"
+        )
+    ]
 
 
 def test_private_applied_factory_name_does_not_collide_with_bind_type_param(
@@ -650,8 +677,11 @@ def test_a_slot_completing_the_templates_own_class_name_is_diagnosed(
     )
     with pytest.raises(GraphQLGenerationError) as exc_info:
         test_project.generate()
-    message = str(exc_info.value)
-    assert f"'{collision}'" in message
-    assert "the type parameters of overload" in message
-    assert f"of template '{template}Query'" in message
-    assert f"{claimed_by} '{template}'" in message
+    assert exc_info.value.errors == [
+        (
+            f"Parameter '{collision}' of the type parameters of overload 2 of "
+            f"template '{template}Query' at sample_app/queries.py:4 is claimed by "
+            f"the bind() type parameter of slot '{slot}' and by {claimed_by} "
+            f"'{template}'"
+        )
+    ]

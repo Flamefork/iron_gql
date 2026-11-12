@@ -1270,8 +1270,16 @@ def test_invalid_interface_fragment_reports_error(test_project: ProjectBuilder):
         """,
     )
 
-    with pytest.raises(GraphQLGenerationError, match="Post"):
+    with pytest.raises(GraphQLGenerationError) as exc:
         test_project.generate()
+    assert exc.value.errors == [
+        (
+            "Invalid GraphQL query in sample_app/queries.py:3:\nFragment cannot be "
+            "spread here as objects of type 'Node' can never be of type "
+            "'Post'.\n\nGraphQL request:5:9\n4 |         id\n5 |         ... on Post "
+            "{\n  |         ^\n6 |             title"
+        ),
+    ]
 
 
 def test_union_fragment_requires_typename(test_project: ProjectBuilder):

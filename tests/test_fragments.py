@@ -440,5 +440,25 @@ def test_fragment_cycle_reports_error(test_project: ProjectBuilder):
         """,
     )
 
-    with pytest.raises(GraphQLGenerationError, match="Cannot spread fragment"):
+    with pytest.raises(GraphQLGenerationError) as exc:
         test_project.generate()
+    assert exc.value.errors == [
+        (
+            "Invalid GraphQL fragment in sample_app/queries.py:3:\nCannot spread "
+            "fragment 'A' within itself via 'B'.\n\nGraphQL request:3:5\n2 |     id\n3 "
+            "|     ...B\n  |     ^\n4 | }\n\nGraphQL request:3:5\n2 |     name\n3 |    "
+            " ...A\n  |     ^\n4 | }"
+        ),
+        (
+            "Invalid GraphQL fragment in sample_app/queries.py:12:\nCannot spread "
+            "fragment 'B' within itself via 'A'.\n\nGraphQL request:3:5\n2 |     "
+            "name\n3 |     ...A\n  |     ^\n4 | }\n\nGraphQL request:3:5\n2 |     "
+            "id\n3 |     ...B\n  |     ^\n4 | }"
+        ),
+        (
+            "Invalid GraphQL query in sample_app/queries.py:21:\nCannot spread "
+            "fragment 'A' within itself via 'B'.\n\nGraphQL request:3:5\n2 |     id\n3 "
+            "|     ...B\n  |     ^\n4 | }\n\nGraphQL request:3:5\n2 |     name\n3 |    "
+            " ...A\n  |     ^\n4 | }"
+        ),
+    ]

@@ -755,9 +755,13 @@ def test_interface_with_no_implementing_type_is_diagnosed(tmp_path: Path):
     with pytest.raises(GraphQLGenerationError) as exc_info:
         _collect(parse_res, [])
 
-    [error] = exc_info.value.errors
-    assert "Interface 'Node' selected by field node in 'GetNode'" in error
-    assert "has no implementing type in the schema" in error
+    assert exc_info.value.errors == [
+        (
+            "Interface 'Node' selected by field node in 'GetNode' at <test:query>:1 "
+            "has no implementing type in the schema; no payload can ever arrive for it "
+            "-- drop the selection, or implement the interface"
+        ),
+    ]
 
 
 def test_nested_slot_in_a_template_is_rejected(tmp_path: Path):
@@ -822,7 +826,12 @@ def test_statically_excluded_slot_in_a_template_is_rejected(tmp_path: Path):
 
     with pytest.raises(GraphQLGenerationError) as exc_info:
         _collect(parse_res, [])
-    assert any("statically excluded" in error for error in exc_info.value.errors)
+    assert exc_info.value.errors == [
+        (
+            "Slot 'attachment' of template 'GetAttachment' at <test:excluded>:1 is "
+            "statically excluded by its @skip/@include directives"
+        ),
+    ]
 
 
 def test_binding_leaves_an_unfilled_slot_empty(tmp_path: Path):
@@ -892,11 +901,16 @@ def test_multiple_broken_binds_are_reported_together(tmp_path: Path):
     with pytest.raises(GraphQLGenerationError) as exc_info:
         _collect(parse_res, [unknown_slot, incompatible])
 
-    message = str(exc_info.value)
     # Each diagnosis points at the `.bind()` call it is about: these two
     # combinations exist because somebody wrote them, and the line they wrote
     # is the only edit that removes either one.
-    assert "unknown slot" in message
-    assert "<test:unknown_slot>:1" in message
-    assert "cannot be spread into slot" in message
-    assert "<test:incompatible>:1" in message
+    assert exc_info.value.errors == [
+        (
+            "Combination at <test:unknown_slot>:1 targets unknown slot 'bogus'; the "
+            "template's slots are: attachment"
+        ),
+        (
+            "Combination at <test:incompatible>:1: fragment 'PostFields' on 'Post' "
+            "cannot be spread into slot 'attachment' of type 'Attachment'"
+        ),
+    ]

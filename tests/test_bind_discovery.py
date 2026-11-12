@@ -199,7 +199,10 @@ def test_a_local_non_gql_name_hides_the_module_level_template(tmp_path: Path):
     discovered = _discover(tmp_path)
     assert discovered.binds == []
     [ignored] = discovered.ignored
-    assert "an enclosing function or class body binds that name" in ignored.reason
+    assert ignored.reason == (
+        "cannot resolve 'tmpl' at app/mod.py:5: an enclosing function or class "
+        "body binds that name to something other than a single gql statement"
+    )
 
 
 # The same defect goes through two name-resolution paths: through the function's
@@ -233,7 +236,11 @@ def test_template_written_below_bind_is_diagnosed(
     assert discovered.binds == []
     [ignored] = discovered.ignored
     assert ignored.location == location
-    assert "written below the call" in ignored.reason
+    assert ignored.reason == (
+        f"cannot resolve 'tmpl' at {location}: every binding of that name "
+        "visible here is written below the call, so the call runs before the "
+        "name has a value"
+    )
 
 
 # Where that line has to hold in practice: two modules generated from one tree
@@ -476,9 +483,14 @@ def test_a_module_level_name_rebound_after_an_import_is_a_hard_error(tmp_path: P
         "app/mod.py",
         f"from app.templates import tmpl\nfrag = {FRAGMENT}\n{_REBIND_AND_BIND}",
     )
-    with pytest.raises(GraphQLGenerationError, match="exactly one binding") as exc:
+    with pytest.raises(GraphQLGenerationError) as exc:
         render_tree(tmp_path)
-    assert "app/mod.py:4" in str(exc.value)
+    assert exc.value.errors == [
+        (
+            "'tmpl' at app/mod.py:4 resolves in a scope that binds it more than once; "
+            "a bind reads a name only where exactly one binding gives it its value"
+        ),
+    ]
 
 
 def test_a_class_type_parameter_hides_the_module_level_template(tmp_path: Path):
@@ -543,6 +555,13 @@ def test_nonlocal_declaration_resolves_in_the_enclosing_function(tmp_path: Path)
     assert discovered.binds[0].template.raw_text == "query Q { f @slot { __typename } }"
 
 
+def _bound_twice(name: str, at: str) -> str:
+    return (
+        f"'{name}' at {at} resolves in a scope that binds it more than once; a "
+        "bind reads a name only where exactly one binding gives it its value"
+    )
+
+
 # Resolution reads a name where exactly one binding gives it its value. A
 # second binding makes the answer a flow question, and guessing it would
 # silently generate a binding for a combination the call site may never reach.
@@ -579,8 +598,12 @@ def test_nonlocal_declaration_resolves_in_the_enclosing_function(tmp_path: Path)
 )
 def test_a_reassigned_name_is_a_hard_error(tmp_path: Path, body: str):
     _write(tmp_path, "app/mod.py", body)
-    with pytest.raises(GraphQLGenerationError, match="exactly one binding"):
+    with pytest.raises(GraphQLGenerationError) as exc:
         render_tree(tmp_path)
+    # The bind is the body's last line; the name bound twice is the one the
+    # case reassigns.
+    name = "frag" if "fragment G" in body else "tmpl"
+    assert exc.value.errors == [_bound_twice(name, f"app/mod.py:{body.count(chr(10))}")]
 
 
 def test_the_same_fragment_twice_in_one_slot_is_a_hard_error(tmp_path: Path):
@@ -597,8 +620,14 @@ def test_the_same_fragment_twice_in_one_slot_is_a_hard_error(tmp_path: Path):
             "bound = tmpl.bind(f=(frag, frag))\n",
         ]),
     )
-    with pytest.raises(GraphQLGenerationError, match="more than once"):
+    with pytest.raises(GraphQLGenerationError) as exc:
         render_tree(tmp_path)
+    assert exc.value.errors == [
+        (
+            "'.bind(...)' at app/mod.py:3 passes the statement at app/mod.py:2 to slot "
+            "'f' more than once; a slot spreads each of its fragments once"
+        ),
+    ]
 
 
 def test_two_different_fragments_in_one_slot_stay_legal(tmp_path: Path):
@@ -680,8 +709,14 @@ def test_a_single_value_slot_beside_an_unresolvable_tuple_slot_is_a_hard_error(
             "    return tmpl.bind(f=details, g=(one, two))\n"
         ),
     )
-    with pytest.raises(GraphQLGenerationError, match="cannot resolve 'details'"):
+    with pytest.raises(GraphQLGenerationError) as exc:
         render_tree(tmp_path)
+    assert exc.value.errors == [
+        (
+            "cannot resolve 'details' at app/mod.py:10: an enclosing function or class "
+            "body binds that name to something other than a single gql statement"
+        ),
+    ]
 
 
 def test_a_reassigned_module_level_name_is_a_hard_error(tmp_path: Path):
@@ -698,8 +733,14 @@ def test_a_reassigned_module_level_name_is_a_hard_error(tmp_path: Path):
             _MODULE_LEVEL_BIND,
         ]),
     )
-    with pytest.raises(GraphQLGenerationError, match="exactly one binding"):
+    with pytest.raises(GraphQLGenerationError) as exc:
         render_tree(tmp_path)
+    assert exc.value.errors == [
+        (
+            "'tmpl' at app/mod.py:4 resolves in a scope that binds it more than once; "
+            "a bind reads a name only where exactly one binding gives it its value"
+        ),
+    ]
 
 
 # A template and its fragments can be written straight into the bind. This is
@@ -776,10 +817,16 @@ def test_a_slot_given_a_list_is_rejected(tmp_path: Path):
         "app/mod.py",
         (f"tmpl = {TEMPLATE}\nfrag = {FRAGMENT}\nbound = tmpl.bind(f=[frag])\n"),
     )
-    with pytest.raises(
-        GraphQLGenerationError, match=r"passes slot 'f' a list; write the fragments"
-    ):
+    with pytest.raises(GraphQLGenerationError) as exc:
         render_tree(tmp_path)
+    assert exc.value.errors == [
+        (
+            "'.bind(...)' at app/mod.py:3 passes slot 'f' a list; write the fragments "
+            "as a tuple -- a list has no fixed length, so the overload written for it "
+            "would accept its sub-lists too and promise fragments the binding they "
+            "reach never bound"
+        ),
+    ]
 
 
 def test_an_empty_list_still_spells_an_unfilled_slot(tmp_path: Path):
@@ -939,7 +986,11 @@ def test_a_name_a_function_rebinds_outward_is_left_alone(tmp_path: Path):
     discovered = _discover(tmp_path)
     assert discovered.binds == []
     [ignored] = discovered.ignored
-    assert "global or nonlocal declaration" in ignored.reason
+    assert ignored.reason == (
+        "cannot resolve 'tmpl' at app/mod.py:7: a function assigns that name "
+        "through a global or nonlocal declaration, so which value it holds "
+        "depends on whether that function has run"
+    )
 
 
 # A class body's names are invisible to its methods, so a method resolves past
@@ -975,8 +1026,14 @@ def test_a_parameter_shadowing_a_fragment_is_a_hard_error(tmp_path: Path):
             "    return tmpl.bind(f=(frag,))\n"
         ),
     )
-    with pytest.raises(GraphQLGenerationError, match="cannot resolve 'frag'"):
+    with pytest.raises(GraphQLGenerationError) as exc:
         render_tree(tmp_path)
+    assert exc.value.errors == [
+        (
+            "cannot resolve 'frag' at app/mod.py:4: an enclosing function or class "
+            "body binds that name to something other than a single gql statement"
+        ),
+    ]
 
 
 def test_bind_resolved_through_import_chain(tmp_path: Path):
@@ -1034,6 +1091,19 @@ def make():
 """
 
 
+KEYWORD_ONLY = "'.bind(...)' at {at} accepts only keyword arguments"
+NOT_A_FRAGMENT = (
+    "the value for 'f' of '.bind(...)' at {at} must be a fragment name, an "
+    "inline api_gql(...) statement, a `.with_args(...)` application of either, "
+    "or a tuple of those"
+)
+THROUGH_A_CHAIN = (
+    "'.bind(...)' at {at} reaches its template through an attribute chain; "
+    "import the template name directly (`from module import name`) instead of "
+    "`import module`"
+)
+
+
 # Two kinds of raise here, both reached only once a call already carries what
 # the gate admits -- a literal tuple for some slot, or a `**{...}` spread of a
 # literal dict (`_requires_bind_resolution`), neither of which a
@@ -1048,27 +1118,30 @@ def make():
 #     proves ownership — a scanned module holds sockets and widgets next to its
 #     templates, and `.bind()` is an ordinary method name on all of them.
 @pytest.mark.parametrize(
-    ("body", "match"),
+    ("body", "error"),
     [
-        ("bound = tmpl.bind(frag, f=(frag,))\n", "keyword"),
-        ("bound = tmpl.bind(f=([frag][0],))\n", "must be a fragment name"),
+        ("bound = tmpl.bind(frag, f=(frag,))\n", KEYWORD_ONLY),
+        ("bound = tmpl.bind(f=([frag][0],))\n", NOT_A_FRAGMENT),
         # `**` expansion has no keyword name to thread through the resolver,
         # so it is rejected the same way a positional argument is -- beside
         # another slot's tuple, and (the case below) on its own, since a
         # literal dict clears the gate by itself.
-        ("bound = tmpl.bind(f=(frag,), **{'g': frag})\n", "keyword"),
-        ("bound = tmpl.bind(**{'f': (frag,)})\n", "keyword"),
+        ("bound = tmpl.bind(f=(frag,), **{'g': frag})\n", KEYWORD_ONLY),
+        ("bound = tmpl.bind(**{'f': (frag,)})\n", KEYWORD_ONLY),
         # The base ('tmpl') resolves fine, so this bind is confirmed ours —
         # an unresolvable *value* name inside the tuple is still a hard error
         # even though an unresolvable *base* is now silently ignored (see the
         # "ignored" test below).
-        ("bound = tmpl.bind(f=(unknown_frag,))\n", "resolve"),
+        (
+            "bound = tmpl.bind(f=(unknown_frag,))\n",
+            "cannot resolve 'unknown_frag' at {at}",
+        ),
         # Base is a template written inline — unambiguously ours by shape, so
         # a value that does not resolve is a hard error here too, with no name
         # for the base to hide behind.
         (
             "bound = api_gql('query Q { f @slot { __typename } }').bind(f=(x,))\n",
-            "resolve",
+            "cannot resolve 'x' at {at}",
         ),
         # Base is an attribute chain whose prefix names a scanned module —
         # unambiguously ours by shape (the unsupported form users hit when
@@ -1080,32 +1153,35 @@ def make():
         # time told them to regenerate, which never helped.
         (
             "import app.infra\nbound = app.infra.tmpl.bind(f=(frag,))\n",
-            r"import the template name directly",
+            THROUGH_A_CHAIN,
         ),
         (
             "import app.infra as infra\nbound = infra.tmpl.bind(f=(frag,))\n",
-            r"import the template name directly",
+            THROUGH_A_CHAIN,
         ),
         (
             "from app import infra\nbound = infra.tmpl.bind(f=(frag,))\n",
-            r"import the template name directly",
+            THROUGH_A_CHAIN,
         ),
         (
             "from . import infra\nbound = infra.tmpl.bind(f=(frag,))\n",
-            r"import the template name directly",
+            THROUGH_A_CHAIN,
         ),
-        (_LOCAL_MODULE_IMPORT_CHAIN, r"import the template name directly"),
+        (_LOCAL_MODULE_IMPORT_CHAIN, THROUGH_A_CHAIN),
     ],
 )
-def test_malformed_bind_forms_raise(tmp_path: Path, body: str, match: str):
+def test_malformed_bind_forms_raise(tmp_path: Path, body: str, error: str):
     _write(tmp_path, "app/infra.py", 'tmpl = api_gql("query Q { f }")\n')
     _write(
         tmp_path,
         "app/mod.py",
         'from app.infra import tmpl\nfrag = api_gql("fragment F on T { x }")\n' + body,
     )
-    with pytest.raises(GraphQLGenerationError, match=match):
+    with pytest.raises(GraphQLGenerationError) as exc:
         render_tree(tmp_path)
+    # The bind is the body's last line, below the two lines written first.
+    at = f"app/mod.py:{2 + body.count(chr(10))}"
+    assert exc.value.errors == [error.format(at=at)]
 
 
 # `ast.parse` alone does not reject `bind(f=a, f=b)` the way `compile()`
@@ -1124,8 +1200,14 @@ def test_repeated_slot_kwarg_is_rejected(tmp_path: Path):
             "bound = tmpl.bind(f=(frag_a,), f=(frag_b,))\n"
         ),
     )
-    with pytest.raises(GraphQLGenerationError, match=r"repeats keyword 'f'"):
+    with pytest.raises(GraphQLGenerationError) as exc:
         render_tree(tmp_path)
+    assert exc.value.errors == [
+        (
+            "'.bind(...)' at app/mod.py:4 repeats keyword 'f'; pass every fragment for "
+            "one slot in a single keyword (a name or a tuple of names)"
+        ),
+    ]
 
 
 # A `.bind(...)` call whose base is a plain name the scan cannot resolve *and*
@@ -1134,15 +1216,23 @@ def test_repeated_slot_kwarg_is_rejected(tmp_path: Path):
 # the whole evidence -- spell it like one of our statements and the call is
 # diagnosed instead (see the unreachable-template tests).
 @pytest.mark.parametrize(
-    "body",
+    ("body", "reason"),
     [
         # Base is a Name, but the module it is imported from was never scanned.
-        "from app.missing import other\nbound = other.bind(f=(frag,))\n",
+        (
+            "from app.missing import other\nbound = other.bind(f=(frag,))\n",
+            (
+                "cannot resolve 'other' at app/mod.py:4: module 'app.missing' is "
+                "outside the scanned tree"
+            ),
+        ),
         # Base is a Name that was never imported or assigned at all.
-        "bound = nope.bind(f=(frag,))\n",
+        ("bound = nope.bind(f=(frag,))\n", "cannot resolve 'nope' at app/mod.py:3"),
     ],
 )
-def test_unresolvable_or_unrelated_bind_is_ignored(tmp_path: Path, body: str):
+def test_unresolvable_or_unrelated_bind_is_ignored(
+    tmp_path: Path, body: str, reason: str
+):
     _write(tmp_path, "app/infra.py", 'tmpl = api_gql("query Q { f }")\n')
     _write(
         tmp_path,
@@ -1154,7 +1244,7 @@ def test_unresolvable_or_unrelated_bind_is_ignored(tmp_path: Path, body: str):
     # Ignored on purpose, not lost: the reason distinguishes the two, which an
     # empty `binds` on its own cannot.
     [ignored] = discovered.ignored
-    assert "cannot resolve" in ignored.reason
+    assert ignored.reason == reason
 
 
 def test_plain_statements_still_discovered(tmp_path: Path):
@@ -1182,7 +1272,9 @@ def test_circular_import_chain_in_base_is_ignored(tmp_path: Path):
     discovered = _discover(tmp_path)
     assert discovered.binds == []
     [ignored] = discovered.ignored
-    assert "circular import chain" in ignored.reason
+    assert ignored.reason == (
+        "circular import chain while resolving 'tmpl' at app/mod.py:3"
+    )
 
 
 # Once the base resolves (this bind is confirmed ours), a cycle while
@@ -1206,8 +1298,11 @@ def test_circular_import_chain_in_value_raises(tmp_path: Path):
             "bound = tmpl.bind(f=(frag,))\n"
         ),
     )
-    with pytest.raises(GraphQLGenerationError, match="circular"):
+    with pytest.raises(GraphQLGenerationError) as exc:
         render_tree(tmp_path)
+    assert exc.value.errors == [
+        "circular import chain while resolving 'frag' at app/mod.py:3",
+    ]
 
 
 # Same split as the circular-chain pair above: a star import that only
@@ -1229,8 +1324,11 @@ def test_star_import_in_value_raises(tmp_path: Path):
             "bound = tmpl.bind(f=(frag,))\n"
         ),
     )
-    with pytest.raises(GraphQLGenerationError, match="star imports"):
+    with pytest.raises(GraphQLGenerationError) as exc:
         render_tree(tmp_path)
+    assert exc.value.errors == [
+        "cannot resolve 'frag' at app/mod.py:3; star imports are not followed",
+    ]
 
 
 # Same as above, but the star import is itself relative — a `from .lib
@@ -1253,8 +1351,11 @@ def test_relative_star_import_in_value_raises(tmp_path: Path):
             "bound = tmpl.bind(f=(frag,))\n"
         ),
     )
-    with pytest.raises(GraphQLGenerationError, match="star imports"):
+    with pytest.raises(GraphQLGenerationError) as exc:
         render_tree(tmp_path)
+    assert exc.value.errors == [
+        "cannot resolve 'frag' at app/mod.py:3; star imports are not followed",
+    ]
 
 
 # The plan author's note calls out that unrelated third-party `.bind()`
@@ -1332,6 +1433,17 @@ def test_bare_annotation_without_value_is_skipped(tmp_path: Path):
     assert discovered.binds == []
 
 
+def _parse_failure(tmp_path: Path, relative: str, source: str) -> str:
+    # The diagnosis is the interpreter's own, read off `compile()`.
+    try:
+        _ = compile(source, relative, "exec")
+    except SyntaxError as oracle:
+        path = tmp_path / relative
+        return f"Failed to parse {path}: {oracle.msg} (line {oracle.lineno})"
+    msg = f"{relative} compiles"
+    raise AssertionError(msg)
+
+
 # A file the scan cannot parse aborts it whenever it could own something the
 # module would lose -- which is decided by whether it names the gql function
 # or `.bind(` at all, since nothing short of parsing tells more than that.
@@ -1339,11 +1451,11 @@ def test_syntax_error_in_a_file_naming_the_gql_function_aborts_the_scan(
     tmp_path: Path,
 ):
     _write(tmp_path, "app/mod.py", 'q = api_gql("query Q { f }")\n')
-    _write(tmp_path, "app/unrelated.py", 'api_gql("query R { f }")\ndef broken(\n')
-    with pytest.raises(
-        GraphQLGenerationError, match=r"Failed to parse .*unrelated\.py"
-    ):
+    broken = 'api_gql("query R { f }")\ndef broken(\n'
+    _write(tmp_path, "app/unrelated.py", broken)
+    with pytest.raises(GraphQLGenerationError) as exc:
         render_tree(tmp_path)
+    assert exc.value.errors == [_parse_failure(tmp_path, "app/unrelated.py", broken)]
 
 
 def test_syntax_error_in_a_file_that_owns_nothing_does_not_abort_the_scan(
@@ -1364,7 +1476,8 @@ def test_a_resolution_reaching_an_unparsable_module_is_a_hard_error(tmp_path: Pa
     # Deferring is not forgetting: a broken file names no gql call, but a
     # chain that travels through it cannot be answered, and answering it as
     # "not ours" would drop a binding the file may be re-exporting.
-    _write(tmp_path, "app/broken.py", "def broken(\n")
+    broken = "def broken(\n"
+    _write(tmp_path, "app/broken.py", broken)
     _write(
         tmp_path,
         "app/mod.py",
@@ -1374,14 +1487,15 @@ def test_a_resolution_reaching_an_unparsable_module_is_a_hard_error(tmp_path: Pa
             _MODULE_LEVEL_BIND,
         ]),
     )
-    with pytest.raises(
-        GraphQLGenerationError,
-        match=(
-            r"cannot resolve 'tmpl' at app/mod\.py:3: .*"
-            r"Failed to parse .*broken\.py: .* \(line 1\)"
-        ),
-    ) as exc:
+    with pytest.raises(GraphQLGenerationError) as exc:
         render_tree(tmp_path)
+    assert exc.value.errors == [
+        (
+            "cannot resolve 'tmpl' at app/mod.py:3: it leads through a module "
+            "that failed to parse. "
+            f"{_parse_failure(tmp_path, 'app/broken.py', broken)}"
+        )
+    ]
     assert isinstance(exc.value.__cause__, SyntaxError)
 
 
@@ -1390,9 +1504,11 @@ def test_statements_of_an_unparsable_file_are_never_silently_dropped(tmp_path: P
     # definition of `q`, and a scan that skipped it would report success with
     # `q` gone from the generated module.
     _write(tmp_path, "app/mod.py", 'other = api_gql("query Other { f }")\n')
-    _write(tmp_path, "app/broken.py", 'q = api_gql("query Q { f }")\ndef broken(\n')
-    with pytest.raises(GraphQLGenerationError, match=r"Failed to parse .*broken\.py"):
+    broken = 'q = api_gql("query Q { f }")\ndef broken(\n'
+    _write(tmp_path, "app/broken.py", broken)
+    with pytest.raises(GraphQLGenerationError) as exc:
         render_tree(tmp_path)
+    assert exc.value.errors == [_parse_failure(tmp_path, "app/broken.py", broken)]
 
 
 # `Path.glob` walks the tree in whatever order the filesystem hands back, and
@@ -1447,7 +1563,10 @@ def test_binds_are_returned_in_file_then_lineno_order(tmp_path: Path):
     [
         (
             "class S:\n    def go(self):\n        self.registry.bind(handlers=(1,))\n",
-            "names no module of the scanned tree",
+            (
+                "'.bind(...)' at app/server.py:3 hangs off 'self', which names no "
+                "module of the scanned tree"
+            ),
         ),
         # The base is a call rather than a dotted name, so no resolution can be
         # attempted at all -- which is recorded as its own reason rather than
@@ -1456,20 +1575,30 @@ def test_binds_are_returned_in_file_then_lineno_order(tmp_path: Path):
         # shape is decided during the walk, before any keyword is inspected.
         (
             "import socket\n\n\ndef go(s):\n    socket.socket().bind(('', 1))\n",
-            "neither a name nor an inline",
+            (
+                "'.bind(...)' at app/server.py:5 hangs off an expression that is "
+                "neither a name nor an inline api_gql(...) call, so what it holds "
+                "cannot be read statically; name the template and bind the name"
+            ),
         ),
         # The chain's head *is* an imported module, but a third-party one:
         # nothing under it was ever scanned, so this cannot be our template.
         (
             "import logging\n\n\ndef go():\n    logging.root.bind(filters=(1,))\n",
-            "names no module of the scanned tree",
+            (
+                "'.bind(...)' at app/server.py:5 hangs off 'logging', which names no "
+                "module of the scanned tree"
+            ),
         ),
         # The head is bound nowhere the scan can see -- a name from a star
         # import, or simply a NameError waiting to happen. Either way it names
         # no module of ours.
         (
             "def go():\n    return unbound.tmpl.bind(handlers=(1,))\n",
-            "names no module of the scanned tree",
+            (
+                "'.bind(...)' at app/server.py:2 hangs off 'unbound', which names no "
+                "module of the scanned tree"
+            ),
         ),
     ],
 )
@@ -1482,7 +1611,7 @@ def test_unrelated_attribute_chain_bind_is_ignored(
     assert [s.raw_text for s in discovered.statements] == ["query Q { f }"]
     assert discovered.binds == []
     [ignored] = discovered.ignored
-    assert reason in ignored.reason
+    assert ignored.reason == reason
 
 
 # The other half of that rule, and the half a prefix check alone cannot see: a
@@ -1492,17 +1621,29 @@ def test_unrelated_attribute_chain_bind_is_ignored(
 # ownership off the prefix stopped generation of the whole module over an
 # ordinary object, and did it for a name the module does not even define.
 @pytest.mark.parametrize(
-    "chain",
+    ("chain", "reason"),
     [
-        "import app.net\n\n\ndef go():\n    app.net.registry.bind(handlers=(1,))\n",
-        "from app import net\n\n\ndef go():\n    net.registry.bind(handlers=(1,))\n",
+        (
+            "import app.net\n\n\ndef go():\n    app.net.registry.bind(handlers=(1,))\n",
+            "cannot resolve 'app.net.registry' at app/server.py:5",
+        ),
+        (
+            (
+                "from app import net\n\n\n"
+                "def go():\n    net.registry.bind(handlers=(1,))\n"
+            ),
+            "cannot resolve 'net.registry' at app/server.py:5",
+        ),
         # Not defined in `app.net` at all: an attribute error where the code
         # runs, and nothing this scan may claim is a GraphQL template.
-        "from app import net\n\n\ndef go():\n    net.absent.bind(handlers=(1,))\n",
+        (
+            "from app import net\n\n\ndef go():\n    net.absent.bind(handlers=(1,))\n",
+            "cannot resolve 'net.absent' at app/server.py:5",
+        ),
     ],
 )
 def test_a_non_statement_behind_a_scanned_module_chain_is_ignored(
-    tmp_path: Path, chain: str
+    tmp_path: Path, chain: str, reason: str
 ):
     _write(tmp_path, "app/__init__.py", "")
     _write(
@@ -1516,7 +1657,7 @@ def test_a_non_statement_behind_a_scanned_module_chain_is_ignored(
     assert [s.raw_text for s in discovered.statements] == ["query Q { f }"]
     assert discovered.binds == []
     [ignored] = discovered.ignored
-    assert "cannot resolve" in ignored.reason
+    assert ignored.reason == reason
 
 
 # A name spelled like an imported module, bound to something else where the
@@ -1525,20 +1666,37 @@ def test_a_non_statement_behind_a_scanned_module_chain_is_ignored(
 # import table regardless made a parameter named after a module of the tree
 # stop generation.
 @pytest.mark.parametrize(
-    "body",
+    ("body", "head"),
     [
-        "import app.ui\n\n\ndef go(app):\n    app.ui.registry.bind(handlers=(1,))\n",
-        "from app import ui\n\n\ndef go(ui):\n    ui.registry.bind(handlers=(1,))\n",
+        (
+            (
+                "import app.ui\n\n\n"
+                "def go(app):\n    app.ui.registry.bind(handlers=(1,))\n"
+            ),
+            "app.ui",
+        ),
+        (
+            (
+                "from app import ui\n\n\n"
+                "def go(ui):\n    ui.registry.bind(handlers=(1,))\n"
+            ),
+            "ui",
+        ),
     ],
 )
-def test_a_locally_shadowed_module_name_is_not_the_module(tmp_path: Path, body: str):
+def test_a_locally_shadowed_module_name_is_not_the_module(
+    tmp_path: Path, body: str, head: str
+):
     _write(tmp_path, "app/__init__.py", "")
     _write(tmp_path, "app/ui.py", "registry = object()\n")
     _write(tmp_path, "app/server.py", body)
     discovered = _discover(tmp_path)
     assert discovered.binds == []
     [ignored] = discovered.ignored
-    assert "names no module of the scanned tree" in ignored.reason
+    assert ignored.reason == (
+        f"'.bind(...)' at app/server.py:5 hangs off '{head}', which names no "
+        "module of the scanned tree"
+    )
 
 
 # A module directly under the scanned root has an empty package name, so
@@ -1633,8 +1791,14 @@ def test_relative_import_above_root_is_outside_scanned_tree(tmp_path: Path):
             "bound = tmpl.bind(f=(frag,))\n"
         ),
     )
-    with pytest.raises(GraphQLGenerationError, match="outside the scanned tree"):
+    with pytest.raises(GraphQLGenerationError) as exc:
         render_tree(tmp_path)
+    assert exc.value.errors == [
+        (
+            "cannot resolve 'frag' at app/mod.py:3: module '..' is outside the scanned "
+            "tree"
+        ),
+    ]
 
 
 def test_a_module_chain_through_a_root_relative_import_is_diagnosed(tmp_path: Path):
@@ -1655,10 +1819,15 @@ def test_a_module_chain_through_a_root_relative_import_is_diagnosed(tmp_path: Pa
             "bound = infra.tmpl.bind(f=(frag,))\n"
         ),
     )
-    with pytest.raises(
-        GraphQLGenerationError, match=r"import the template name directly"
-    ):
+    with pytest.raises(GraphQLGenerationError) as exc:
         render_tree(tmp_path)
+    assert exc.value.errors == [
+        (
+            "'.bind(...)' at queries.py:3 reaches its template through an attribute "
+            "chain; import the template name directly (`from module import name`) "
+            "instead of `import module`"
+        ),
+    ]
 
 
 # PEP 572 moves *where* a name is written, not *what* it holds: the walrus
@@ -1722,8 +1891,11 @@ def test_a_name_bound_by_two_imports_is_a_hard_error(tmp_path: Path, body: str):
     _write(tmp_path, "app/a.py", f"tmpl = {TEMPLATE}\n")
     _write(tmp_path, "app/b.py", f"tmpl = {TEMPLATE}\n")
     _write(tmp_path, "app/mod.py", body)
-    with pytest.raises(GraphQLGenerationError, match="exactly one binding"):
+    with pytest.raises(GraphQLGenerationError) as exc:
         render_tree(tmp_path)
+    assert exc.value.errors == [
+        _bound_twice("tmpl", f"app/mod.py:{body.count(chr(10))}")
+    ]
 
 
 # The mirror, and the reason the rule asks where a binding leads rather than
@@ -1764,9 +1936,18 @@ def test_a_template_held_in_a_class_body_is_diagnosed(tmp_path: Path):
             "bound = Queries.tmpl.bind(f=(frag,))\n"
         ),
     )
-    with pytest.raises(GraphQLGenerationError, match=_UNREACHABLE) as exc:
+    with pytest.raises(GraphQLGenerationError) as exc:
         render_tree(tmp_path)
-    assert "app/mod.py:3" in str(exc.value)
+    assert exc.value.errors == [
+        (
+            "'.bind(...)' at app/mod.py:4 reads 'tmpl', which the scanned tree assigns "
+            "a gql statement at app/mod.py:3 -- but not where this call stands: "
+            "'.bind(...)' at app/mod.py:4 hangs off 'Queries', which names no module "
+            "of the scanned tree. Import that name directly (`from module import "
+            "name`) into the scope the bind is written in, or rename whichever of the "
+            "two is not the template."
+        ),
+    ]
 
 
 # A star import brings in names this scan cannot enumerate, so the template it
@@ -1780,10 +1961,17 @@ def test_a_template_arriving_through_a_star_import_is_diagnosed(tmp_path: Path):
         "app/mod.py",
         f"from app.templates import *\nfrag = {FRAGMENT}\n{_MODULE_LEVEL_BIND}",
     )
-    with pytest.raises(GraphQLGenerationError, match=_UNREACHABLE) as exc:
+    with pytest.raises(GraphQLGenerationError) as exc:
         render_tree(tmp_path)
-    assert "star imports are not followed" in str(exc.value)
-    assert "app/templates.py:1" in str(exc.value)
+    assert exc.value.errors == [
+        (
+            "'.bind(...)' at app/mod.py:3 reads 'tmpl', which the scanned tree assigns "
+            "a gql statement at app/templates.py:1 -- but not where this call stands: "
+            "cannot resolve 'tmpl' at app/mod.py:3; star imports are not followed. "
+            "Import that name directly (`from module import name`) into the scope the "
+            "bind is written in, or rename whichever of the two is not the template."
+        ),
+    ]
 
 
 # The threshold the diagnosis above deliberately sits at: neither call below
@@ -1989,15 +2177,18 @@ def test_a_class_body_resolves_the_names_it_binds_itself(tmp_path: Path):
 
 # The climb that lands, next to the one above the root that does not: two dots
 # from `pkg.sub.mod` reach `pkg`, so `from ..frags import frag` is a name of the
-# scanned tree and has to resolve like any other.
-def test_a_two_level_relative_import_resolves(tmp_path: Path):
+# scanned tree and has to resolve like any other. One package deeper, the climb
+# stops below the root package: two dots from `pkg.a.sub.mod` reach `pkg.a`.
+@pytest.mark.parametrize("parent", ["pkg", "pkg/a"])
+def test_a_two_level_relative_import_resolves(tmp_path: Path, parent: str):
     _write(tmp_path, "pkg/__init__.py", "")
-    _write(tmp_path, "pkg/frags.py", f"frag = {FRAGMENT}\n")
-    _write(tmp_path, "pkg/templates.py", f"tmpl = {TEMPLATE}\n")
-    _write(tmp_path, "pkg/sub/__init__.py", "")
+    _write(tmp_path, f"{parent}/__init__.py", "")
+    _write(tmp_path, f"{parent}/frags.py", f"frag = {FRAGMENT}\n")
+    _write(tmp_path, f"{parent}/templates.py", f"tmpl = {TEMPLATE}\n")
+    _write(tmp_path, f"{parent}/sub/__init__.py", "")
     _write(
         tmp_path,
-        "pkg/sub/mod.py",
+        f"{parent}/sub/mod.py",
         (
             "from ..frags import frag\n"
             "from ..templates import tmpl\n"
@@ -2006,7 +2197,7 @@ def test_a_two_level_relative_import_resolves(tmp_path: Path):
     )
     discovered = _discover(tmp_path)
     assert len(discovered.binds) == 1
-    assert discovered.binds[0].locations == ("pkg/sub/mod.py:3",)
+    assert discovered.binds[0].locations == (f"{parent}/sub/mod.py:3",)
     assert [
         s.raw_text for _, stmts in discovered.binds[0].slot_args for s in stmts
     ] == ["fragment F on T { x }"]
@@ -2031,8 +2222,9 @@ def test_a_bind_spelled_around_the_dot_still_aborts_the_scan(
 ):
     _write(tmp_path, "app/mod.py", 'q = api_gql("query Q { f }")\n')
     _write(tmp_path, "app/legacy.py", broken)
-    with pytest.raises(GraphQLGenerationError, match=r"Failed to parse .*legacy\.py"):
+    with pytest.raises(GraphQLGenerationError) as exc:
         render_tree(tmp_path)
+    assert exc.value.errors == [_parse_failure(tmp_path, "app/legacy.py", broken)]
 
 
 # The ignored binds reach a debug run, where "left alone on purpose" and "ours
@@ -2075,3 +2267,19 @@ def test_ignored_binds_are_written_to_the_debug_directory(
             ),
         }
     ]
+
+
+# A package's `__init__.py` is the package itself, however deep it sits: a
+# template written there is imported by the package's dotted name.
+def test_a_template_in_a_nested_package_init_resolves(tmp_path: Path):
+    _write(tmp_path, "pkg/__init__.py", "")
+    _write(tmp_path, "pkg/sub/__init__.py", f"tmpl = {TEMPLATE}\n")
+    _write(
+        tmp_path,
+        "app/mod.py",
+        f"from pkg.sub import tmpl\nfrag = {FRAGMENT}\n{_MODULE_LEVEL_BIND}",
+    )
+    discovered = _discover(tmp_path)
+    assert discovered.ignored == []
+    assert len(discovered.binds) == 1
+    assert discovered.binds[0].template.raw_text == "query Q { f @slot { __typename } }"

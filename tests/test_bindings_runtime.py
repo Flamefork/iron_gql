@@ -343,8 +343,22 @@ def test_overlapping_fragments_with_conflicting_fields_are_rejected(
         both = get_attachment.bind(attachment=(thumb_small, thumb_large))
         """,
     )
-    with pytest.raises(GraphQLGenerationError, match="Fields 'thumbnail' conflict"):
+    with pytest.raises(GraphQLGenerationError) as exc:
         test_project.generate()
+    assert exc.value.errors == [
+        (
+            "Combination at sample_app/queries.py:30 (GetAttachment × "
+            "attachment=[ThumbLarge, ThumbSmall]) is invalid:"
+        ),
+        (
+            "Fields 'thumbnail' conflict because they have differing arguments. Use "
+            "different aliases on the fields to fetch both if this was "
+            "intentional.\n\nGraphQL request:2:5\n1 | fragment ThumbLarge on "
+            "ImageAttachment {\n2 |     thumbnail(size: 200)\n  |     ^\n3 | "
+            "}\n\nGraphQL request:2:5\n1 | fragment ThumbSmall on ImageAttachment {\n2 "
+            "|     thumbnail(size: 100)\n  |     ^\n3 | }"
+        ),
+    ]
 
 
 # --- composition -- a bound fragment spreading another fragment ----
@@ -702,11 +716,20 @@ def test_conditional_spread_in_a_binding_closure_is_rejected(
     test_project.prepare(
         schema=BOUNDARY_SCHEMA, queries=BOUNDARY_QUERIES.format(spread=spread)
     )
-    with pytest.raises(
-        GraphQLGenerationError,
-        match=r"fragment 'ImageParts' spreads 'NodeId' under @skip/@include",
-    ):
+    with pytest.raises(GraphQLGenerationError) as exc:
         test_project.generate()
+    assert exc.value.errors == [
+        (
+            "Combination at sample_app/queries.py:20, sample_app/queries.py:11: "
+            "fragment 'ImageParts' spreads 'NodeId' under @skip/@include, and at "
+            "ImageAttachment that is the only way 'NodeId' reaches the slot's root; a "
+            "fragment readable there is always requested and always validated, so it "
+            "cannot be conditional -- drop the directive, or move the conditional part "
+            "off 'ImageParts's own root: a spread nested under a field, or an inline "
+            "fragment selecting those fields directly, is conditional without offering "
+            "a readable fragment"
+        ),
+    ]
 
 
 generated_package(
@@ -1937,8 +1960,14 @@ def test_statically_excluded_slot_is_rejected_even_with_a_bind(
         bound = get_attachment.bind(attachment=image_parts)
         """,
     )
-    with pytest.raises(GraphQLGenerationError, match="statically excluded"):
+    with pytest.raises(GraphQLGenerationError) as exc:
         test_project.generate()
+    assert exc.value.errors == [
+        (
+            "Slot 'attachment' of template 'GetAttachment' at sample_app/queries.py:3 "
+            "is statically excluded by its @skip/@include directives"
+        ),
+    ]
 
 
 # --- Where a closure fragment's data actually lands -------------------------

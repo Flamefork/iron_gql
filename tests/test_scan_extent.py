@@ -78,8 +78,17 @@ def test_the_same_third_party_bind_outside_a_hidden_directory_is_diagnosed(
         tmp_path, "app/mod.py", 'tmpl = api_gql("query Q { f @slot { __typename } }")\n'
     )
     _write(tmp_path, "vendor/widgets.py", "tmpl.bind(f=(frag,))\n")
-    with pytest.raises(GraphQLGenerationError, match="assigns a gql statement"):
+    with pytest.raises(GraphQLGenerationError) as exc:
         render_tree(tmp_path)
+    assert exc.value.errors == [
+        (
+            "'.bind(...)' at vendor/widgets.py:1 reads 'tmpl', which the scanned tree "
+            "assigns a gql statement at app/mod.py:1 -- but not where this call "
+            "stands: cannot resolve 'tmpl' at vendor/widgets.py:1. Import that name "
+            "directly (`from module import name`) into the scope the bind is written "
+            "in, or rename whichever of the two is not the template."
+        ),
+    ]
 
 
 def test_a_statement_inside_a_virtual_environment_is_not_collected(tmp_path: Path):

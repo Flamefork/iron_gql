@@ -208,11 +208,9 @@ def _type_condition_matches(
     named = schema.get_type(type_condition.name.value)
     if named is runtime_type:
         return True
-    match named:
-        case graphql.GraphQLInterfaceType() | graphql.GraphQLUnionType():
-            return schema.is_sub_type(named, runtime_type)
-        case _:
-            return False
+    return isinstance(
+        named, graphql.GraphQLInterfaceType | graphql.GraphQLUnionType
+    ) and schema.is_sub_type(named, runtime_type)
 
 
 def resolve_explicit_types(

@@ -476,8 +476,15 @@ def test_fragment_pinning_a_generated_model_name_is_rejected(
         bound = s.bind(user=f)
         """,
     )
-    with pytest.raises(GraphQLGenerationError, match="pins model name"):
+    with pytest.raises(GraphQLGenerationError) as exc:
         test_project.generate()
+    assert exc.value.errors == [
+        (
+            "Fragment 'qQueryResultUser' at sample_app/queries.py:9 pins model name "
+            "'QQueryResultUserData', which a model of another operation or fragment "
+            "also generates; rename the fragment or alias the colliding field"
+        ),
+    ]
 
 
 def test_fragment_named_python_keyword_generates(test_project: ProjectBuilder):
@@ -559,8 +566,15 @@ def test_invalid_standalone_fragment_is_rejected(test_project: ProjectBuilder):
         """,
     )
 
-    with pytest.raises(GraphQLGenerationError, match="Cannot query field 'nickname'"):
+    with pytest.raises(GraphQLGenerationError) as exc:
         test_project.generate()
+    assert exc.value.errors == [
+        (
+            "Invalid GraphQL fragment in sample_app/queries.py:3:\nCannot query field "
+            "'nickname' on type 'User'. Did you mean 'name'?\n\nGraphQL request:3:5\n2 "
+            "|     id\n3 |     nickname\n  |     ^\n4 | }"
+        ),
+    ]
 
 
 def test_unknown_statement_is_rejected_instead_of_a_bare_operation():

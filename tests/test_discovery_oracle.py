@@ -21,6 +21,7 @@ from tests.corpus.oracle import scan_answer
 from tests.corpus.scoping import ScopeCase
 from tests.corpus.scoping import build_corpus
 from tests.corpus.scoping import build_declaration_corpus
+from tests.corpus.scoping import build_package_corpus
 from tests.corpus.scoping import build_placement_corpus
 from tests.corpus.scoping import handwritten_cases
 from tests.corpus.scoping import write_case
@@ -29,6 +30,7 @@ CORPUS = [
     *build_corpus(),
     *build_declaration_corpus(),
     *build_placement_corpus(),
+    *build_package_corpus(),
     *handwritten_cases(),
 ]
 

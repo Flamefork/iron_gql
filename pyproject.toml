@@ -103,7 +103,7 @@ ignore = [
 # test: `just fuzz-scoping` is run for its report, and the report is its stdout.
 "tests/fuzz_scoping.py" = ["T201"]
 # The same for the mutation verdict: the unkilled mutants it lists are the report.
-"tests/mutation_gate.py" = ["T201"]
+"tests/mutation_report.py" = ["T201"]
 # PGH004: the generated module opens with a blanket `# ruff: noqa` of its own
 "example/gql/*.py" = ["PGH004"]
 "tests/generated/**/*.py" = ["C901", "E501", "T201", "PGH004"]
@@ -146,7 +146,8 @@ timeout_method = "thread"
 also_copy = ["README.md", "example/"]
 # The coverage exemption of `exclude_also` below, applied to mutation: a
 # `raise AssertionError` marks an invariant unreachable by construction, so no
-# test can reach its mutants. One mechanism for the whole project, per ADR 0007.
+# test can reach its mutants, and leaving them out keeps that noise out of the
+# report (ADR 0007).
 do_not_mutate_patterns = ["raise AssertionError"]
 
 [tool.coverage.run]

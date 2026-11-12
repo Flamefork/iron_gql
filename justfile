@@ -39,14 +39,22 @@ release version:
 # without it a mutant that refuses everything survives, because refusal is a
 # legal answer under the refinement relation.
 #
-# Fails when any mutant is left unkilled -- survived, segfaulted, timed out or
-# reached by no test.
+# Reports the mutants left unkilled -- survived, segfaulted, timed out or
+# reached by no test -- and fails only when the run itself does: a survivor is
+# evidence to look into, not a defect (ADR 0007).
+#
+# mutmut stops on Ctrl-C and exits 0 over what it ran so far, which would leave
+# a partial run to be reported as a whole one; the trap ends the recipe there.
 mutants:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    trap 'echo "mutation run interrupted: incomplete, not reported" >&2; exit 130' INT
     uv run mutmut run
-    just _fail-on-unkilled-mutants
+    just _report-unkilled-mutants
 
-# The same, scoped to what a branch actually changed: minutes rather than
-# hours, and the question it answers is "did this change weaken a check".
+# The same, scoped to the files a branch changed: minutes rather than hours.
+# The report covers those whole files, so it lists the survivors they already
+# held next to any the branch added.
 #
 # Scoped by mutant name rather than by path: mutmut 3 takes the files to
 # mutate from its config alone, and the only scope its CLI accepts is a list
@@ -58,6 +66,7 @@ mutants:
 mutants-diff:
     #!/usr/bin/env bash
     set -euo pipefail
+    trap 'echo "mutation run interrupted: incomplete, not reported" >&2; exit 130' INT
     names=$(git diff main --name-only -- 'src/**/*.py' | sed -e 's#^src/##' -e 's#\.py$##' -e 's#/#.#g' -e 's#$#.*#')
     if [ -z "$names" ]; then
         echo "no changed files under src/: nothing to mutate"
@@ -65,15 +74,20 @@ mutants-diff:
     fi
     echo "mutating: $names"
     uv run mutmut run $names
-    just _fail-on-unkilled-mutants $names
+    just _report-unkilled-mutants $names
 
-# The verdict, read from `mutmut results` by `tests/mutation_gate.py`: mutmut 3
-# exits 0 whatever survives. `pipefail`, because an empty listing passes, and a
-# `mutmut results` that failed would otherwise list nothing.
-_fail-on-unkilled-mutants *scope:
+# The report, read from `mutmut results` by `tests/mutation_report.py`. An
+# empty listing reads as every mutant killed, so the listing must come from a
+# run: `mutmut results` with no `mutants/` lists nothing and exits 0, and
+# `pipefail` catches a `mutmut results` that failed.
+_report-unkilled-mutants *scope:
     #!/usr/bin/env bash
     set -euo pipefail
-    uv run mutmut results | uv run python -m tests.mutation_gate {{ scope }}
+    if [ ! -d mutants ]; then
+        echo "no mutation results: mutants/ is missing" >&2
+        exit 1
+    fi
+    uv run mutmut results | uv run python -m tests.mutation_report {{ scope }}
 
 # The scoping fuzzer: scope trees composed at random and judged by the same
 # oracle the committed corpus uses. Minutes rather than seconds, and its
