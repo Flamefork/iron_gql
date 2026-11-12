@@ -67,11 +67,12 @@ type SynthesizedVar = RequiredSynthesizedVar | OmittableSynthesizedVar
 @dataclass(kw_only=True, frozen=True)
 class ExpandedBinding:
     exec_source: str
-    # Fragments, читаемые в root каждого slot: ключом служит response key,
-    # значения сортируются по fragment name. Набор шире явно переданного в bind,
-    # потому что включает root-level spreads, но уже document closure: fragment
-    # внутри field попадает под этот field, а не в root payload. Явно переданные
-    # fragments отмечены `ReadableFragment.direct`.
+    # Fragments read at the root of each slot: the key is the response key, the
+    # values are sorted by fragment name. The set is wider than what was passed
+    # to bind explicitly, because it includes root-level spreads, but narrower
+    # than the document closure: a fragment inside a field goes under that
+    # field, not into the root payload. Explicitly passed fragments are marked
+    # `ReadableFragment.direct`.
     #
     # Total over the *template's* slots, not over the bind's arguments: a slot
     # this bind left empty has an entry of its own, an empty one. That is what
@@ -177,9 +178,10 @@ def _closure_fragments(
     fragments: Mapping[str, graphql.FragmentDefinitionNode],
     location: str,
 ) -> tuple[graphql.FragmentDefinitionNode, ...]:
-    # Document closure содержит все definitions, необходимые expanded operation,
-    # независимо от позиции spread. Какие из них читаются через собственный
-    # definition в root slot, отдельно определяет `readable_fragments`.
+    # The document closure contains every definition the expanded operation
+    # needs, regardless of where the spread sits. Which of them are read through
+    # their own definition at the slot root is decided separately by
+    # `readable_fragments`.
     closure_names, missing = collect_transitive_fragment_names(direct_names, fragments)
     if missing:
         # Internal invariant: `parser.bindable_statements` walked this very closure
@@ -276,10 +278,10 @@ def readable_fragments(
 
     def visit(name: str, typenames: frozenset[str]) -> None:
         if not typenames:
-            # Fragment достижим в graph, но ни на одном typename этого slot.
-            # Его fields не появляются в payload, поэтому reader здесь не нужен.
-            # Для brick, повторно используемого в разных slots, это допустимое
-            # следствие типов, а не дефект binding.
+            # The fragment is reachable in the graph, but on none of this slot's
+            # typenames. Its fields do not appear in the payload, so no reader
+            # is needed here. For a brick reused in different slots this is an
+            # acceptable consequence of the types, not a binding defect.
             return
         known = typenames_by_name[name]
         if typenames <= known:
@@ -304,10 +306,11 @@ def readable_fragments(
             slot_typenames
             & possible_type_names(schema, fragment.type_condition.name.value),
         )
-    # Conditional edge опасен только на typenames, куда лишь он доставляет
-    # fragment. Если unconditional walk уже достигает typename, fields всегда
-    # запрошены и definition безопасно валидировать. На остальных typenames
-    # coverage definition не должно включать conditional payload.
+    # A conditional edge is dangerous only on typenames where it alone delivers
+    # the fragment. If the unconditional walk already reaches a typename, the
+    # fields are always requested and the definition is safe to validate. On the
+    # remaining typenames the definition's coverage must not include the
+    # conditional payload.
     errors = [
         _conditional_spread_error(
             outer=outer,
@@ -382,20 +385,22 @@ def fragment_closure(
 def _conditional_spread_error(
     *, outer: str, spread: str, uncovered: set[str], location: str
 ) -> str:
-    # Fragment, читаемый в root slot, валидируется на response boundary при
-    # совпадении `__typename`; поэтому его можно независимо читать через
-    # собственный definition. Conditional spread нарушает предпосылку: при false
-    # server не возвращает fields, required fields отсутствуют и корректный
-    # response не проходит validation. По той же причине field slot не может
-    # иметь @skip/@include (см. `collect_query_slots`): bound fragment всегда
-    # запрашивается, а отсутствие данных выражается отсутствием binding.
+    # A fragment read at the slot root is validated at the response boundary
+    # when `__typename` matches; that is why it can be read independently
+    # through its own definition. A conditional spread breaks this premise: when
+    # false, the server returns no fields, the required fields are missing, and
+    # a correct response fails validation. For the same reason a field slot
+    # cannot carry @skip/@include (see `collect_query_slots`): a bound fragment
+    # is always requested, and absent data is expressed by the absence of a
+    # binding.
     #
-    # Отклоняются только root-level paths. Та же directive на spread внутри
-    # field допустима: fragment не предлагается как readable definition, а его fields в
-    # model внешнего fragment собираются как conditional и потому optional.
-    # Нельзя вынести код в «fragment, недостижимый binding»: schema enumeration
-    # достигает каждый fragment на совместимом со slot type независимо от
-    # наличия явного `.bind()`.
+    # Only root-level paths are rejected. The same directive on a spread inside
+    # a field is allowed: the fragment is not offered as a readable definition,
+    # and its fields are collected into the outer fragment's model as
+    # conditional and therefore optional. The code cannot be moved to "a
+    # fragment unreachable by a binding": schema enumeration reaches every
+    # fragment on a type compatible with the slot whether or not there is an
+    # explicit `.bind()`.
     types = ", ".join(sorted(uncovered))
     return (
         f"Combination at {location}: fragment '{outer}' spreads '{spread}' "
@@ -500,13 +505,13 @@ def fragment_own_vars(
     schema: graphql.GraphQLSchema,
     location: str,
 ) -> tuple[tuple[SynthesizedVar, ...], list[str]]:
-    # Собственные параметры `with_args` fragment: все переменные его document
-    # closure — самого fragment и всех transitively spread dependencies из
-    # `parser.FragmentStatement.dependencies`. Типизация и проверка совпадают с
-    # `_synthesize_var_defs`, но вычисляются один раз на fragment: тип и default
-    # принадлежат AST-позиции внутри closure, а не комбинации или template.
-    # Здесь нет template для shadowing и operation для collision, поэтому
-    # применяется только проверка конфликта типов.
+    # The fragment's own `with_args` parameters: every variable of its document
+    # closure -- the fragment itself and all transitively spread dependencies
+    # from `parser.FragmentStatement.dependencies`. Typing and checks match
+    # `_synthesize_var_defs`, but are computed once per fragment: the type and
+    # default belong to the AST position inside the closure, not to a
+    # combination or template. There is no template to shadow and no operation
+    # to collide with here, so only the type-conflict check applies.
     usages = _usages_by_name(
         (fragment, *dependencies), schema=schema, skip_names=frozenset()
     )
@@ -673,11 +678,12 @@ def _fragment_closure_variable_names(
     fragments: Mapping[str, graphql.FragmentDefinitionNode],
     schema: graphql.GraphQLSchema,
 ) -> frozenset[str]:
-    # Собственный transitive closure напрямую указанного фрагмента: он сам и
-    # все spread на любой глубине. Именно direct fragment, а не плоский closure
-    # всего binding, определяет application, которой принадлежит variable.
-    # `_missing` отбрасывается: `_closure_fragments` уже разрешил весь closure
-    # binding, а closure `root_name` — его подмножество.
+    # The own transitive closure of a directly passed fragment: the fragment
+    # itself and every spread at any depth. It is the direct fragment, not the
+    # flat closure of the whole binding, that decides which application a
+    # variable belongs to. `_missing` is dropped: `_closure_fragments` has
+    # already resolved the binding's whole closure, and the closure of
+    # `root_name` is a subset of it.
     reachable, _missing = collect_transitive_fragment_names([root_name], fragments)
     closure_nodes = [fragments[name] for name in reachable]
     return frozenset(
@@ -694,14 +700,14 @@ def _variable_owner_collisions(
     schema: graphql.GraphQLSchema,
     location: str,
 ) -> list[str]:
-    # Каждый direct fragment независимо передаёт variables через `with_args`.
-    # Variables из его transitive closure принадлежат той же application.
-    # Поэтому два разных direct fragments не могут владеть одним именем:
-    # GraphQL объявит его один раз, а Python получит два независимых значения.
+    # Each direct fragment passes variables through `with_args` independently.
+    # Variables from its transitive closure belong to the same application. So
+    # two different direct fragments cannot own one name: GraphQL would declare
+    # it once, while Python would get two independent values.
     #
-    # Две applications одной factory в разных совместимых slots проверяются в
-    # runtime: их конкретные значения известны только при `bind()`, а полностью
-    # совпадающие applications допустимы.
+    # Two applications of one factory in different compatible slots are checked
+    # at runtime: their concrete values are known only at `bind()`, and fully
+    # identical applications are allowed.
     names_by_fragment = {
         direct_name: _fragment_closure_variable_names(
             direct_name, fragments=fragments, schema=schema
@@ -742,10 +748,10 @@ def _synthesize_var_defs(
     schema: graphql.GraphQLSchema,
     location: str,
 ) -> tuple[tuple[SynthesizedVar, ...], list[str]]:
-    # Variables статически spread-фрагментов принадлежат template: operation
-    # уже объявляет и получает их через `execute`. Здесь они исключаются из
-    # повторного объявления; `_variable_owner_collisions` отдельно запрещает
-    # bind application, которая попыталась бы владеть тем же именем.
+    # Variables of statically spread fragments belong to the template: the
+    # operation already declares them and receives them through `execute`. Here
+    # they are excluded from redeclaration; `_variable_owner_collisions`
+    # separately forbids a bind application that would try to own the same name.
     template_fragment_names = collect_fragments_from_doc(template_doc).keys()
     usages = _usages_by_name(
         closure, schema=schema, skip_names=frozenset(template_fragment_names)
@@ -807,7 +813,7 @@ def _build_expanded_document(
     # fragment locally (`make_validation_doc` resolves its own spreads
     # local-first), and keeping that copy over a same-named bound statement
     # would ship a document whose `Foo` selects other fields than the `FooData`
-    # model, которую валидирует definition.
+    # model that the definition validates.
     #
     # Identity first: brick reuse means the template and the closure usually
     # arrive at the very same node, and printing both sides of that is the bulk

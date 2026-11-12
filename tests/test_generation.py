@@ -1076,7 +1076,7 @@ def test_union_alias_colliding_with_a_model_name_is_rejected(
     test_project: ProjectBuilder,
 ):
     # `aB` (a union field) and `a.b` (an object path) both concatenate to the
-    # raw name SResultAB — one a union alias, one a model; no rename can hold
+    # raw name SResultAB — one a result union alias, one a model; no rename can hold
     # both, so the collision is the developer's to resolve.
     test_project.prepare(
         schema="""

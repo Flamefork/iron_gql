@@ -1,7 +1,7 @@
 name: "Slow checks"
 
-# Полный scan внешнего Python-кода, mutation testing и scoping fuzzer стоят
-# дороже основного suite, поэтому запускаются по расписанию и вручную.
+# The full scan of external Python code, mutation testing and the scoping fuzzer
+# cost more than the main suite, so they run on a schedule and on demand.
 on:
   workflow_dispatch:
   schedule:
@@ -19,7 +19,7 @@ jobs:
         uses: extractions/setup-just@v3
       - name: Install uv
         uses: astral-sh/setup-uv@v6
-      - name: Проверить установленные Python-пакеты
+      - name: Check installed Python packages
         run: just scan-real-code
       - name: Fuzz the scoping oracle
         run: just fuzz-scoping 5000

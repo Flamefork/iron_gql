@@ -192,9 +192,10 @@ def modules(draw: st.DrawFn) -> Module:
     paths: list[Path] = [(), *(scope.path for scope in _walk(scopes))]
 
     bind_path = draw(st.sampled_from(paths))
-    # Смещаем выбор к читаемому template: иначе Python чаще падает до `.bind()`
-    # и такой пример не проверяет точность scan. Нечитаемые позиции остаются в
-    # генерации, чтобы кампания исследовала всю область программ.
+    # Bias the choice toward a readable template: otherwise Python more often
+    # fails before `.bind()`, and such an example does not test the scan's
+    # precision. Unreadable positions stay in generation so the campaign
+    # explores the whole space of programs.
     readable = _readable_from(scopes, bind_path)
     template_path = draw(st.one_of(st.sampled_from(readable), st.sampled_from(paths)))
     shadows = draw(

@@ -1,9 +1,9 @@
-"""Сравнение результата интерпретатора с результатом статического scan.
+"""Comparing the interpreter's result with the static scan's result.
 
-Модуль общий для committed corpus и `fuzz_scoping`, чтобы оба источника случаев
-проверяли один контракт. Интерпретатор определяет, какие `.bind()` действительно
-исполнились. Только для них scan обязан дать тот же ответ или громко отказаться:
-статический обход не моделирует runtime reachability.
+The module is shared by the committed corpus and `fuzz_scoping`, so that both
+sources of cases check one contract. The interpreter determines which `.bind()`
+calls actually ran. Only for those must the scan give the same answer or refuse
+loudly: the static walk does not model runtime reachability.
 """
 
 import importlib
@@ -117,8 +117,8 @@ def divergences(scan: Observed, interpreter: Observed) -> list[str]:
             problems.append(problem)
             continue
         if scan.refusal is not None:
-            # Громкий отказ допустим: scan может быть строже Python там, где
-            # статически нельзя доказать единственное значение.
+            # A loud refusal is allowed: the scan may be stricter than Python
+            # where the single value cannot be proven statically.
             continue
         problem = f"{location}: the interpreter binds {executed.template!r} "
         problem += "here, and the scan neither found it nor said why"

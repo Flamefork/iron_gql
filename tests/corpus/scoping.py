@@ -109,10 +109,11 @@ class Site:
     # the depth to write at.
     enclosing_after: int | None = None
     enclosing_level: int | None = None
-    # Как записан сам вызов. Для generator expression corpus немедленно вызывает
-    # `next()`: это отличает его scope от comprehension, но не переносит вызов за
-    # следующие строки функции. Отложенная итерация покрыта отдельным handwritten
-    # case `genexp-iterated-after-rebind`.
+    # How the call itself is written. For a generator expression the corpus
+    # calls `next()` immediately: this sets its scope apart from a comprehension
+    # but does not move the call past the function's following lines. Deferred
+    # iteration is covered by a separate handwritten case
+    # `genexp-iterated-after-rebind`.
     bind_line: str = BIND_LINE
 
 
@@ -140,8 +141,8 @@ SITES: tuple[Site, ...] = (
         enclosing_after=0,
         enclosing_level=1,
     ),
-    # Generator expression создаёт отдельный scope, а `next()` сразу исполняет
-    # его body в той же позиции функции.
+    # A generator expression creates a separate scope, and `next()` runs its
+    # body right away at the same position in the function.
     Site(
         name="genexp",
         prologue=((0, "def go():"),),

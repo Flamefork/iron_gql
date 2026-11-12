@@ -88,9 +88,10 @@ def test_a_bind_on_a_parameter_is_not_a_discovery_error(test_project: ProjectBui
 def test_an_empty_sibling_does_not_turn_a_generic_bind_into_discovery(
     test_project: ProjectBuilder, empty: str
 ):
-    # Пустой slot не добавляет combination. Рядом с bare parameter он оставляет
-    # call в той же категории, что single-slot helper выше: combination выводит
-    # schema enumeration, а discovery не разрешает runtime value параметра.
+    # An empty slot does not add a combination. Next to a bare parameter it
+    # keeps the call in the same category as the single-slot helper above:
+    # schema enumeration derives the combination, and discovery does not resolve
+    # the parameter's runtime value.
     test_project.prepare(
         schema="""
         type Query {
@@ -199,9 +200,10 @@ def test_a_local_non_gql_name_hides_the_module_level_template(tmp_path: Path):
     assert "an enclosing function or class body binds that name" in ignored.reason
 
 
-# Одинаковый дефект проходит двумя путями разрешения имени: через lexical scope
-# функции и через module graph. В обоих случаях scan должен записать явный отказ:
-# найденный template ещё не имеет значения в позиции вызова.
+# The same defect goes through two name-resolution paths: through the function's
+# lexical scope and through the module graph. In both cases the scan must record
+# an explicit refusal: the template it found has no value yet at the call
+# position.
 @pytest.mark.parametrize(
     ("body", "location"),
     [

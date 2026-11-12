@@ -10,7 +10,7 @@ SITE_PACKAGES = Path(sysconfig.get_paths()["purelib"])
 def assert_real_code_package(package: Path) -> None:
     found = discover_module(package, "api_gql", skip_path=package / "unused.py")
     if found.binds:
-        msg = f"{package.name}: discovery ошибочно нашёл GraphQL binding"
+        msg = f"{package.name}: discovery wrongly found a GraphQL binding"
         raise AssertionError(msg)
     # Counted over the files the scan itself read, not over `rglob`: the walk
     # refuses to enter some directories, and a count taken over the whole tree
@@ -20,7 +20,7 @@ def assert_real_code_package(package: Path) -> None:
         for source in walk_scanned_tree(package).files
     )
     if written and not found.ignored:
-        msg = f"{package.name}: .bind( не учтён как ignored call"
+        msg = f"{package.name}: .bind( was not recorded as an ignored call"
         raise AssertionError(msg)
 
 

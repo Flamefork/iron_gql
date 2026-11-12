@@ -62,8 +62,8 @@ image_and_link = get_attachment.bind(attachment=(image_parts, link_parts))
 # on the generated module -- see
 # test_two_tuple_binds_of_one_slot_share_a_form.
 image_and_other = get_attachment.bind(attachment=(image_parts, other_parts))
-# Другая arity означает другой overload namespace. Первые два positional
-# parameters намеренно повторяют TFillAttachment1/2; generated module и этот
-# call site проходят BasedPyright, закрепляя разделение на public typing
-# boundary.
+# A different arity means a different overload namespace. The first two
+# positional parameters deliberately repeat TFillAttachment1/2; the
+# generated module and this call site pass BasedPyright, pinning the
+# separation at the public typing boundary.
 all_three = get_attachment.bind(attachment=(image_parts, other_parts, link_parts))

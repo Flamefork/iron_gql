@@ -67,10 +67,10 @@ def _application(
 
 
 def test_with_headers_preserves_fragment_args():
-    # `fragment_args` один раз задаётся в `bound__` из значений applied
-    # fragment; на уровне bound нет `with_args`, который мог бы его заменить.
-    # `with_headers` копирует объект через `_copy`, поэтому тот обязан переносить
-    # значения вместе с `exec_source` и `slot_readers`.
+    # `fragment_args` is set once in `bound__` from the applied fragment's
+    # values; at the bound level there is no `with_args` that could replace it.
+    # `with_headers` copies the object through `_copy`, so `_copy` must carry
+    # the values along with `exec_source` and `slot_readers`.
     spec: runtime.BoundSpec = (
         "query Q { x }",
         {"x": ((_ImageDefinition, frozenset()),)},

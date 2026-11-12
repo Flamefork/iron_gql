@@ -1208,9 +1208,9 @@ query GetAttachment($id: ID!, $size: Int!) {
 
 
 def test_a_bound_fragment_the_template_already_spreads_has_two_owners():
-    # Static spread отдаёт $size методу execute, а binding ImageParts — методу
-    # ImageParts.with_args. В GraphQL declaration одна, поэтому ни один источник
-    # не может молча перекрыть другой.
+    # The static spread gives $size to the execute method, and binding
+    # ImageParts gives it to ImageParts.with_args. GraphQL has one declaration,
+    # so neither source may silently override the other.
     schema = graphql.build_schema(READABLE_SCHEMA)
     template_doc = graphql.parse(TEMPLATE_SPREADING_A_BOUND_FRAGMENT)
     image_parts = _fragment(

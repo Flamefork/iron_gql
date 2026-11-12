@@ -68,8 +68,9 @@ async def show_attachment(post_id: str, width: int) -> None:
         if link is not None:
             print(f"Link: {link.href}")
 
-    # `with_args` создаёт application со значениями variables для `bind()`.
-    # Definition той же factory читает результат независимо от application.
+    # `with_args` creates an application carrying variable values for `bind()`.
+    # The same factory's definition reads the result independently of the
+    # application.
     preview = get_post_attachment.bind(
         attachment=image_thumbnail.with_args(width=width)
     )

@@ -1,18 +1,18 @@
-"""Кампания сгенерированных scope trees, проверяемых общим oracle.
+"""A campaign of generated scope trees checked by the shared oracle.
 
-Модуль намеренно называется не `test_`: полезный запуск требует тысяч примеров,
-а его результат — survey ответов, отказов и ошибочных форм, а не обычный
-pass/fail. Кампания запускается через `just fuzz-scoping` рядом с mutation
-recipes и по тому же расписанию.
+The module is deliberately not named `test_`: a useful run needs thousands of
+examples, and its result is a survey of answers, refusals and erroneous shapes,
+not an ordinary pass/fail. The campaign runs through `just fuzz-scoping` next to
+the mutation recipes and on the same schedule.
 
-Найденное расхождение минимизируется и переносится в `corpus/scoping.py` как
-case со своими осями. После этого поведение на каждом прогоне закрепляют
-committed corpus и snapshot, а не случайный поиск.
+A divergence it finds is minimized and moved into `corpus/scoping.py` as a case
+with its own axes. From then on the behavior is pinned on every run by the
+committed corpus and snapshot, not by random search.
 
-Программы, в которых `.bind()` не исполнился, учитываются в статистике, но не
-сканируются: статический scan не доказывает runtime reachability. Для исполненных
-вызовов допустим тот же ответ или громкий отказ. В plain-программе отказ означает
-потерянный binding, потому что второго значения `tmpl` в ней нет.
+Programs in which `.bind()` did not run are counted in the statistics but not
+scanned: a static scan does not prove runtime reachability. For calls that ran,
+the same answer or a loud refusal is allowed. In a plain program a refusal means
+a lost binding, because it has no second value of `tmpl`.
 """
 
 import sys

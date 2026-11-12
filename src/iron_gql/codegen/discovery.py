@@ -50,9 +50,9 @@ class BindDecl:
 
 @dataclass(kw_only=True, frozen=True)
 class BindKeywordCheck:
-    # Статически известная часть call, который не задаёт combination: empty
-    # sequences требуют проверить имена slots, но не разрешать runtime values
-    # соседних keywords.
+    # The statically known part of a call that does not set a combination: empty
+    # sequences require checking the slot names, but not resolving the runtime
+    # values of neighboring keywords.
     template: Statement
     keywords: tuple[str, ...]
     location: str
@@ -222,10 +222,11 @@ class _Scope:
     # rather than into (PEP 572). The one binding form whose name outlives the
     # scope it is written in, so the one scope kind that has to say what it is.
     is_comprehension: bool = False
-    # Body generator expression исполняется при итерации. Scan не знает место
-    # итерации, поэтому после этой границы разрешает имя лексически. Если до
-    # значения дело ещё не дошло, сам `.bind()` не исполнится; runtime
-    # reachability не входит в контракт статического обхода.
+    # A generator expression's body runs on iteration. The scan does not know
+    # where the iteration happens, so past this boundary it resolves the name
+    # lexically. If the value has not been reached yet, the `.bind()` itself
+    # will not run; runtime reachability is not part of the static walk's
+    # contract.
     is_lazy: bool = False
 
     # A function body runs all at once, long after the module that defines it;
@@ -844,11 +845,11 @@ def _module_bindings(
 
 
 def _positional_depth(scopes: tuple[_Scope, ...]) -> int:
-    # Линия binding важна от call site до первой deferred-границы включительно.
-    # За ней scan разрешает лексический binding, но не моделирует расписание
-    # вызова. Для реально исполненного `.bind()` значение к этому моменту уже
-    # обязано существовать: например, `go()` может прочитать module-level
-    # `tmpl`, присвоенный после определения `go`.
+    # The binding line matters from the call site up to and including the first
+    # deferred boundary. Past it the scan resolves the lexical binding but does
+    # not model when the call is scheduled. For a `.bind()` that actually runs,
+    # the value must already exist by then: for example, `go()` may read a
+    # module-level `tmpl` assigned after `go` is defined.
     for depth, scope in enumerate(scopes):
         if scope.is_deferred:
             return depth + 1
@@ -1367,11 +1368,12 @@ def _slot_statements(
     keyword: str,
     gql_fn_name: str,
 ) -> tuple[Statement, ...]:
-    # Каждый названный в call slot разрешается независимо от формы его value.
-    # `_resolve_binds` уже установил, что хотя бы один argument требует static
-    # resolution. После этого все slots входят в одну runtime combination:
-    # `slots.binding_key` строит единый key из каждого переданного в `bind()` slot.
-    # Поэтому bare value рядом с tuple тоже разрешается, а не теряется.
+    # Every slot named in the call is resolved regardless of its value's form.
+    # `_resolve_binds` has already established that at least one argument
+    # requires static resolution. After that all slots enter one runtime
+    # combination: `slots.binding_key` builds a single key from every slot
+    # passed to `bind()`. So a bare value next to a tuple is resolved too, not
+    # lost.
     _reject_nonempty_list(value, candidate, keyword=keyword)
     exprs = value.elts if isinstance(value, ast.List | ast.Tuple) else [value]
     return tuple(
@@ -1385,11 +1387,11 @@ def _slot_statements(
 def _reject_nonempty_list(
     value: ast.expr, candidate: _BindCandidate, *, keyword: str
 ) -> None:
-    # Multi-fragment slot записывается как tuple: `Sequence` не фиксирует длину,
-    # поэтому overload для `[image_parts, link_parts]` принял бы
-    # `[image_parts]`, но заявил бы в return type ещё и `LinkParts`, который
-    # binding не bind-ил. У tuple фиксированной длины нет такого более короткого
-    # значения (`render._tuple_slot_form`).
+    # A multi-fragment slot is written as a tuple: `Sequence` does not fix the
+    # length, so the overload for `[image_parts, link_parts]` would accept
+    # `[image_parts]` but would also claim in its return type a `LinkParts` that
+    # the binding did not bind. A fixed-length tuple has no such shorter value
+    # (`render._tuple_slot_form`).
     #
     # Diagnosed here rather than at the gate that admits the call: a list is
     # what makes a third-party `.bind(handlers=[a, b])` look like ours, and
@@ -1456,8 +1458,8 @@ def _bind_keyword_names(candidate: _BindCandidate) -> tuple[str, ...]:
     return tuple(names)
 
 
-# Вызывается только после разрешения base в найденный gql statement, поэтому
-# последующие ошибки относятся к bind генератора, а не к догадке о владельце.
+# Called only after the base has resolved to a found gql statement, so later
+# errors concern the generator's bind, not a guess about the owner.
 def _validated_bind(
     candidate: _BindCandidate,
     template: Statement,
@@ -1603,24 +1605,25 @@ def _resolve_base(
 def _bind_resolution_mode(
     candidate: _BindCandidate,
 ) -> Literal["none", "keywords", "arguments"]:
-    # Разделяет три объёма static resolution. Contentful literal требует
-    # разрешить все arguments call. Пустая sequence не содержит fragment, но её
-    # keyword нужно сверить со slots template; соседние runtime values при этом
-    # не разрешаются. Call без literal не принадлежит discovery.
+    # Separates three scopes of static resolution. A contentful literal requires
+    # resolving all of the call's arguments. An empty sequence contains no
+    # fragment, but its keyword has to be checked against the template's slots;
+    # the neighboring runtime values are not resolved. A call without a literal
+    # does not belong to discovery.
     #
-    # Непустой list допускается только до диагностики отсутствия фиксированной
-    # длины после подтверждения, что bind принадлежит генератору. Поэтому он,
-    # как multi-fragment tuple, требует разрешить владельца call.
+    # A non-empty list is admitted only so it can be diagnosed for lacking a
+    # fixed length once the bind is confirmed to belong to the generator. So,
+    # like a multi-fragment tuple, it requires resolving the call's owner.
     #
-    # Literal `**{...}` тоже требует resolution: `bind(**{"slot": (a, b)})`
-    # статически задаёт ту же combination, что keyword form, но resolver не
-    # получает имя keyword, поэтому `_validated_bind` обязан отклонить call.
-    # Без этого standalone-вызов молча пропал бы и позже дал бесполезный
-    # `LookupError` с советом повторить генерацию.
+    # A literal `**{...}` also requires resolution: `bind(**{"slot": (a, b)})`
+    # statically sets the same combination as the keyword form, but the resolver
+    # does not get the keyword's name, so `_validated_bind` must reject the
+    # call. Without this a standalone call would silently vanish and later
+    # produce a useless `LookupError` advising to rerun generation.
     #
-    # Именованный `**opts` намеренно исключён: его содержимое статически
-    # неизвестно, а включение отправило бы каждый third-party `.bind(**opts)`
-    # на base resolution.
+    # A named `**opts` is excluded on purpose: its contents are statically
+    # unknown, and including it would send every third-party `.bind(**opts)` to
+    # base resolution.
     has_empty_sequence = False
     for kw in candidate.call.keywords:
         match kw.value:
@@ -1648,11 +1651,11 @@ def _resolve_binds(
     for candidate in candidates:
         mode = _bind_resolution_mode(candidate)
         if mode == "none":
-            # Discovery добавляет только multi-fragment tuple; empty и
-            # single-fragment combinations выводятся из schema в
-            # `combinations.py`. Base намеренно остаётся unresolved: иначе
-            # вернутся диагностики attribute chains и ambiguous names для
-            # third-party `.bind()` с совпавшим именем.
+            # Discovery adds only multi-fragment tuples; empty and
+            # single-fragment combinations are derived from the schema in
+            # `combinations.py`. The base deliberately stays unresolved:
+            # otherwise the diagnostics for attribute chains and ambiguous names
+            # would come back for a third-party `.bind()` with a matching name.
             ignored.append(
                 IgnoredBind(
                     location=candidate.location,
@@ -1700,10 +1703,11 @@ def _resolve_binds(
 
 
 def _bind_combination_key(bind: BindDecl) -> CombinationKey:
-    # Key включает каждый написанный keyword, в том числе empty. Удаление empty
-    # slots на этом этапе объединило бы опечатку в имени slot с вызовом без
-    # fragments. Эквивалентные combinations объединяются только после expansion
-    # в `collect._merge_expanded`, когда имена slots уже проверены по template.
+    # The key includes every written keyword, empty ones too. Dropping empty
+    # slots at this stage would merge a misspelled slot name with a call without
+    # fragments. Equivalent combinations are merged only after expansion in
+    # `collect._merge_expanded`, once the slot names have been checked against
+    # the template.
     return (
         bind.template.hash_str,
         tuple(

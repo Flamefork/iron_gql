@@ -48,8 +48,8 @@ type LinkAttachment {
 # feeds are both called at use time (inside a test), not at module level,
 # matching the README's own split between "### Binding fragments to a
 # template" / "### Fragment variables" and "### Executing and reading" --
-# Discovery не зависит от single-fragment bind: ничего здесь не обязано быть
-# записано в месте, видимом scanner.
+# Discovery does not depend on a single-fragment bind: nothing here has to be
+# written where the scanner can see it.
 QUERIES = '''
 from tests.generated.readme_fragment_slots.gql.api import api_gql
 

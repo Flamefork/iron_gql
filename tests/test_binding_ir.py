@@ -260,7 +260,7 @@ def test_template_is_classified_not_an_operation(tmp_path: Path):
     assert slot.python_name == "attachment"
     # The generated slot node models this template's `attachment` field
     # collects into -- `_collect_typed_field`'s own naming. The slot's type is
-    # a union, so the key reaches one node model per variant; the union alias
+    # a union, so the key reaches one node model per variant; the result union alias
     # over them is not a node model itself and is reached from them through
     # the dependency graph.
     assert slot.node_types == (

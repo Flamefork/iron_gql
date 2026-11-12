@@ -1,14 +1,14 @@
-"""Проверка статического scan по фактически исполненным вызовам Python.
+"""Checking the static scan against the Python calls that actually ran.
 
-`discovery` определяет значение в `.bind(...)` обходом AST, а CPython —
-исполнением. Oracle сначала запускает каждый corpus case и проверяет scan только
-там, где вызов действительно произошёл. Reachability не входит в контракт
-статического обхода.
+`discovery` determines the value in `.bind(...)` by walking the AST, and CPython
+by executing. The oracle first runs each corpus case and checks the scan only
+where the call actually happened. Reachability is not part of the static walk's
+contract.
 
-Scan может быть строже Python: если единственное значение нельзя доказать без
-flow analysis, допустим громкий отказ. Недопустимы другой ответ и тихая потеря
-исполненного binding. Snapshot фиксирует, где scan связывает значение, а где
-отказывает, чтобы ослабление не осталось незаметным.
+The scan may be stricter than Python: if the single value cannot be proven
+without flow analysis, a loud refusal is allowed. A different answer and a silent
+loss of an executed binding are not. The snapshot records where the scan binds a
+value and where it refuses, so that a weakening does not go unnoticed.
 """
 
 import sys
@@ -34,9 +34,9 @@ CORPUS = [
 
 
 def _outcome(scan: Observed) -> str:
-    # Snapshot фиксирует фактический результат scan. Refinement допускает
-    # громкий отказ, поэтому без snapshot переход из `binds` в `refuses`
-    # остался бы незаметным.
+    # The snapshot records the scan's actual result. Refinement allows a loud
+    # refusal, so without the snapshot a move from `binds` to `refuses` would go
+    # unnoticed.
     if not scan.binds:
         return "refused" if scan.refusal else "silent"
     templates = sorted({found.template for found in scan.binds.values()})
@@ -69,7 +69,7 @@ def test_scan_refines_the_interpreter_and_matches_snapshot(tmp_path: Path):
             failures.append(
                 "\n".join([
                     case.id,
-                    f"валидный case не исполнил binding ({interpreter.refusal})",
+                    f"valid case did not execute the binding ({interpreter.refusal})",
                     "",
                     "app/mod.py:",
                     source,
@@ -92,12 +92,12 @@ def test_scan_refines_the_interpreter_and_matches_snapshot(tmp_path: Path):
         problems = divergences(scan, interpreter)
         if case.must_bind and not scan.binds:
             problems.append(
-                f"scan не нашёл binding для валидного кода (отказ: {scan.refusal})"
+                f"scan found no binding for valid code (refusal: {scan.refusal})"
             )
         actual_outcome = _outcome(scan)
         if actual_outcome != expected_outcome:
             problems.append(
-                f"snapshot ожидал {expected_outcome!r}, получено {actual_outcome!r}"
+                f"snapshot expected {expected_outcome!r}, got {actual_outcome!r}"
             )
         if problems:
             source = (root / "app/mod.py").read_text(encoding="utf-8")

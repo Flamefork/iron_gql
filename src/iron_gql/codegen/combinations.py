@@ -66,13 +66,14 @@ def enumerate_combinations(
     literal_binds: list[Combination],
     limit: int = MAX_COMBINATIONS_PER_TEMPLATE,
 ) -> list[Combination]:
-    # Для каждого template slot принимает пустое значение либо любой
-    # spread-совместимый fragment пакета; комбинации образуют их декартово
-    # произведение. Literal binds добавляют единственный отсутствующий класс —
-    # slots с несколькими fragments в tuple.
+    # For each template slot, accepts an empty value or any spread-compatible
+    # fragment of the package; the combinations form their Cartesian product.
+    # Literal binds add the only missing class -- slots with several fragments
+    # in a tuple.
     #
-    # Правило едино для любого числа slots: порог по размеру создал бы два
-    # режима и сохранил бы scan call sites как второй источник комбинаций.
+    # The rule is the same for any number of slots: a size threshold would
+    # create two modes and keep scanning call sites as a second source of
+    # combinations.
     enumerated: list[Combination] = []
     errors: list[str] = []
     for template in templates:

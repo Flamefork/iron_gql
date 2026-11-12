@@ -160,7 +160,7 @@ get_post_attachment = api_gql("""
 """)
 ```
 
-A statement with exactly one fragment definition returns a typed **fragment definition** value if the package contains a template. Each `api_gql()` call creates a new equivalent value of the same generated type. A package without a template has no binding context, so its fragment statements keep their old meaning. The generator creates an `On{Type}` base for each type condition in use. Plain definitions and factory applications inherit the base of their type condition; infrastructure code can accept any bindable fragment on that type through it. A statement with several definitions stays a bundle whose fragments can be spread by name.
+A statement with exactly one fragment definition returns a typed **fragment definition value** if the package contains a template. Each `api_gql()` call creates a new equivalent value of the same generated type. A package without a template has no binding context, so its fragment statements keep their old meaning. The generator creates an `On{Type}` base for each type condition in use. Plain definitions and factory applications inherit the base of their type condition; infrastructure code can accept any bindable fragment on that type through it. A statement with several definitions stays a bundle whose fragments can be spread by name.
 
 ```python
 image_url = api_gql("""
@@ -262,7 +262,7 @@ Pickle support depends on which generic models the payload instantiates. A popul
 
 `execute` takes only the template's own variables. There is no slot keyword argument: the fragment selection already happened at `bind()` time.
 
-Read a slot through a fragment definition: `image_caption.read(result.post.attachment)` returns the fragment's own model, or `None` if the node is `None` or its runtime type is outside the fragment's coverage. Any fragment whose fields landed directly in the slot payload is read this way: a fragment passed to `bind()`, or a fragment that another bound fragment spreads next to its own fields. A new equivalent definition from a repeated `api_gql()` call reads the same result:
+Read a slot through a fragment definition value: `image_caption.read(result.post.attachment)` returns the fragment's own model, or `None` if the node is `None` or its runtime type is outside the fragment's coverage. Any fragment whose fields landed directly in the slot payload is read this way: a fragment passed to `bind()`, or a fragment that another bound fragment spreads next to its own fields. A new equivalent definition from a repeated `api_gql()` call reads the same result:
 
 ```python
 result = await get_post_attachment_any.execute(id="p-1")

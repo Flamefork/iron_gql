@@ -70,7 +70,7 @@ mutants-diff:
 fuzz-scoping examples="3000":
     uv run python -m tests.fuzz_scoping {{ examples }}
 
-# Полный survey установленного Python-кода. Основной suite проверяет четыре
-# репрезентативных пакета, а этот рецепт сохраняет широкий внешний корпус.
+# A full survey of installed Python code. The main suite checks four
+# representative packages, and this recipe keeps the wide external corpus.
 scan-real-code:
     uv run python -m tests.scan_real_code

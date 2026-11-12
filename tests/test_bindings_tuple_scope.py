@@ -2,9 +2,9 @@ import pytest
 
 from tests.conftest import generated_package
 
-# Два независимых root field имеют slot с одинаковым именем `attachment`, но
-# несовместимые union types. Единственный literal tuple bind принадлежит
-# `GetPostAttachment` и не должен добавлять overload в `GetPageAttachment`.
+# Two independent root fields have a slot with the same name `attachment` but
+# incompatible union types. The only literal tuple bind belongs to
+# `GetPostAttachment` and must not add an overload to `GetPageAttachment`.
 SCHEMA = """
 type Query {
     post(id: ID!): Post
@@ -96,8 +96,8 @@ from tests.generated.bindings_tuple_scope import queries
 
 
 def test_a_repeated_fragment_in_a_tuple_reaches_the_lookup_error():
-    # Widening позиций tuple допускает `(image_url, image_url)` статически,
-    # но runtime громко отвергает отсутствующую combination до запроса.
+    # Widening the tuple positions admits `(image_url, image_url)` statically,
+    # but the runtime loudly rejects the missing combination before the request.
     with pytest.raises(LookupError, match="unknown bind combination"):
         _ = queries.get_post_attachment.bind(
             attachment=(queries.image_url, queries.image_url)

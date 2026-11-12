@@ -114,8 +114,8 @@ def record_run(root: Path) -> Iterator[Recording]:
     previous, _current = _current, recording
     sys.modules[MODULE_NAME] = sys.modules[__name__]
     sys.path.insert(0, str(root))
-    # Очищаем на входе и выходе: одинаковые module names используются каждым
-    # case, а PathFinder иначе сохраняет finder для уже удалённого temp root.
+    # Cleared on entry and on exit: every case uses the same module names, and
+    # otherwise PathFinder keeps a finder for an already deleted temp root.
     forget_import_state(root)
     try:
         yield recording

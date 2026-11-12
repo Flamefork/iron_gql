@@ -52,10 +52,10 @@ OMITTED = Omitted.OMITTED
 
 
 TModel_co = TypeVar("TModel_co", bound=pydantic.BaseModel, covariant=True)
-# Readable closure фрагмента: он сам плюс каждый fragment из его root-level
-# spreads, с пересечением по всем совместимым slots. Параметр contravariant,
-# потому что `read` принимает node, который предлагает этот closure. PEP 695
-# не позволяет объявить variance, отсюда UP046.
+# A fragment's readable closure: the fragment itself plus every fragment from
+# its root-level spreads, intersected over all compatible slots. The parameter
+# is contravariant because `read` accepts a node that offers this closure. PEP
+# 695 does not allow declaring variance, hence UP046.
 TReads_contra = TypeVar("TReads_contra", contravariant=True)
 
 
@@ -90,10 +90,10 @@ class GQLFragment(Generic[TModel_co, TReads_contra]):  # noqa: UP046
     ) -> "type[GQLFragment[TModel_co, TReads_contra]]":
         return self._definition_type
 
-    # Codegen указывает на каждом node типы доступных fragment readers, поэтому
-    # contravariant-контракт отвергает reader для node, которому его не
-    # предложили. На type-erased пути тот же wiring bug поднимает `ValueError`
-    # в `slot_data__`.
+    # Codegen states on each node the types of the fragment readers available
+    # there, so the contravariant contract rejects a reader for a node it was
+    # not offered. On the type-erased path the same wiring bug raises
+    # `ValueError` in `slot_data__`.
     #
     # Code generic over which binding it was handed spells the phantom `Any`
     # (`{Op}Result[Any]`), which this signature accepts like any other: giving
@@ -130,13 +130,14 @@ class GQLBindableFragment(GQLFragment[TModel_co, TReads_contra]):
 
 @dataclass(frozen=True, slots=True)
 class SlotReader:
-    # Один fragment, доступный в одном slot одного binding, и runtime typenames,
-    # для которых его fields присутствуют в root payload этого slot.
+    # One fragment available in one slot of one binding, and the runtime
+    # typenames for which its fields are present in that slot's root payload.
     #
-    # Coverage относится к конкретным binding и slot, а не только к fragment:
-    # один fragment может напрямую достигать root первого slot, а во втором
-    # идти через более узкий condition. Validation вне узкого набора тогда
-    # отвергла бы корректный response, где server не прислал эти fields.
+    # Coverage belongs to a specific binding and slot, not just to the fragment:
+    # one fragment can reach the root of the first slot directly and go through
+    # a narrower condition in the second. Validation outside the narrow set
+    # would then reject a correct response where the server did not send these
+    # fields.
     definition: GQLFragment[pydantic.BaseModel, Any]
     typenames: frozenset[str]
 
@@ -148,23 +149,24 @@ def _is_readers(value: object) -> TypeIs[tuple[SlotReader, ...]]:
     return all(isinstance(reader, SlotReader) for reader in readers)
 
 
-# Phantom «offered fragments»: union типов fragment readers, доступных на этом
-# node. Codegen передаёт его через каждую model на пути к node, а binding
-# подставляет значение в собственный result type. Contravariance разрешает
-# использовать node с большим набором fragments там, где ожидается меньший:
-# `Slot[A | B]` совместим с `GQLSlotNode[A]`. PEP 695 не позволяет явно задать
-# variance и выводит неиспользуемый phantom как covariant, поэтому здесь нужен
-# обычный TypeVar и подавление UP046. Default `Never` означает, что bare
-# `GQLSlotNode` не читается ни одним fragment.
+# The "offered fragments" phantom: a union of the fragment reader types
+# available on this node. Codegen passes it through every model on the path to
+# the node, and a binding substitutes the value into its own result type.
+# Contravariance lets a node with a larger set of fragments be used where a
+# smaller one is expected: `Slot[A | B]` is compatible with `GQLSlotNode[A]`.
+# PEP 695 does not allow setting variance explicitly and infers an unused
+# phantom as covariant, so a plain TypeVar and the UP046 suppression are needed
+# here. The `Never` default means a bare `GQLSlotNode` is readable by no
+# fragment.
 TOffered_contra = TypeVar("TOffered_contra", contravariant=True, default=Never)
 
 
 class GQLSlotNode(pydantic.BaseModel, Generic[TOffered_contra]):  # noqa: UP046
     slot_name__: ClassVar[str]
 
-    # Projection принадлежит generated fragment definition, а не конкретному
-    # definition value или factory application из `bind()`. Поэтому runtime
-    # identity задаёт exact generated class.
+    # The projection belongs to the generated fragment definition, not to a
+    # specific definition value or a factory application from `bind()`. So
+    # runtime identity is set by the exact generated class.
     _slot_data: dict[FragmentDefinitionType, object] = pydantic.PrivateAttr(
         default_factory=dict
     )
@@ -172,8 +174,8 @@ class GQLSlotNode(pydantic.BaseModel, Generic[TOffered_contra]):  # noqa: UP046
     def slot_data__[TData: pydantic.BaseModel, TReads](
         self, definition: GQLFragment[TData, TReads]
     ) -> TData | None:
-        # Membership проверяется отдельно от значения: `None` допустим для
-        # предложенного definition, typename которого не покрывает этот node.
+        # Membership is checked separately from the value: `None` is allowed for
+        # an offered definition whose typename does not cover this node.
         definition_type = definition.definition_type
         if definition_type not in self._slot_data:
             msg = (
@@ -181,9 +183,9 @@ class GQLSlotNode(pydantic.BaseModel, Generic[TOffered_contra]):  # noqa: UP046
                 f"binding that produced slot '{self.slot_name__}'"
             )
             raise ValueError(msg)
-        # По построению значение под definition class является validated model
-        # этого definition. Heterogeneous-связь нельзя выразить типом mapping,
-        # поэтому cast остаётся на этой границе.
+        # By construction the value under a definition class is that
+        # definition's validated model. The heterogeneous link cannot be
+        # expressed by the mapping's type, so the cast stays at this boundary.
         return cast("TData | None", self._slot_data[definition_type])
 
     def add_slot_data__(
@@ -222,9 +224,10 @@ class GQLSlotNode(pydantic.BaseModel, Generic[TOffered_contra]):  # noqa: UP046
             msg = f"slot {cls.slot_name__!r} payload is missing __typename"
             raise ValueError(msg)
         for reader in _slot_readers(info, cls.slot_name__):
-            # Каждый предложенный definition получает entry — `None` при
-            # typename mismatch. Отсутствие entry однозначно означает «не был
-            # предложен». Schema drift уже отвергнут Literal typename slot node.
+            # Every offered definition gets an entry -- `None` on a typename
+            # mismatch. A missing entry unambiguously means "was not offered".
+            # Schema drift is already rejected by the slot node's Literal
+            # typename.
             node.add_slot_data__(
                 reader.definition,
                 reader.definition.validate__(data)
@@ -241,10 +244,10 @@ def _slot_readers(
     if not isinstance(context, Mapping) or slot_name not in context:
         msg = f"slot {slot_name!r} validated without a fragments context"
         raise ValueError(msg)
-    # Проверяется только entry этого slot: validation context является общим
-    # каналом pydantic и может содержать данные validators caller. Некорректное
-    # значение под ключом slot диагностируется здесь, а не как `AttributeError`
-    # внутри reader loop.
+    # Only this slot's entry is checked: the validation context is a shared
+    # pydantic channel and may hold data of the caller's validators. An invalid
+    # value under the slot key is diagnosed here, not as an `AttributeError`
+    # inside the reader loop.
     entry = cast("Mapping[object, object]", context)[slot_name]
     if not _is_readers(entry):
         msg = f"slot {slot_name!r} context entry is not a tuple of slot readers"
@@ -256,10 +259,10 @@ def as_bindable_fragments(
     value: GQLBindableFragment[pydantic.BaseModel, Any]
     | Sequence[GQLBindableFragment[pydantic.BaseModel, Any]],
 ) -> tuple[GQLBindableFragment[pydantic.BaseModel, Any], ...]:
-    # Нормализует две допустимые формы заполненного slot — один bindable
-    # fragment или их sequence — в единый tuple. Функция публична, потому что
-    # generated `bind()` передаёт эту форму в аргумент `passed` метода
-    # `bound__`; та же нормализация нужна ниже для `binding_key`.
+    # Normalizes the two allowed forms of a filled slot -- one bindable fragment
+    # or a sequence of them -- into a single tuple. The function is public
+    # because the generated `bind()` passes this form to the `passed` argument
+    # of `bound__`; the same normalization is needed below for `binding_key`.
     if isinstance(value, GQLBindableFragment):
         return (value,)
     return tuple(value)
@@ -278,9 +281,10 @@ type BindingKey = tuple[
 def combination_key(
     template: str, slots: Iterable[tuple[str, Iterable[str]]]
 ) -> CombinationKey:
-    # Каноническая форма логической комбинации, которую codegen строит из IR.
-    # Пустой slot исчезает, а slots и fragment names сортируются, поэтому
-    # порядок в исходном bind-вызове не влияет на идентичность комбинации.
+    # The canonical form of a logical combination, which codegen builds from the
+    # IR. An empty slot disappears, and slots and fragment names are sorted, so
+    # the order in the source bind call does not affect the combination's
+    # identity.
     #
     # What this normalisation must never be asked to do is tell a *misspelled*
     # slot from a real one, since it erases exactly the evidence: names are
@@ -298,10 +302,10 @@ def binding_key(
         | Sequence[GQLBindableFragment[pydantic.BaseModel, Any]],
     ],
 ) -> BindingKey:
-    # Runtime binding идентифицирует bindable fragment по exact generated
-    # class. Для plain fragment это public definition class, для factory —
-    # private applied class. Reader identity через `definition_type` остаётся
-    # отдельным контрактом.
+    # A runtime binding identifies a bindable fragment by its exact generated
+    # class. For a plain fragment that is the public definition class, for a
+    # factory the private applied class. Reader identity through
+    # `definition_type` remains a separate contract.
     entries = [
         (
             slot,
