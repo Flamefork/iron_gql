@@ -38,8 +38,12 @@ release version:
 # meaningful now that `tests/corpus/scoping_outcomes.txt` pins outcomes:
 # without it a mutant that refuses everything survives, because refusal is a
 # legal answer under the refinement relation.
+#
+# Fails when any mutant is left unkilled -- survived, segfaulted, timed out or
+# reached by no test.
 mutants:
     uv run mutmut run
+    just _fail-on-unkilled-mutants
 
 # The same, scoped to what a branch actually changed: minutes rather than
 # hours, and the question it answers is "did this change weaken a check".
@@ -61,6 +65,15 @@ mutants-diff:
     fi
     echo "mutating: $names"
     uv run mutmut run $names
+    just _fail-on-unkilled-mutants $names
+
+# The verdict, read from `mutmut results` by `tests/mutation_gate.py`: mutmut 3
+# exits 0 whatever survives. `pipefail`, because an empty listing passes, and a
+# `mutmut results` that failed would otherwise list nothing.
+_fail-on-unkilled-mutants *scope:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    uv run mutmut results | uv run python -m tests.mutation_gate {{ scope }}
 
 # The scoping fuzzer: scope trees composed at random and judged by the same
 # oracle the committed corpus uses. Minutes rather than seconds, and its

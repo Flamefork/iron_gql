@@ -102,6 +102,8 @@ ignore = [
 # The same reason, for the one test module that is a command rather than a
 # test: `just fuzz-scoping` is run for its report, and the report is its stdout.
 "tests/fuzz_scoping.py" = ["T201"]
+# The same for the mutation verdict: the unkilled mutants it lists are the report.
+"tests/mutation_gate.py" = ["T201"]
 # PGH004: the generated module opens with a blanket `# ruff: noqa` of its own
 "example/gql/*.py" = ["PGH004"]
 "tests/generated/**/*.py" = ["C901", "E501", "T201", "PGH004"]
@@ -135,6 +137,13 @@ asyncio_default_fixture_loop_scope = "function"
 timeout = 30
 faulthandler_timeout = 25
 timeout_method = "thread"
+
+[tool.mutmut]
+# mutmut runs the suite inside a copy of the project and copies only the
+# source and `tests/` by default. The README is read by the snippet typecheck,
+# and `example/` is in `testpaths`: without them the copy fails its first test
+# run, or silently kills mutants with a smaller suite than `pytest` runs.
+also_copy = ["README.md", "example/"]
 
 [tool.coverage.run]
 branch = true
