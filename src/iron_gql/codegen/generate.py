@@ -75,10 +75,9 @@ def _diff_lines(text: str) -> list[str]:
 # Renders a typed GraphQL client from schema_path and the api_gql() calls
 # discovered under src_path: a module at module_full_name with Pydantic models
 # and typed operation classes. Nothing is written but the debug_path dump;
-# write() puts the module in place and diff() compares it with the file. A
-# diagnosed rejection of the GraphQL input raises GraphQLGenerationError; a
-# malformed api_gql call site (anything but a single string literal) raises
-# TypeError before any GraphQL is read.
+# write() puts the module in place and diff() compares it with the file. Any
+# diagnosed rejection of the input -- schema, statements, scanned sources and
+# their calls -- raises GraphQLGenerationError.
 def render_gql_module(  # noqa: PLR0913 -- keyword-only options of the entry point
     *,
     mode: GenerationMode,

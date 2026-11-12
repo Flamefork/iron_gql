@@ -13,6 +13,7 @@ from pathlib import Path
 from types import ModuleType
 from typing import cast
 
+from iron_gql.codegen import GraphQLGenerationError
 from iron_gql.codegen.discovery import BindDecl
 from iron_gql.codegen.discovery import discover_module
 from tests.corpus.recorder import ExecutedBind
@@ -74,7 +75,7 @@ def _callable(owner: object, name: str) -> Callable[[], object]:
 def scan_answer(root: Path) -> Observed:
     try:
         discovered = discover_module(root, "api_gql", skip_path=root / "unused.py")
-    except TypeError as exc:
+    except GraphQLGenerationError as exc:
         # The scan's own diagnosis for a call site it will not guess at.
         return Observed(binds={}, refusal=describe(exc))
     binds = {

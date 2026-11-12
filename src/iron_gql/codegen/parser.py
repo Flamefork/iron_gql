@@ -5,12 +5,14 @@ from collections.abc import Iterable
 from collections.abc import Mapping
 from collections.abc import Sequence
 from dataclasses import dataclass
+from itertools import starmap
 from pathlib import Path
 from typing import Literal
 
 import graphql
 import pydantic
 from graphql.utilities import value_from_ast_untyped
+from graphql.validation.validate import validate_sdl
 
 from iron_gql.codegen.accessors import type_from_ast
 from iron_gql.codegen.discovery import BindDecl
@@ -189,10 +191,45 @@ class ParseResult:
     errors: list[str]
 
 
+# Every statement is parsed before any rejects: one run reports each syntax
+# error. They are reported alone, without the diagnoses of the rest of the
+# input -- a fragment that failed to parse turns every spread of it into an
+# unknown-fragment error that is only noise. The cause is the one syntax error,
+# or a group of them when there are several.
 def parse_documents(
     statements: list[Statement],
 ) -> list[tuple[Statement, graphql.DocumentNode]]:
-    return [(stmt, graphql.parse(stmt.clean_text)) for stmt in statements]
+    docs: list[tuple[Statement, graphql.DocumentNode]] = []
+    failures: list[tuple[Statement, graphql.GraphQLSyntaxError]] = []
+    for stmt in statements:
+        try:
+            docs.append((stmt, graphql.parse(stmt.clean_text)))
+        except graphql.GraphQLSyntaxError as exc:
+            failures.append((stmt, exc))
+    if not failures:
+        return docs
+    errors = list(starmap(_statement_syntax_error, failures))
+    match [exc for _, exc in failures]:
+        case [exc]:
+            raise GraphQLGenerationError(errors) from exc
+        case excs:
+            raise GraphQLGenerationError(errors) from ExceptionGroup(
+                "statement syntax errors", excs
+            )
+
+
+def _statement_syntax_error(stmt: Statement, exc: graphql.GraphQLSyntaxError) -> str:
+    match exc.locations:
+        case [location]:
+            return (
+                f"{stmt.location}: {exc.message} (line {location.line}, "
+                f"column {location.column} of the dedented statement)"
+            )
+        case _:
+            # Internal invariant: graphql-core raises a syntax error at the one
+            # token it stopped on.
+            msg = f"syntax error without a single location: {exc.locations}"
+            raise AssertionError(msg)
 
 
 def collect_fragments_from_doc(
@@ -727,6 +764,48 @@ def validate_bind_slot_args(
     return errors
 
 
+# graphql-core reports an invalid SDL or schema as a TypeError, the type a
+# defect of the generator raises too; asked for its diagnoses as a list, it
+# tells the two apart.
+def load_schema(
+    schema_path: Path,
+) -> tuple[graphql.DocumentNode, graphql.GraphQLSchema]:
+    try:
+        text = schema_path.read_text(encoding="utf-8")
+    except FileNotFoundError as exc:
+        msg = (
+            f"Schema file {schema_path} does not exist; "
+            "pass schema_path pointing at the schema SDL"
+        )
+        raise GraphQLGenerationError([msg]) from exc
+    try:
+        document = graphql.parse(text)
+    except graphql.GraphQLSyntaxError as exc:
+        raise GraphQLGenerationError([_schema_error(schema_path, exc)]) from exc
+    if sdl_errors := validate_sdl(document):
+        raise GraphQLGenerationError([
+            _schema_error(schema_path, error) for error in sdl_errors
+        ])
+    schema = graphql.build_ast_schema(document, assume_valid_sdl=True)
+    if schema_errors := graphql.validate_schema(schema):
+        raise GraphQLGenerationError([
+            _schema_error(schema_path, error) for error in schema_errors
+        ])
+    return document, schema
+
+
+def _schema_error(schema_path: Path, error: graphql.GraphQLError) -> str:
+    match error.locations:
+        case None | []:
+            place = str(schema_path)
+        case locations:
+            place = ", ".join(
+                f"{schema_path}:{location.line}:{location.column}"
+                for location in locations
+            )
+    return f"Invalid schema at {place}: {error.message}"
+
+
 def parse_gql_queries(
     schema_path: Path,
     statements: list[Statement],
@@ -735,8 +814,7 @@ def parse_gql_queries(
     bind_keyword_checks: Sequence[BindKeywordCheck],
     debug_path: Path | None = None,
 ) -> ParseResult:
-    schema_document = graphql.parse(schema_path.read_text(encoding="utf-8"))
-    schema = graphql.build_ast_schema(schema_document)
+    schema_document, schema = load_schema(schema_path)
     schema = extend_schema_with_slot(schema)
 
     docs = parse_documents(statements)

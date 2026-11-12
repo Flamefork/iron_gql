@@ -286,6 +286,19 @@ async def subscription_server(
                 yield base_url, None
 
 
+# The public generator over a bare tree of `api_gql` calls, for the scan's
+# rejections: the scan runs before the schema is read, so the tree needs none.
+def render_tree(root: Path) -> RenderedModule:
+    return render_gql_module(
+        mode="async",
+        schema_path=root / "schema.graphql",
+        src_path=root,
+        module_full_name="api",
+        base_url_import="app.settings:URL",
+        subscription_protocol="graphql-sse",
+    )
+
+
 def write_text(path: Path, content: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(textwrap.dedent(content).lstrip("\n"), encoding="utf-8")

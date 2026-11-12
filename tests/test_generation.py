@@ -741,7 +741,9 @@ def test_invalid_gql_call_arguments(test_project: ProjectBuilder):
         """,
     )
 
-    with pytest.raises(TypeError, match="expected a single string literal"):
+    with pytest.raises(
+        GraphQLGenerationError, match="expected a single string literal"
+    ):
         test_project.generate()
 
 
@@ -1067,8 +1069,11 @@ def test_unparseable_file_stops_generation_before_the_package_is_rewritten(
     broken = test_project.root / "sample_app" / "broken.py"
     broken.write_text("api_gql(\ndef foo(\n", encoding="utf-8")
 
-    with pytest.raises(SyntaxError, match=r"Failed to parse .*broken\.py"):
+    with pytest.raises(
+        GraphQLGenerationError, match=r"Failed to parse .*broken\.py: .* \(line 2\)"
+    ) as exc:
         test_project.generate()
+    assert isinstance(exc.value.__cause__, SyntaxError)
     assert (test_project.root / "sample_app/gql/api.py").read_text() == before
 
 

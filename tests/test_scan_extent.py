@@ -3,10 +3,12 @@ from pathlib import Path
 
 import pytest
 
+from iron_gql.codegen import GraphQLGenerationError
 from iron_gql.codegen import render_gql_module
 from iron_gql.codegen.discovery import DiscoveredModule
 from iron_gql.codegen.discovery import discover_module
 from tests.conftest import ProjectBuilder
+from tests.conftest import render_tree
 from tests.conftest import write_text
 
 
@@ -76,8 +78,8 @@ def test_the_same_third_party_bind_outside_a_hidden_directory_is_diagnosed(
         tmp_path, "app/mod.py", 'tmpl = api_gql("query Q { f @slot { __typename } }")\n'
     )
     _write(tmp_path, "vendor/widgets.py", "tmpl.bind(f=(frag,))\n")
-    with pytest.raises(TypeError, match="assigns a gql statement"):
-        _discover(tmp_path)
+    with pytest.raises(GraphQLGenerationError, match="assigns a gql statement"):
+        render_tree(tmp_path)
 
 
 def test_a_statement_inside_a_virtual_environment_is_not_collected(tmp_path: Path):

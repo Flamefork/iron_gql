@@ -11,6 +11,7 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Literal
 
+from iron_gql.codegen.ir import GraphQLGenerationError
 from iron_gql.slots import CombinationKey
 
 
@@ -362,7 +363,7 @@ def _gql_statement(
             f"at {relative_path}:{call.lineno}, "
             "expected a single string literal"
         )
-        raise TypeError(msg)
+        raise GraphQLGenerationError([msg])
     return Statement(
         raw_text=call.args[0].value, file=relative_path, lineno=call.lineno
     )
@@ -407,6 +408,14 @@ def _unresolved_reason(name: str, location: str, mod: "_Module") -> str:
 type _Seen = set[tuple[str, str]]
 
 
+# The parse error is kept with its message: a resolution that reaches the
+# module later raises with it as the cause.
+@dataclass(kw_only=True, frozen=True)
+class _ParseFailure:
+    message: str
+    error: SyntaxError
+
+
 @dataclass(kw_only=True, frozen=True)
 class _ModuleGraph:
     # The scanned tree's name-resolution graph. A name that does not resolve
@@ -424,7 +433,7 @@ class _ModuleGraph:
     # resolution chain, and a resolution that reaches one cannot be answered
     # -- reporting it as "not ours" would drop a binding such a file may well
     # be re-exporting.
-    unparsable: dict[str, str]
+    unparsable: dict[str, _ParseFailure]
     # Every name any scope of any scanned module assigns a gql statement to,
     # and the statements assigned to it. The graph answers "what does this name
     # resolve to *here*"; this answers "does the tree have such a statement at
@@ -669,9 +678,9 @@ class _ModuleGraph:
                 if failure is not None:
                     msg = (
                         f"cannot resolve '{reported}' at {location}: it leads "
-                        f"through a module that failed to parse. {failure}"
+                        f"through a module that failed to parse. {failure.message}"
                     )
-                    raise SyntaxError(msg)
+                    raise GraphQLGenerationError([msg]) from failure.error
                 return _NotOurs(
                     reason=(
                         f"cannot resolve '{reported}' at {location}: "
@@ -1320,7 +1329,7 @@ def _slot_statement(
                 case Statement():
                     return resolution
                 case _NotOurs(reason=reason) | _AmbiguousName(reason=reason):
-                    raise TypeError(reason)
+                    raise GraphQLGenerationError([reason])
         case ast.Call(func=ast.Attribute(attr="with_args", value=base)):
             # A factory applied at the bind: `with_args`'s own arguments are
             # runtime values discovery has no business reading, so this
@@ -1357,7 +1366,7 @@ def _slot_statement(
                 f"{gql_fn_name}(...) statement, a `.with_args(...)` "
                 "application of either, or a tuple of those"
             )
-            raise TypeError(msg)
+            raise GraphQLGenerationError([msg])
 
 
 def _slot_statements(
@@ -1406,7 +1415,7 @@ def _reject_nonempty_list(
         "overload written for it would accept its sub-lists too and promise "
         "fragments the binding they reach never bound"
     )
-    raise TypeError(msg)
+    raise GraphQLGenerationError([msg])
 
 
 def _reject_repeated_fragment(
@@ -1427,7 +1436,7 @@ def _reject_repeated_fragment(
                 f"{first.location} to slot '{keyword}' more than once; a slot "
                 "spreads each of its fragments once"
             )
-            raise TypeError(msg)
+            raise GraphQLGenerationError([msg])
         seen[statement.hash_str] = statement
 
 
@@ -1435,13 +1444,13 @@ def _bind_keyword_names(candidate: _BindCandidate) -> tuple[str, ...]:
     call = candidate.call
     if call.args:
         msg = f"'.bind(...)' at {candidate.location} accepts only keyword arguments"
-        raise TypeError(msg)
+        raise GraphQLGenerationError([msg])
     names: list[str] = []
     seen_slots: set[str] = set()
     for kw in call.keywords:
         if kw.arg is None:
             msg = f"'.bind(...)' at {candidate.location} accepts only keyword arguments"
-            raise TypeError(msg)
+            raise GraphQLGenerationError([msg])
         # `ast.parse` alone does not reject a repeated keyword the way
         # `compile()` would (that check lives in the compiler, not the
         # parser) — caught here, loudly, while the AST still has both
@@ -1452,7 +1461,7 @@ def _bind_keyword_names(candidate: _BindCandidate) -> tuple[str, ...]:
                 f"'{kw.arg}'; pass every fragment for one slot in a single "
                 "keyword (a name or a tuple of names)"
             )
-            raise TypeError(msg)
+            raise GraphQLGenerationError([msg])
         seen_slots.add(kw.arg)
         names.append(kw.arg)
     return tuple(names)
@@ -1517,7 +1526,7 @@ def _unreachable_here(
         "(`from module import name`) into the scope the bind is written in, or "
         "rename whichever of the two is not the template."
     )
-    raise TypeError(msg)
+    raise GraphQLGenerationError([msg])
 
 
 def _resolve_base(
@@ -1575,7 +1584,7 @@ def _resolve_base(
                     "directly (`from module import name`) instead of "
                     "`import module`"
                 )
-                raise TypeError(msg)
+                raise GraphQLGenerationError([msg])
             case _NotOurs() as not_ours:
                 return _unreachable_here(graph, candidate, base_name, not_ours)
     resolution = graph.resolve(
@@ -1592,7 +1601,7 @@ def _resolve_base(
             # A name some gql statement assigns, assigned again: ours enough to
             # diagnose. Reading it as "not ours" is what would make extracting a
             # template into a variable drop the binding without a word.
-            raise TypeError(reason)
+            raise GraphQLGenerationError([reason])
         case _NotOurs() as not_ours:
             # The base names nothing the tree assigns a statement to, so this
             # `.bind()` is a third-party call to leave untouched. The reason
@@ -1819,7 +1828,7 @@ def discover_module(
     # of its own) still has to be scanned for its imports so a bind chain can
     # be followed through it.
     modules: dict[str, _Module] = {}
-    unparsable: dict[str, str] = {}
+    unparsable: dict[str, _ParseFailure] = {}
     # The finished walks, kept whole rather than unpacked into a list per field
     # they carry: what each of the four is used for is decided below, once, and
     # in terms of all the scans at a time.
@@ -1850,12 +1859,12 @@ def discover_module(
                 # a comment is caught too -- one false abort on a file that is
                 # already broken, against a whole module regenerated without
                 # the statements a real one holds.
-                raise SyntaxError(msg) from exc
+                raise GraphQLGenerationError([msg]) from exc
             # Names neither, so it owns nothing the module could lose. It is
             # still recorded rather than forgotten: a pure re-export module is
             # a link in a resolution chain even when it mentions no gql call,
             # and `_resolve_module` raises if some chain actually reaches it.
-            unparsable[module] = msg
+            unparsable[module] = _ParseFailure(message=msg, error=exc)
             continue
 
         scan = _ModuleScan(

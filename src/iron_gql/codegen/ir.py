@@ -10,10 +10,13 @@ from iron_gql.slots import CombinationKey
 type StrTransform = Callable[[str], str]
 
 
-# A ValueError so call sites that predate the aggregated error keep working;
-# every diagnosed rejection of the GraphQL input flows through this one type
-# (malformed api_gql call sites are rejected earlier, as TypeError, before any
-# GraphQL is read).
+# A ValueError so call sites that predate the aggregated error keep working.
+# Every diagnosed rejection of the generator's input flows through this one
+# type, whatever stage finds it: the schema file and the schema, the
+# statements, the scanned sources and the gql and bind calls in them. The
+# exception a rejection comes from, if any, is its __cause__; operational
+# failures -- reading a file for any reason but a missing schema, writing the
+# result -- keep their own types.
 class GraphQLGenerationError(ValueError):
     def __init__(self, errors: list[str]) -> None:
         self.errors = errors
