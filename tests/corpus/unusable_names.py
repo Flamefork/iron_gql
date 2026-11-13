@@ -1,11 +1,12 @@
 """Module-level names that are not usable Python identifiers, by origin.
 
 Such a name reaches the generated module unchanged from one of two origins: a
-generator option (the gql function named after `module_full_name`, the names
-the configured imports bind) or a GraphQL type (a model or an enum keeps the
-type's name). Operation, template and fragment classes are capitalized and
-suffixed on the way, so a keyword spelled there still yields an identifier and
-has no case here.
+generator option (the gql function named after `module_full_name`) or a
+GraphQL type (a model or an enum keeps the type's name). The names the
+configured imports bind never get here: a malformed import option is rejected
+before (`import_options.py`). Operation, template and fragment classes are
+capitalized and suffixed on the way, so a keyword spelled there still yields an
+identifier and has no case here.
 
 An id names the origin and, for an option, which one; for a type, its kind and
 how the name fails -- a hyphen or a leading digit, or a Python keyword.
@@ -46,38 +47,6 @@ UNUSABLE_NAMES: tuple[UnusableName, ...] = (
         options={"module_full_name": "sample_app.gql.my-api"},
         name="my-api_gql",
         origin="the generated gql function",
-    ),
-    UnusableName(
-        id="origin=option/option=base_url_import/fails=keyword",
-        schema=PING_SCHEMA,
-        statement=PING_STATEMENT,
-        options={"base_url_import": "sample_app.settings:class"},
-        name="class",
-        origin="from sample_app.settings import class",
-    ),
-    UnusableName(
-        id="origin=option/option=to_camel_fn_full_name/fails=hyphen",
-        schema=PING_SCHEMA,
-        statement=PING_STATEMENT,
-        options={"to_camel_fn_full_name": "my-case:to_camel"},
-        name="my-case",
-        origin="import my-case",
-    ),
-    UnusableName(
-        id="origin=option/option=model_base_import/fails=keyword",
-        schema=PING_SCHEMA,
-        statement=PING_STATEMENT,
-        options={"model_base_import": "None:BaseModel"},
-        name="None",
-        origin="import None",
-    ),
-    UnusableName(
-        id="origin=option/option=scalars/fails=leading-digit",
-        schema="scalar Stamp\ntype Query { ping: Stamp }",
-        statement=PING_STATEMENT,
-        options={"scalars": {"Stamp": "1time:Stamp"}},
-        name="1time",
-        origin="import 1time",
     ),
     UnusableName(
         id="origin=type/kind=object/fails=keyword",

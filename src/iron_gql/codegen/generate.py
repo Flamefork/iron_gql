@@ -10,7 +10,7 @@ from iron_gql.codegen.collect import collect_module_ir
 from iron_gql.codegen.collect import parametrize_slot_paths
 from iron_gql.codegen.discovery import discover_module
 from iron_gql.codegen.ir import GraphQLGenerationError
-from iron_gql.codegen.ir import ImportRef
+from iron_gql.codegen.ir import ImportOptions
 from iron_gql.codegen.ir import StrTransform
 from iron_gql.codegen.naming import apply_rename
 from iron_gql.codegen.naming import validate_class_scopes
@@ -76,8 +76,8 @@ def _diff_lines(text: str) -> list[str]:
 # discovered under src_path: a module at module_full_name with Pydantic models
 # and typed operation classes. Nothing is written but the debug_path dump;
 # write() puts the module in place and diff() compares it with the file. Any
-# diagnosed rejection of the input -- schema, statements, scanned sources and
-# their calls -- raises GraphQLGenerationError.
+# diagnosed rejection of the input -- the import options, schema, statements,
+# scanned sources and their calls -- raises GraphQLGenerationError.
 def render_gql_module(  # noqa: PLR0913 -- keyword-only options of the entry point
     *,
     mode: GenerationMode,
@@ -99,10 +99,12 @@ def render_gql_module(  # noqa: PLR0913 -- keyword-only options of the entry poi
     gql_fn_name = f"{module_name}_gql"
 
     target_module_path = src_path / f"{module_full_name.replace('.', '/')}.py"
-    base_url_ref = ImportRef.parse(base_url_import)
-    scalar_refs = {name: ImportRef.parse(ref) for name, ref in scalars.items()}
-    to_camel_ref = ImportRef.parse(to_camel_fn_full_name)
-    model_base_ref = ImportRef.parse(model_base_import)
+    imports = ImportOptions.parse(
+        base_url_import=base_url_import,
+        to_camel_fn_full_name=to_camel_fn_full_name,
+        model_base_import=model_base_import,
+        scalars=scalars,
+    )
 
     discovered = discover_module(src_path, gql_fn_name, skip_path=target_module_path)
 
@@ -127,10 +129,10 @@ def render_gql_module(  # noqa: PLR0913 -- keyword-only options of the entry poi
 
     scaffold = scaffold_claims(
         gql_fn_name=gql_fn_name,
-        base_url_ref=base_url_ref,
-        scalars=scalar_refs,
-        to_camel_ref=to_camel_ref,
-        model_base_ref=model_base_ref,
+        base_url_ref=imports.base_url,
+        scalars=imports.scalars,
+        to_camel_ref=imports.to_camel,
+        model_base_ref=imports.model_base,
     )
     collected = apply_rename(
         collect_module_ir(
@@ -141,7 +143,7 @@ def render_gql_module(  # noqa: PLR0913 -- keyword-only options of the entry poi
             binds=discovered.binds,
             bind_keyword_checks=discovered.bind_keyword_checks,
             discovered_texts=tuple(stmt.raw_text for stmt in discovered.statements),
-            scalars=scalar_refs,
+            scalars=imports.scalars,
             to_snake_fn=to_snake_fn,
         ),
         frozenset(scaffold),
@@ -172,12 +174,12 @@ def render_gql_module(  # noqa: PLR0913 -- keyword-only options of the entry poi
 
     new_content = render_module(
         mode=mode,
-        base_url_ref=base_url_ref,
+        base_url_ref=imports.base_url,
         subscription_protocol=subscription_protocol,
         gql_fn_name=gql_fn_name,
         collected=collected,
-        scalars=scalar_refs,
-        to_camel_ref=to_camel_ref,
-        model_base_ref=model_base_ref,
+        scalars=imports.scalars,
+        to_camel_ref=imports.to_camel,
+        model_base_ref=imports.model_base,
     )
     return RenderedModule(target_module_path, new_content + "\n")

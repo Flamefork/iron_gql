@@ -5,6 +5,9 @@ import pytest
 
 from iron_gql.codegen import GraphQLGenerationError
 from tests.conftest import ProjectBuilder
+from tests.corpus.import_options import MALFORMED_IMPORT_OPTIONS
+from tests.corpus.import_options import NO_COLON
+from tests.corpus.import_options import MalformedImportOption
 from tests.corpus.rejected_inputs import INVALID_STATEMENTS
 from tests.corpus.rejected_inputs import REJECTED_SCHEMAS
 from tests.corpus.rejected_inputs import REJECTED_STATEMENTS
@@ -407,3 +410,60 @@ statement = api_gql('''{case.text}''')
     with pytest.raises(GraphQLGenerationError) as exc:
         test_project.generate()
     assert exc.value.errors == [expected]
+
+
+def _import_option_error(option: str, value: str, problem: str) -> str:
+    hint = "write it as 'package.module:attribute'"
+    return f"Generator option {option} {value!r} {problem}; {hint}"
+
+
+@pytest.mark.parametrize(
+    "case", MALFORMED_IMPORT_OPTIONS, ids=[case.id for case in MALFORMED_IMPORT_OPTIONS]
+)
+def test_malformed_import_option_is_rejected_naming_the_option(
+    test_project: ProjectBuilder, case: MalformedImportOption
+):
+    test_project.prepare(schema="type Query { ping: String }", queries=PING_QUERY)
+
+    with pytest.raises(GraphQLGenerationError) as exc:
+        test_project.render(**case.options)
+    assert exc.value.errors == [
+        _import_option_error(case.option, case.value, case.problem)
+    ]
+
+
+def test_every_malformed_import_option_comes_in_one_error(
+    test_project: ProjectBuilder,
+):
+    test_project.prepare(schema="type Query { ping: String }", queries=PING_QUERY)
+
+    with pytest.raises(GraphQLGenerationError) as exc:
+        test_project.render(
+            to_camel_fn_full_name="to_camel",
+            scalars={"ID": "builtins:str", "Stamp": "my-time:Stamp"},
+        )
+    assert exc.value.errors == [
+        _import_option_error("to_camel_fn_full_name", "to_camel", NO_COLON),
+        _import_option_error(
+            "scalars['Stamp']",
+            "my-time:Stamp",
+            "names module 'my-time', which is not a dotted Python name",
+        ),
+    ]
+
+
+# Rejected before the sources are scanned: a source that would fail the scan
+# does not hide the option.
+def test_malformed_import_option_is_reported_before_the_sources(
+    test_project: ProjectBuilder,
+):
+    test_project.prepare(
+        schema="type Query { ping: String }",
+        queries="from sample_app.gql.api import api_gql\nq = api_gql(1abc)\n",
+    )
+
+    with pytest.raises(GraphQLGenerationError) as exc:
+        test_project.render(model_base_import="BaseModel")
+    assert exc.value.errors == [
+        _import_option_error("model_base_import", "BaseModel", NO_COLON)
+    ]

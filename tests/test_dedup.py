@@ -33,7 +33,7 @@ def _build_ir(
             binds=[],
             bind_keyword_checks=(),
             discovered_texts=(),
-            scalars={"ID": ImportRef.parse("builtins:str")},
+            scalars={"ID": ImportRef(module="builtins", symbol="str")},
             to_snake_fn=alias_generators.to_snake,
         ),
         frozenset(),

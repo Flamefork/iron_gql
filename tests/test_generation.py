@@ -2,6 +2,7 @@ import importlib
 import json
 import keyword
 import os
+from typing import Protocol
 from typing import cast
 
 import pydantic
@@ -16,12 +17,16 @@ from iron_gql.codegen import GraphQLGenerationError
 from iron_gql.codegen import UnknownGQLTypeWarning
 from iron_gql.codegen import render_gql_module
 from tests.conftest import ProjectBuilder
+from tests.conftest import build_schema
 from tests.conftest import generated_package
 from tests.conftest import gql_server
+from tests.conftest import setup_httpserver
 from tests.corpus import module_imports
 from tests.corpus.generated_oracles import assert_builtins_read_are_claimed
 from tests.corpus.generated_oracles import assert_each_module_imported_once
 from tests.corpus.generated_oracles import assert_module_is_self_contained
+from tests.corpus.import_options import ACCEPTED_IMPORT_OPTIONS
+from tests.corpus.import_options import AcceptedImportOption
 from tests.corpus.module_imports import IMPORT_FORMS
 from tests.corpus.module_imports import ImportForm
 from tests.corpus.unusable_names import UNUSABLE_NAMES
@@ -1525,3 +1530,50 @@ def test_the_builtin_oracle_catches_what_it_guards(
     module = importlib.import_module("sample_app.probe")
     with pytest.raises(AssertionError, match=problem):
         assert_builtins_read_are_claimed(module)
+
+
+class _Operation(Protocol):
+    async def execute(self) -> pydantic.BaseModel: ...
+
+
+# The interpreter is the oracle: the module imports, reads every import option
+# and sends the request to the URL the base URL option names.
+@pytest.mark.parametrize(
+    "case", ACCEPTED_IMPORT_OPTIONS, ids=[case.id for case in ACCEPTED_IMPORT_OPTIONS]
+)
+async def test_accepted_import_option_yields_a_working_module(
+    test_project: ProjectBuilder, httpserver: HTTPServer, case: AcceptedImportOption
+):
+    schema = "type Query { ping: String, id: ID }"
+    base_url = setup_httpserver(
+        httpserver,
+        build_schema(
+            schema, {"Query": {"ping": lambda *_: "pong", "id": lambda *_: "1"}}
+        ),
+    )
+    test_project.prepare(
+        schema=schema,
+        queries=(
+            "from sample_app.gql.api import api_gql\n"
+            "ping = api_gql('query Ping { ping id }')\n"
+        ),
+    )
+    test_project.write_file(
+        test_project.root / "sample_app/settings.py",
+        f"GRAPHQL_URL = {base_url!r}\n\n\nclass CONFIG:\n    url = GRAPHQL_URL\n",
+    )
+    test_project.write_file(
+        test_project.root / "sample_app/type.py",
+        "from pydantic.alias_generators import to_camel\n",
+    )
+
+    test_project.generate(**case.options)
+    api_module = test_project.import_api()
+    ping = cast(
+        "_Operation", vars(importlib.import_module("sample_app.queries"))["ping"]
+    )
+    try:
+        result = await ping.execute()
+        assert result.model_dump() == {"ping": "pong", "id": "1"}
+    finally:
+        await cast("runtime.AsyncGQLClient", vars(api_module)["_client"]).close()

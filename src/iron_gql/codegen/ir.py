@@ -1,7 +1,9 @@
 import dataclasses
+import keyword
 from collections.abc import Callable
 from collections.abc import Iterable
 from collections.abc import Iterator
+from collections.abc import Mapping
 from dataclasses import dataclass
 
 from iron_gql.codegen.util import capitalize_first
@@ -40,11 +42,6 @@ class ImportRef:
     module: str
     symbol: str
 
-    @classmethod
-    def parse(cls, raw: str) -> "ImportRef":
-        module, symbol = raw.split(":", maxsplit=1)
-        return cls(module=module, symbol=symbol)
-
     @property
     def dotted_path(self) -> str:
         return f"{self.module}.{self.symbol}"
@@ -61,6 +58,73 @@ class ImportRef:
 
     def import_statement(self) -> str:
         return f"from {self.module} import {self.root_symbol}"
+
+
+# Whether `name` can follow `import` or `from ... import`, or be read as an
+# attribute path, where the generated module writes it.
+def _is_dotted_name(name: str) -> bool:
+    return all(
+        part.isidentifier() and not keyword.iskeyword(part) for part in name.split(".")
+    )
+
+
+# The generator's options that name an import, `module:name`. Parsed together,
+# before anything reads them, so every malformed one is reported at once: it
+# would otherwise surface as a module that does not parse, or as a diagnosis
+# about a name it imports that does not say which option it is.
+@dataclass(kw_only=True, frozen=True)
+class ImportOptions:
+    base_url: ImportRef
+    to_camel: ImportRef
+    model_base: ImportRef
+    scalars: dict[str, ImportRef]
+
+    @classmethod
+    def parse(
+        cls,
+        *,
+        base_url_import: str,
+        to_camel_fn_full_name: str,
+        model_base_import: str,
+        scalars: Mapping[str, str],
+    ) -> "ImportOptions":
+        # Keyed by the option as the caller wrote it, which the diagnosis names.
+        scalar_options = {name: f"scalars[{name!r}]" for name in scalars}
+        refs = _parse_import_refs({
+            "base_url_import": base_url_import,
+            "to_camel_fn_full_name": to_camel_fn_full_name,
+            "model_base_import": model_base_import,
+            **{scalar_options[name]: raw for name, raw in scalars.items()},
+        })
+        return cls(
+            base_url=refs["base_url_import"],
+            to_camel=refs["to_camel_fn_full_name"],
+            model_base=refs["model_base_import"],
+            scalars={name: refs[option] for name, option in scalar_options.items()},
+        )
+
+
+def _parse_import_refs(options: Mapping[str, str]) -> dict[str, ImportRef]:
+    refs: dict[str, ImportRef] = {}
+    errors: list[str] = []
+    for option, raw in options.items():
+        match raw.split(":"):
+            case [module, _] if not _is_dotted_name(module):
+                problem = f"names module {module!r}, which is not a dotted Python name"
+            case [_, symbol] if not _is_dotted_name(symbol):
+                problem = f"names {symbol!r}, which is not a dotted Python name"
+            case [module, symbol]:
+                refs[option] = ImportRef(module=module, symbol=symbol)
+                continue
+            case [_]:
+                problem = "has no ':' between the module and the name"
+            case _:
+                problem = "has more than one ':'"
+        hint = "write it as 'package.module:attribute'"
+        errors.append(f"Generator option {option} {raw!r} {problem}; {hint}")
+    if errors:
+        raise GraphQLGenerationError(errors)
+    return refs
 
 
 def field_name_to_pascal(name: str) -> str:

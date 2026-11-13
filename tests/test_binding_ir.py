@@ -88,7 +88,7 @@ fragment ImageUrl on ImageAttachment {
 
 PLAIN_OPERATION_TEXT = 'query Plain { post(id: "1") { id } }'
 
-SCALARS = {"ID": ImportRef.parse("builtins:str")}
+SCALARS = {"ID": ImportRef(module="builtins", symbol="str")}
 
 # A schema where the only path to an input object type is a bound fragment's
 # own (synthesized) variable -- no query in the module declares one itself.

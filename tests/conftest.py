@@ -523,7 +523,11 @@ class ProjectBuilder:
             schema_path=self.root / "schema.graphql",
             src_path=self.root,
             module_full_name=module_full_name or self.gql_module,
-            base_url_import=base_url_import or f"{self.package}.settings:GRAPHQL_URL",
+            base_url_import=(
+                f"{self.package}.settings:GRAPHQL_URL"
+                if base_url_import is None
+                else base_url_import
+            ),
             subscription_protocol=subscription_protocol,
             scalars=dict(scalars),
             to_camel_fn_full_name=to_camel_fn_full_name,

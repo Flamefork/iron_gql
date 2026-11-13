@@ -72,6 +72,8 @@ pip install iron-gql[testing]   # + uvicorn for the loopback test server
 
    `src_path` is the import root: the generator derives a module's name from the file's path relative to it, so the root must be what the project's absolute imports are written relative to (`Path(".")` for a flat layout, `Path("src")` for a src layout). Below this root the scan does not descend into a hidden directory (its name starts with a dot) or into the root of a virtual environment (a directory containing `pyvenv.cfg`). Everything else is walked whatever it is called: statements are collected even from a directory whose name cannot be part of a module name — a script is run, not imported.
 
+   `base_url_import`, `to_camel_fn_full_name`, `model_base_import` and each value of `scalars` name an import as `module:name`, where the module and the name are dotted Python names: `myapp.config:SETTINGS.graphql_url` reads an attribute of an imported object. A value of another form — no `:` or a second one, an empty part, a keyword, surrounding whitespace — fails generation with a `GraphQLGenerationError` that names the option, before any source is scanned.
+
    This writes `myapp/gql/client.py`. The module contains:
    - a client singleton for the chosen mode,
    - Pydantic result and input models,
@@ -582,7 +584,7 @@ Control flow stays in your fake, so state lives in ordinary Python around these 
 A `graphql-sse` fake needs no helper: it answers the `POST` with `content-type: text/event-stream` and writes the events, for example `event: next\ndata: {"data": {...}}\n\n`, then `event: complete\ndata: \n\n`.
 
 ## Validation and Troubleshooting
-- Every input the generator rejects raises `GraphQLGenerationError`, a `ValueError` whose `errors` holds one diagnosis per problem: a malformed gql function or `.bind()` call, a source file that does not parse, a missing schema file, a schema that does not parse or that graphql-core finds invalid, and a statement that does not parse or validate.
+- Every input the generator rejects raises `GraphQLGenerationError`, a `ValueError` whose `errors` holds one diagnosis per problem: a malformed import option (`module:name`), a malformed gql function or `.bind()` call, a source file that does not parse, a missing schema file, a schema that does not parse or that graphql-core finds invalid, and a statement that does not parse or validate.
 - A diagnosis names its place: the file and the line of the statement or call, or the schema file with the line and column. A statement's syntax error also gives the line and column inside the statement, counted after its common indentation and its leading and trailing whitespace are removed.
 - A rejection caused by another exception keeps it as `__cause__`: the `SyntaxError` of a source file, including one a bind resolves through, the `GraphQLSyntaxError` of the schema or of a statement, and the `FileNotFoundError` of a missing schema file. Syntax errors of several statements come together in one error, its cause an `ExceptionGroup` of them, and are reported before anything else about the statements: a statement that does not parse would turn every use of its fragments into an error of its own.
 - Other failures keep their own type: a file that cannot be read for another reason, such as permissions or an encoding that is not UTF-8, and writing the generated module. Around generation, `except TypeError`, `except SyntaxError`, `except GraphQLSyntaxError` and `except FileNotFoundError` no longer catch a rejected input; `except ValueError` still does.
