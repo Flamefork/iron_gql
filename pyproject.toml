@@ -141,9 +141,10 @@ timeout_method = "thread"
 [tool.mutmut]
 # mutmut runs the suite inside a copy of the project and copies only the
 # source and `tests/` by default. The README is read by the snippet typecheck,
-# and `example/` is in `testpaths`: without them the copy fails its first test
-# run, or silently kills mutants with a smaller suite than `pytest` runs.
-also_copy = ["README.md", "example/"]
+# the `justfile` by the recipe tests in `tests/test_mutation_report.py`, and
+# `example/` is in `testpaths`: without them the copy fails its first test run,
+# or silently kills mutants with a smaller suite than `pytest` runs.
+also_copy = ["README.md", "justfile", "example/"]
 # The coverage exemption of `exclude_also` below, applied to mutation: a
 # `raise AssertionError` marks an invariant unreachable by construction, so no
 # test can reach its mutants, and leaving them out keeps that noise out of the

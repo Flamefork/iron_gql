@@ -45,11 +45,16 @@ release version:
 #
 # mutmut stops on Ctrl-C and exits 0 over what it ran so far, which would leave
 # a partial run to be reported as a whole one; the trap ends the recipe there.
+#
+# `no_proxy` skips the system proxy lookup an HTTP client makes: on macOS that
+# lookup crashes a process forked the way mutmut forks each mutant, and every
+# mutant whose tests build a client would read as segfaulted. Only the mutation
+# recipes set it, so the plain test run keeps the environment it is given.
 mutants:
     #!/usr/bin/env bash
     set -euo pipefail
     trap 'echo "mutation run interrupted: incomplete, not reported" >&2; exit 130' INT
-    uv run mutmut run
+    no_proxy='*' NO_PROXY='*' uv run mutmut run
     just _report-unkilled-mutants
 
 # The same, scoped to the files a branch changed: minutes rather than hours.
@@ -62,7 +67,7 @@ mutants:
 # as the dotted module, `src.` stripped, then the mangled function). An empty
 # list means "every mutant" to mutmut, so a diff that touches no source file
 # has to stop here rather than start a full run under a recipe that promises
-# a scoped one.
+# a scoped one. `no_proxy` for the reason given at `mutants`.
 mutants-diff:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -73,7 +78,7 @@ mutants-diff:
         exit 0
     fi
     echo "mutating: $names"
-    uv run mutmut run $names
+    no_proxy='*' NO_PROXY='*' uv run mutmut run $names
     just _report-unkilled-mutants $names
 
 # The report, read from `mutmut results` by `tests/mutation_report.py`. An
