@@ -1402,13 +1402,9 @@ def _slot_statement(
                 base, candidate, graph, keyword=keyword, gql_fn_name=gql_fn_name
             )
         case ast.NamedExpr(value=inner):
-            # `attachment=(applied := frag.with_args(...))`: a caller who also
-            # needs the applied fragment for `read` (a plain assignment
-            # statement resolves no further than `with_args`'s own return
-            # value does, and the statement it names is the same either way)
-            # captures it inline rather than losing the one instance `read`
-            # has to match by identity. Resolved the same way its value would
-            # be on its own -- the walrus's own target plays no part.
+            # `attachment=(applied := frag.with_args(...))` captures the
+            # fragment application where it is bound. Resolved the same way its
+            # value would be on its own -- the walrus's own target plays no part.
             return _slot_statement(
                 inner, candidate, graph, keyword=keyword, gql_fn_name=gql_fn_name
             )

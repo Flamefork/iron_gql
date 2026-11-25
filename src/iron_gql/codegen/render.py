@@ -930,7 +930,7 @@ def _slot_reader_spec_expr(readable: CollectedReadableFragment) -> str:
 
 
 def _bound_spec_readers_expr(binding: CollectedBinding) -> str:
-    # The full readable set is wider than `direct_fragments`: a fragment reached
+    # The offered fragments are more than `direct_fragments`: a fragment reached
     # through a root-level spread of another fragment is also passed to
     # `validate_slot__` for independent reading and boundary validation. Each
     # reader keeps the typenames on which it is reachable. The key is the slot's
@@ -1191,7 +1191,7 @@ def _literal_tuple_forms(bindings: list[CollectedBinding]) -> SlotTupleFills:
     # Keyed by the template too, not the slot keyword alone: two templates
     # routinely share a python name for their own slot (the same field name
     # on two different root types, say), and their slots' types -- and so
-    # their readable sets -- have nothing to do with each other. A slot-only
+    # their offered fragments -- have nothing to do with each other. A slot-only
     # key let one template's tuple form become an overload on a template whose
     # binding specs never held that combination, a phantom wider than the
     # runtime it describes; `template.name`, not `class_name`, because that
@@ -1443,7 +1443,7 @@ def applied_init_body_fixed_names() -> tuple[tuple[str, str], ...]:
 def with_args_body_free_names(
     fragment: CollectedFactoryFragment,
 ) -> tuple[tuple[str, str], ...]:
-    return ((fragment.applied_class_name, "the applied fragment class"),)
+    return ((fragment.applied_class_name, "the fragment application class"),)
 
 
 def method_body_fixed_names() -> frozenset[str]:

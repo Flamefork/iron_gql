@@ -1656,7 +1656,10 @@ CLAIMED_TEMPLATE_EXECUTE_NAMES = (
 
 CLAIMED_WITH_ARGS_NAMES = (
     ("self", "the method receiver"),
-    (applied_fragment_class_name("ImagePartsFragment"), "the applied fragment class"),
+    (
+        applied_fragment_class_name("ImagePartsFragment"),
+        "the fragment application class",
+    ),
 )
 
 
@@ -1939,7 +1942,7 @@ def test_a_factory_the_template_also_spreads_by_name_is_rejected(
     # generated `with_args(size=...)` would let a caller supply a *second*,
     # independent value for the same GraphQL variable, silently overriding
     # whatever `execute`'s own `size` argument set (`bound__` merges every
-    # applied fragment's `fragment_args__` into the request's `variables`
+    # fragment application's `fragment_args__` into the request's `variables`
     # after the template's own arguments). Before `with_args` moved to the
     # fragment, this combination was fine: `expand_binding` recognized `$size`
     # as already declared by the template and synthesized nothing of its own

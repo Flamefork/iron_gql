@@ -868,10 +868,9 @@ def test_a_with_args_application_resolves_to_its_own_fragment(tmp_path: Path):
     ] == ["fragment F on T { x }"]
 
 
-# `attachment=[(applied := frag.with_args(...))]`: a caller who also needs the
-# applied fragment for `read` later captures it inline rather than losing the
-# one instance `read` has to match by identity. The walrus's own target plays
-# no part in resolution, only the value it captures.
+# `attachment=[(applied := frag.with_args(...))]` captures the fragment application
+# where it is bound. The walrus's own target plays no part in resolution, only the
+# value it captures.
 def test_a_walrus_captured_application_resolves_to_its_own_fragment(tmp_path: Path):
     _write(
         tmp_path,
@@ -888,7 +887,7 @@ def test_a_walrus_captured_application_resolves_to_its_own_fragment(tmp_path: Pa
     ] == ["fragment F on T { x }"]
 
 
-# The tuple form accepts an applied fragment beside a bare one, the same mix
+# The tuple form accepts a fragment application beside a bare one, the same mix
 # `test_named_and_inline_fragments_mix_in_one_slot` proves for a bare name and
 # an inline statement.
 def test_a_with_args_application_mixes_with_a_bare_name_in_a_tuple(tmp_path: Path):

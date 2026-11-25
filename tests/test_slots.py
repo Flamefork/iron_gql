@@ -3,6 +3,7 @@ import json
 import re
 from typing import cast
 
+import graphql
 import pydantic
 import pytest
 from graphql import GraphQLResolveInfo
@@ -1753,6 +1754,31 @@ def test_slots_with_equal_static_selections_are_not_deduplicated():
     ):
         header = f"class {name}[{param} = Never]"
         assert f"{header}(GQLSlotModel[{param}]):" in generated
+
+
+def test_unfilled_slot_still_requests_its_whole_static_selection():
+    # Leaving a slot unfilled drops the fragments, not the field's own
+    # selection: the fields beside `__typename` stay in the operation.
+    sent = graphql.parse(
+        isolation_queries.get_board.bind().exec_source, no_location=True
+    )
+    assert sent == graphql.parse(
+        """
+        query GetBoard($id: ID!) {
+            board(id: $id) {
+                __typename
+                owner { who: fullName }
+                cards { title }
+                activity {
+                    __typename
+                    ... on Comment { body author { who: fullName } }
+                    ... on Move { fromColumn author { id } }
+                }
+            }
+        }
+        """,
+        no_location=True,
+    )
 
 
 def test_slot_is_detected_on_any_node_of_a_merged_response_key():

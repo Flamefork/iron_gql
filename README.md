@@ -240,9 +240,9 @@ get_post_attachment_any = get_post_attachment.bind(
 )
 ```
 
-Slots you do not name in `bind()` stay unfilled: the operation still requests their static `__typename` selection, but no fragment data comes back for them. Omitting a slot and passing it an explicit empty sequence (`attachment=()`, or `attachment=[]`) mean the same thing — an empty one names no fragment, so nothing is written for it that a shorter call could land on. The same fragment can be bound into any number of templates, and a template can have any number of binds.
+Slots you do not name in `bind()` stay unfilled: the operation still requests their whole static selection, but no fragment can read it. Omitting a slot and passing it an explicit empty sequence (`attachment=()`, or `attachment=[]`) mean the same thing — an empty one names no fragment, so nothing is written for it that a shorter call could land on. The same fragment can be bound into any number of templates, and a template can have any number of binds.
 
-A binding **is** its combination: the template and the fragments in each slot. The generator derives empty and single-fragment variants from the schema. It also adds multi-fragment combinations that call sites specify as literals. Each template stores one binding spec for every canonical combination, so duplicate call sites share one spec.
+A binding is an executable instance of a **combination**: the template and the fragments in each slot. The generator derives empty and single-fragment variants from the schema. It also adds multi-fragment combinations that call sites specify as literals. Each template stores one binding spec for every canonical combination, so duplicate call sites share one spec.
 
 The limit of 256 applies to the final canonical set for each template. This set includes schema-derived and literal multi-fragment combinations after deduplication. If the set exceeds the limit, the error reports the total and the schema and literal contributions. Split the template or narrow its slot types.
 
@@ -291,7 +291,7 @@ def title[TData: pydantic.BaseModel, TReads](
 
 A fragment reached through a *narrower* type condition — an interface brick spread inside a per-type fragment — reads back as `None` for the types that condition excludes, exactly like any other type mismatch.
 
-A fragment spread inside a bound fragment's *nested field* behaves differently: its fields arrive under that field, not in the slot payload, so the slot cannot read them directly. The data is available through the enclosing fragment's model (`image_parts.read(node).thumb.alt`); the nested definition is not in the node's offered set, so a direct `read` stays a static type error and raises `ValueError` at runtime.
+A fragment spread only inside a bound fragment's *nested field* behaves differently: its fields arrive under that field, not in the slot payload, so the slot cannot read them directly. The data is available through the enclosing fragment's model (`image_parts.read(node).thumb.alt`); the nested definition is not among the node's offered fragments, so a direct `read` stays a static type error and raises `ValueError` at runtime.
 
 Fragments are isolated from each other — each one reads exactly its own selection, never the fields another caller's fragment selected. The data is not part of the fields of the result model, so `model_dump()` does not include it; re-validating a dump without a fragments context fails immediately.
 

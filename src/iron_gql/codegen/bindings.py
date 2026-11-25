@@ -323,10 +323,10 @@ def fragment_closure(
     fragments: dict[str, graphql.FragmentDefinitionNode],
 ) -> frozenset[str]:
     # What a slot's phantom may promise about this fragment, whichever slot it
-    # is bound into: the intersection of its readable sets over every
-    # compatible slot type. A brick reachable at no typename of some slot is
-    # not offered there at runtime, so promising it statically would turn a
-    # wiring guard (ValueError) into the answer for a legitimate read.
+    # is bound into: the intersection of the fragments offered through it
+    # over every compatible slot type. A brick reachable at no typename of some
+    # slot is not offered there at runtime, so promising it statically would turn
+    # a wiring guard (ValueError) into the answer for a legitimate read.
     own = fragment.name.value
     # The second element of `readable_fragments`'s result -- a `@skip`/
     # `@include` conjunction diagnosis -- is discarded here on purpose: this
@@ -898,16 +898,16 @@ def expand_binding(
         for statement in statements
     }
     # Phase B -- the document closure: the bound statements' own closures,
-    # merged by name. Both the document and the per-slot readable set resolve
-    # names against it -- the document needs the union across every slot in
-    # this bind call, the readable set works per slot key.
+    # merged by name. Both the document and each slot's offered fragments
+    # resolve names against it -- the document needs the union across every slot
+    # in this bind call, the offered fragments work per slot key.
     closure_by_name = {
         definition.name.value: definition
         for statement in direct_by_name.values()
         for definition in (statement.definition, *statement.dependencies)
     }
     closure = tuple(closure_by_name[name] for name in sorted(closure_by_name))
-    # Phase C -- what the resolved closure means. The readable set and the
+    # Phase C -- what the resolved closure means. The offered fragments and the
     # synthesized variables read disjoint parts of it, so their diagnoses are
     # raised together.
     readable_by_response_key, closure_errors = _readable_by_response_key(

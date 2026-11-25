@@ -626,7 +626,7 @@ class CollectedBindingSlot:
     def direct_fragments(self) -> tuple[CollectedFragment, ...]:
         # The exact set of fragments the caller passed into this slot, in
         # GraphQL fragment name order; `()` means an empty slot. The set is
-        # derived from the readable set, because a direct fragment is always
+        # derived from the offered fragments, because a direct fragment is always
         # readable in its slot and a separate tuple would duplicate the same
         # fact.
         #

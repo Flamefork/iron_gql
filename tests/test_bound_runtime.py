@@ -67,7 +67,7 @@ def _application(
 
 
 def test_with_headers_preserves_fragment_args():
-    # `fragment_args` is set once in `bound__` from the applied fragment's
+    # `fragment_args` is set once in `bound__` from the fragment application's
     # values; at the bound level there is no `with_args` that could replace it.
     # `with_headers` copies the object through `_copy`, so `_copy` must carry
     # the values along with `exec_source` and `slot_readers`.
