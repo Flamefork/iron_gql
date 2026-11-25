@@ -14,16 +14,17 @@ classifiers = [
     "Topic :: Software Development :: Libraries",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
 ]
 
 requires-python = ">=3.13"
 dependencies = [
-    "httpx2[ws]>=2.7,<3",
+    "httpx2[ws]>=2.16.2,<3",
     "pydantic>=2.12.3,<3",
 ]
 
 [project.optional-dependencies]
-codegen = ["graphql-core>=3.3.0,<3.4"]
+codegen = ["graphql-core>=3.3.2,<3.4"]
 testing = ["uvicorn>=0.34"]
 
 [project.urls]
@@ -32,14 +33,14 @@ Repository = "https://github.com/Flamefork/iron_gql.git"
 Issues = "https://github.com/Flamefork/iron_gql/issues"
 
 [build-system]
-requires = ["uv_build>=0.9.4,<0.10.0"]
+requires = ["uv_build>=0.13.10,<0.14.0"]
 build-backend = "uv_build"
 
 [dependency-groups]
 dev = [
     "iron-gql[codegen,testing]",
     "basedpyright>=1.31.7",
-    "pytest>=8.4.2",
+    "pytest>=9.0.0",
     "pytest-asyncio>=1.2.0",
     "pytest-cov>=7.0.0",
     "pytest-httpserver>=1.1.3",
@@ -73,40 +74,38 @@ preview = true
 select = ["ALL"]
 ignore = [
     "ANN",
-    "COM812",
+    "missing-trailing-comma",
     "CPY",
     "D",
     "FIX",
-    "G004",
-    "ISC001",
-    "PLC1901",
-    "PLR0911",
-    "PLR0915",
-    "PLR6301",
-    "RUF001",
-    "RUF002",
-    "RUF003",
-    "TC006",
+    "logging-f-string",
+    "single-line-implicit-string-concatenation",
+    "compare-to-empty-string",
+    "too-many-return-statements",
+    "too-many-statements",
+    "no-self-use",
+    "ambiguous-unicode-character-string",
+    "ambiguous-unicode-character-docstring",
+    "ambiguous-unicode-character-comment",
+    "runtime-cast-value",
     "TD",
 ]
 
 [tool.ruff.lint.per-file-ignores]
-# E402: test files generate committed packages at module level before importing them
-"test_*.py" = ["A002", "PLR2004", "S", "FBT", "E402"]
+# module-import-not-at-top-of-file: test files generate committed packages at module level before importing them
+"test_*.py" = ["builtin-argument-shadowing", "magic-value-comparison", "S", "FBT", "module-import-not-at-top-of-file"]
 # The shared basedpyright harness runs `sys.executable -m basedpyright` on a
 # path the tests themselves produced. Listed rule by rule rather than through
 # `test_*.py`'s blanket "S": this is the only subprocess call in conftest.
-"tests/conftest.py" = ["S404", "S603"]
-# T201: the chapters print what they fetched -- that is what a reader runs them for
-"example/*.py" = ["T201"]
+"tests/conftest.py" = ["suspicious-subprocess-import", "subprocess-without-shell-equals-true"]
+# print: the chapters print what they fetched -- that is what a reader runs them for
+"example/*.py" = ["print"]
 # The same reason, for the one test module that is a command rather than a
 # test: `just fuzz-scoping` is run for its report, and the report is its stdout.
-"tests/fuzz_scoping.py" = ["T201"]
+"tests/fuzz_scoping.py" = ["print"]
 # The same for the mutation verdict: the unkilled mutants it lists are the report.
-"tests/mutation_report.py" = ["T201"]
-# PGH004: the generated module opens with a blanket `# ruff: noqa` of its own
-"example/gql/*.py" = ["PGH004"]
-"tests/generated/**/*.py" = ["C901", "E501", "T201", "PGH004"]
+"tests/mutation_report.py" = ["print"]
+"tests/generated/**/*.py" = ["complex-structure", "line-too-long", "print"]
 
 [tool.ruff.lint.isort]
 force-single-line = true

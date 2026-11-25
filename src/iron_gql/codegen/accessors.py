@@ -50,7 +50,7 @@ import graphql
 
 
 def wrapping_of_type(gql_type: Any) -> graphql.GraphQLType:  # pyright: ignore[reportAny]
-    assert isinstance(gql_type, graphql.GraphQLWrappingType), (  # noqa: S101
+    assert isinstance(gql_type, graphql.GraphQLWrappingType), (  # ruff: ignore[assert]
         "wrapping_of_type expects a GraphQLNonNull or GraphQLList"
     )
     return gql_type.of_type

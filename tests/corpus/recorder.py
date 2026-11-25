@@ -14,7 +14,7 @@ import inspect
 import os
 import sys
 import textwrap
-from collections.abc import Iterator
+from collections.abc import Generator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -55,7 +55,7 @@ def _location(frame: FrameType) -> str:
     # root, then the line. `f_lineno` is the line being executed, which for the
     # single-line `.bind(...)` calls the corpus emits is the line the AST puts
     # the call on.
-    assert _current is not None  # noqa: S101
+    assert _current is not None  # ruff: ignore[assert]
     path = Path(frame.f_code.co_filename).relative_to(_current.root)
     return f"{path.as_posix()}:{frame.f_lineno}"
 
@@ -75,9 +75,9 @@ class Statement:
         frame = inspect.currentframe()
         # Internal invariant: CPython gives a Python frame here, and its caller
         # is the corpus line that wrote `.bind(...)`.
-        assert frame is not None  # noqa: S101
-        assert frame.f_back is not None  # noqa: S101
-        assert _current is not None  # noqa: S101
+        assert frame is not None  # ruff: ignore[assert]
+        assert frame.f_back is not None  # ruff: ignore[assert]
+        assert _current is not None  # ruff: ignore[assert]
         _current.binds[_location(frame.f_back)] = ExecutedBind(
             template=self.text, slots=_slots(fragments)
         )
@@ -104,12 +104,12 @@ _CORPUS_MODULE_PREFIXES = tuple(f"{name}." for name in CORPUS_MODULES)
 
 
 @contextmanager
-def record_run(root: Path) -> Iterator[Recording]:
+def record_run(root: Path) -> Generator[Recording]:
     # One corpus case's execution. This module is published under the name the
     # corpus imports (`from gql_recorder import api_gql`) rather than written
     # into `root`, so the tree the scan walks holds the case's source and
     # nothing else.
-    global _current  # noqa: PLW0603
+    global _current  # ruff: ignore[global-statement]
     recording = Recording(root=root, binds={})
     previous, _current = _current, recording
     sys.modules[MODULE_NAME] = sys.modules[__name__]

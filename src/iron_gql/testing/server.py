@@ -3,8 +3,8 @@ import logging
 import socket
 import threading
 import time
-from collections.abc import AsyncIterator
-from collections.abc import Iterator
+from collections.abc import AsyncGenerator
+from collections.abc import Generator
 from contextlib import asynccontextmanager
 from contextlib import contextmanager
 
@@ -106,7 +106,7 @@ def _loopback_listener() -> tuple[socket.socket, int]:
 # `path` only shapes the yielded URL: a fake app usually answers on every path,
 # so nothing here routes.
 @contextmanager
-def live_asgi_server(app: ASGIApp, path: str = "/graphql") -> Iterator[str]:
+def live_asgi_server(app: ASGIApp, path: str = "/graphql") -> Generator[str]:
     listener, port = _loopback_listener()
     with listener:
         server = uvicorn.Server(_config(app))
@@ -115,7 +115,7 @@ def live_asgi_server(app: ASGIApp, path: str = "/graphql") -> Iterator[str]:
         def run() -> None:
             try:
                 server.run(sockets=[listener])
-            except BaseException as exc:  # noqa: BLE001
+            except BaseException as exc:  # ruff: ignore[blind-except]
                 # Including SystemExit: uvicorn exits the process on some
                 # startup failures. The exception is re-raised on the calling
                 # thread by `_wait_for_start`, never swallowed.
@@ -140,7 +140,7 @@ def live_asgi_server(app: ASGIApp, path: str = "/graphql") -> Iterator[str]:
 @asynccontextmanager
 async def async_live_asgi_server(
     app: ASGIApp, path: str = "/graphql"
-) -> AsyncIterator[str]:
+) -> AsyncGenerator[str]:
     listener, port = _loopback_listener()
     with listener:
         server = uvicorn.Server(_config(app))

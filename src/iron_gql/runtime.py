@@ -527,6 +527,24 @@ class AsyncGQLClientOptions(GQLClientOptions, total=False):
     target_app: ASGIApp | None
 
 
+# How one WebSocket session went, read once the task groups of
+# `httpx2.websockets` are done: `own` is what this side of it failed with, the
+# body of the caller's `with` included, which those groups wrap in groups of
+# their own on its way out; `broken` is the type of a broken connection.
+@dataclass
+class _WSSide:
+    own: BaseException | None = None
+    broken: type[TransportError] = TransportError
+
+    @contextmanager
+    def recording(self) -> Generator[None]:
+        try:
+            yield
+        except BaseException as exc:
+            self.own = exc
+            raise
+
+
 class AsyncGQLClient:
     def __init__(
         self,
@@ -700,51 +718,57 @@ class AsyncGQLClient:
         headers: dict[str, str],
         slot_readers: SlotReaders | None,
     ) -> AsyncGenerator[AsyncGenerator[T]]:
-        # A websocket needs a transport of its own under `target_app`, so the
-        # session gets a client of its own built from the loop's transport.
-        transport = await self._transport()
-        url = str(ws_url(self._endpoint_url))
-        # What this side of the session failed with, the body of the caller's
-        # `with` included. The task groups of `httpx2.websockets` wrap it in
-        # groups of their own on its way out.
-        own: BaseException | None = None
-        broken: type[TransportError] = TransportError
+        side = _WSSide()
         surfaced: BaseException | None = None
         try:
             async with AsyncExitStack() as stack:
-                try:
-                    http = await stack.enter_async_context(
-                        _open_async_http(
-                            transport=(
-                                ASGIWebSocketTransport(self._target_app)
-                                if self._target_app
-                                else None
-                            ),
-                            headers={**httpx2.Headers(transport.headers), **headers},
-                            cookies=self._cookies,
-                            **self._httpx_options,
-                        )
+                with side.recording():
+                    stream = await self._open_ws_stream(
+                        stack, result_type, payload, headers, slot_readers
                     )
-                    with translated(_OPENING_WS):
-                        ws = await stack.enter_async_context(
-                            AsyncWebSocketClient(http).connect(
-                                url, subprotocols=["graphql-transport-ws"]
-                            )
-                        )
-                    stream = await async_graphql_ws_subscribe(
-                        ws, result_type, payload, slot_readers, self._models
-                    )
-                    broken = SubscriptionInterruptedError
+                    side.broken = SubscriptionInterruptedError
                     yield stream
-                except BaseException as exc:
-                    own = exc
-                    raise
         except BaseExceptionGroup as group:
-            surfaced = _surfaced(group, own, broken)
+            surfaced = _surfaced(group, side.own, side.broken)
         # Outside the handler: raised in it, the exception would take the group
         # for its `__context__`.
         if surfaced is not None:
             raise surfaced
+
+    # The results of a session open until `stack` unwinds.
+    async def _open_ws_stream[T: pydantic.BaseModel](
+        self,
+        stack: AsyncExitStack,
+        result_type: type[T],
+        payload: dict[str, Any],
+        headers: dict[str, str],
+        slot_readers: SlotReaders | None,
+    ) -> AsyncGenerator[T]:
+        # A websocket needs a transport of its own under `target_app`, so the
+        # session gets a client of its own built from the loop's transport.
+        transport = await self._transport()
+        url = str(ws_url(self._endpoint_url))
+        http = await stack.enter_async_context(
+            _open_async_http(
+                transport=(
+                    ASGIWebSocketTransport(self._target_app)
+                    if self._target_app
+                    else None
+                ),
+                headers={**httpx2.Headers(transport.headers), **headers},
+                cookies=self._cookies,
+                **self._httpx_options,
+            )
+        )
+        with translated(_OPENING_WS):
+            ws = await stack.enter_async_context(
+                AsyncWebSocketClient(http).connect(
+                    url, subprotocols=["graphql-transport-ws"]
+                )
+            )
+        return await async_graphql_ws_subscribe(
+            ws, result_type, payload, slot_readers, self._models
+        )
 
     # Final in every loop. The transport of the running loop is closed before
     # `close()` returns; those of other live loops close as their loops end,

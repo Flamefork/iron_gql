@@ -8,6 +8,7 @@ import warnings
 from collections.abc import AsyncIterator
 from collections.abc import Awaitable
 from collections.abc import Coroutine
+from collections.abc import Generator
 from collections.abc import Iterator
 from concurrent.futures import Future
 from concurrent.futures import ThreadPoolExecutor
@@ -448,7 +449,7 @@ class _LoopThread:
 
 
 @contextmanager
-def _loop_thread() -> Iterator[_LoopThread]:
+def _loop_thread() -> Generator[_LoopThread]:
     thread = _LoopThread()
     try:
         yield thread

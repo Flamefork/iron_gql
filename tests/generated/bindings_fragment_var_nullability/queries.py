@@ -15,6 +15,7 @@ image_parts = api_gql(
     """
     fragment ImageParts on ImageAttachment {
         url(width: $width, height: $height, pad: $pad, slots: $slots)
+        edges(inner: $edge, outer: $edge)
     }
     """
 )

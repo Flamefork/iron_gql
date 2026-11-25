@@ -212,11 +212,13 @@ A bind can also be written literally, with the template and fragments local to t
 
 ```python
 async def show_attachment(post_id: str) -> None:
-    bound = get_post_attachment.bind(attachment=api_gql("""
-        fragment ImageAlt on ImageAttachment {
-            alt
-        }
-    """))
+    bound = get_post_attachment.bind(
+        attachment=api_gql("""
+            fragment ImageAlt on ImageAttachment {
+                alt
+            }
+        """)
+    )
     result = await bound.execute(id=post_id)
 ```
 
@@ -251,8 +253,11 @@ The limit of 256 applies to the final canonical set for each template. This set 
 The generator writes one class per template, `{Name}{Kind}Bound[TResult]` (`GetPostAttachmentQueryBound` for `query GetPostAttachment`), with a single type parameter: the result this binding returns. `bind()` returns an instance of it carrying that combination's own operation text, and its `execute` answers with exactly the result the parameter names. Which fragments are readable in each slot is recorded by the result type itself, so `result.post.attachment` still knows what was offered — a slot left unfilled is statically unreadable. Code that works over any binding of one template takes the class with its parameter open and hands the result back to a caller who knows which binding it passed:
 
 ```python
-async def fetch[TResult: pydantic.BaseModel](post_id: str, bound: GetPostAttachmentQueryBound[TResult]) -> TResult:
+async def fetch[TResult: pydantic.BaseModel](
+    post_id: str, bound: GetPostAttachmentQueryBound[TResult]
+) -> TResult:
     return await bound.execute(id=post_id)
+
 
 result = await fetch("1", get_post_attachment_image)
 image = image_url.read(result.post.attachment) if result.post else None
@@ -311,15 +316,13 @@ Call `with_args` where the values are known and pass the application to `bind()`
 
 ```python
 async def show_thumbnail(post_id: str, width: int) -> None:
-    bound = get_post_attachment.bind(
-        attachment=image_thumbnail.with_args(width=width)
-    )
+    bound = get_post_attachment.bind(attachment=image_thumbnail.with_args(width=width))
     result = await bound.with_headers({"Authorization": "..."}).execute(id=post_id)
     if result.post is not None:
         image = image_thumbnail.read(result.post.attachment)
 ```
 
-A required fragment variable maps to a required keyword in `with_args`. `None` always sends an explicit GraphQL `null`. If every usage position is nullable and each has a schema default, the keyword can be omitted: the variable is left out of the request and the schema default applies. A non-null position with a schema default still requires the keyword: graphql-core 3.3, like graphql-js 17, ignores a position's default for a variable inside a fragment, and a nullable declaration would be rejected by both the codegen and the server. Omission and `None` are different states. The exact `with_args` signature rejects missing required keywords and extra ones. An application's set of variables is immutable. The applied class stays private; create applications only through `with_args`.
+Each fragment variable is a keyword of `with_args`. If every usage position has a schema default, the keyword can be omitted: the variable is left out of the request, and each position takes its own default. If at least one position has no schema default, the keyword is required. `None` always sends an explicit GraphQL `null`. Omission and `None` are different states: type checkers reject `None` when at least one position is non-null, also when the keyword can be omitted. A variable that can be omitted is declared nullable, also when a position is non-null. A server on graphql-js 17.0 or graphql-core 3.3.0–3.3.1 rejects a nullable variable at a non-null position inside a fragment, also when the request holds a value: it ignores the default of the position ([graphql-js#4864](https://github.com/graphql/graphql-js/issues/4864)). The exact `with_args` signature rejects missing required keywords and extra ones. An application's set of variables is immutable. The applied class stays private; create applications only through `with_args`.
 
 Each `with_args` returns a new application. Applications of one factory can carry different arguments but read the same projection. `read()` fails only for a definition of another factory or another fragment.
 
@@ -515,7 +518,7 @@ A query or a mutation is sent with `Accept: application/graphql-response+json, a
 
 | The server answers | The client |
 |---|---|
-| 3xx | raises `HTTPResponseError`; the text names the `Location`, if there is one. There are two exceptions, both for a 301, 302, 303, 307 or 308 with a `Location`: one that `httpx2` cannot parse raises `TransportError`, and any other is followed when [`httpx_options`](#client-options) sets `follow_redirects` to `True` |
+| 3xx | raises `HTTPResponseError`; the text names the `Location`, if there is one. The exception is a 301, 302, 303, 307 or 308 with a `Location` when [`httpx_options`](#client-options) sets `follow_redirects` to `True`: it is followed, or raises `TransportError` when `httpx2` cannot parse the `Location` |
 | 4xx or 5xx of the type `application/graphql-response+json` whose body is a GraphQL response with `errors` | raises `GraphQLResponseError` |
 | any other status that is not 2xx | raises `HTTPResponseError`, also when its body breaks off or cannot be decoded |
 | 2xx whose body is a GraphQL response with `errors`, with `data` or without | raises `GraphQLResponseError` |
@@ -633,6 +636,7 @@ from iron_gql.runtime import AsyncGQLClient
 from iron_gql.testing import use_client
 from myapp.gql import api
 
+
 async def test_get_user():
     client = AsyncGQLClient(
         base_url="http://testserver",
@@ -657,6 +661,7 @@ from iron_gql.runtime import GQLClient
 from iron_gql.testing import use_client
 from iron_gql.testing.server import live_asgi_server
 
+
 def test_get_user_sync():
     with (
         live_asgi_server(my_asgi_app) as base_url,
@@ -677,10 +682,14 @@ from iron_gql.runtime import AsyncGQLClient
 from iron_gql.testing import use_client
 from iron_gql.testing.server import async_live_asgi_server
 
+
 async def test_watch_events():
     async with async_live_asgi_server(my_asgi_app) as base_url:
         client = AsyncGQLClient(base_url=base_url, subscription_protocol="graphql-sse")
-        async with use_client(api, client), watch_events.execute(channel="news") as stream:
+        async with (
+            use_client(api, client),
+            watch_events.execute(channel="news") as stream,
+        ):
             assert [event.events.message async for event in stream] == ["hello"]
 ```
 
@@ -695,6 +704,7 @@ from iron_gql.runtime import ASGIReceive
 from iron_gql.runtime import ASGIScope
 from iron_gql.runtime import ASGISend
 from iron_gql.testing import accept_graphql_ws
+
 
 async def events_app(scope: ASGIScope, receive: ASGIReceive, send: ASGISend) -> None:
     connection = await accept_graphql_ws(scope, receive, send)

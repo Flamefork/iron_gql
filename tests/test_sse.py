@@ -3,7 +3,7 @@ import socket
 import struct
 import threading
 import time
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator
 from collections.abc import Awaitable
 from collections.abc import Callable
 from contextlib import asynccontextmanager
@@ -101,7 +101,7 @@ def _sse_app(handler: _Handler) -> ASGIApp:
 @asynccontextmanager
 async def _sse_client(
     handler: _Handler, subscription_idle_timeout: float | None = None
-) -> AsyncIterator[AsyncGQLClient]:
+) -> AsyncGenerator[AsyncGQLClient]:
     async with async_live_asgi_server(_sse_app(handler)) as base_url:
         client = AsyncGQLClient(
             subscription_protocol="graphql-sse",
@@ -119,7 +119,7 @@ async def _read_counters(client: AsyncGQLClient, into: list[int]) -> None:
         _CounterResult, _SUBSCRIPTION, variables={}, headers={}
     ) as stream:
         async for item in stream:
-            into.append(item.counter)  # noqa: PERF401
+            into.append(item.counter)  # ruff: ignore[manual-list-comprehension]
 
 
 async def test_events_arrive_while_the_response_is_still_open():

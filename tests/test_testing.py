@@ -9,15 +9,13 @@ import stat
 import sys
 import threading
 import time
-from collections.abc import AsyncGenerator
 from collections.abc import Awaitable
 from collections.abc import Callable
-from collections.abc import Generator
 from collections.abc import Iterator
 from collections.abc import MutableMapping
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import AsyncExitStack
 from contextlib import ExitStack
-from contextlib import suppress
 from pathlib import Path
 from types import ModuleType
 from typing import Literal
@@ -193,9 +191,9 @@ def test_use_client_swaps_restores_and_closes_sync_client(httpserver: HTTPServer
 
 type _Mode = Literal["sync", "async"]
 type _Client = GQLClient | AsyncGQLClient
-type _Held = (
-    Generator[None, BaseException | None] | AsyncGenerator[None, BaseException | None]
-)
+# A `use_client` entered and not exited: its body ends when the test says so,
+# which lets swaps exit in any order.
+type _Held = ExitStack | AsyncExitStack
 
 
 def _named_app(name: str) -> ASGIApp:
@@ -251,26 +249,6 @@ class _FailingCloseAsyncClient(AsyncGQLClient):
         raise bound_error
 
 
-# A `use_client` block held open at its body: the test sends the body on to
-# its end, so swaps can exit in any order.
-def _hold_sync(
-    module: ModuleType, client: GQLClient
-) -> Generator[None, BaseException | None]:
-    with use_client(module, client):
-        exc = yield
-        if exc is not None:
-            raise exc
-
-
-async def _hold_async(
-    module: ModuleType, client: AsyncGQLClient
-) -> AsyncGenerator[None, BaseException | None]:
-    async with use_client(module, client):
-        exc = yield
-        if exc is not None:
-            raise exc
-
-
 # Drives `use_client` of the sync or the async ping module and tells which app
 # a request reached.
 class _Swaps:
@@ -317,23 +295,25 @@ class _Swaps:
     async def enter(self, client: _Client) -> _Held:
         match client:
             case GQLClient():
-                held = _hold_sync(self.module, client)
-                next(held)
+                held = ExitStack()
+                held.enter_context(use_client(self.module, client))
                 return held
             case AsyncGQLClient():
-                held = _hold_async(self.module, client)
-                await anext(held)
+                held = AsyncExitStack()
+                await held.enter_async_context(use_client(self.module, client))
                 return held
 
     # Lets the body of a held swap end, raising `exc` if given, and exits it.
     async def exit(self, held: _Held, exc: BaseException | None = None) -> None:
         match held:
-            case Generator():
-                with suppress(StopIteration):
-                    held.send(exc)
-            case AsyncGenerator():
-                with suppress(StopAsyncIteration):
-                    await held.asend(exc)
+            case ExitStack():
+                with held:
+                    if exc is not None:
+                        raise exc
+            case AsyncExitStack():
+                async with held:
+                    if exc is not None:
+                        raise exc
 
     async def ping(self) -> str:
         match self._mode:

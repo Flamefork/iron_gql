@@ -8,6 +8,7 @@ from tests.conftest import ProjectBuilder
 from tests.corpus.import_options import MALFORMED_IMPORT_OPTIONS
 from tests.corpus.import_options import NO_COLON
 from tests.corpus.import_options import MalformedImportOption
+from tests.corpus.rejected_inputs import EMPTY_SELECTIONS
 from tests.corpus.rejected_inputs import INVALID_STATEMENTS
 from tests.corpus.rejected_inputs import REJECTED_SCHEMAS
 from tests.corpus.rejected_inputs import REJECTED_STATEMENTS
@@ -39,6 +40,22 @@ def _graphql_core_diagnoses(schema: str) -> list[str]:
         return str(exc).split("\n\n")
     msg = f"graphql-core accepts the schema: {schema!r}"
     raise AssertionError(msg)
+
+
+# The oracle: what graphql-core says of `text` that does not parse, and where.
+def _graphql_core_syntax_error(text: str) -> tuple[str, graphql.SourceLocation]:
+    with pytest.raises(graphql.GraphQLSyntaxError) as oracle:
+        graphql.parse(text)
+    [location] = oracle.value.locations or []
+    return oracle.value.message, location
+
+
+def _statement_syntax_error(text: str) -> str:
+    message, location = _graphql_core_syntax_error(text)
+    return (
+        f"{message} (line {location.line}, column {location.column} of the "
+        "dedented statement)"
+    )
 
 
 def test_missing_schema_file_names_the_path(test_project: ProjectBuilder):
@@ -77,13 +94,16 @@ def test_rejected_schema_carries_the_graphql_core_diagnoses(
 def test_schema_syntax_error_names_the_schema_file_and_position(
     test_project: ProjectBuilder,
 ):
-    path = _prepare_with_schema(test_project, "type Query {\n  ping: String\n")
+    schema = "type Query {\n  ping: String\n"
+    path = test_project.root / "schema.graphql"
+    _prepare_with_schema(test_project, schema)
+    message, location = _graphql_core_syntax_error(schema)
 
-    with pytest.raises(
-        GraphQLGenerationError,
-        match=rf"Invalid schema at {path}:2:15: Syntax Error: Expected Name",
-    ) as exc:
+    with pytest.raises(GraphQLGenerationError) as exc:
         test_project.render()
+    assert exc.value.errors == [
+        f"Invalid schema at {path}:{location.line}:{location.column}: {message}"
+    ]
     assert isinstance(exc.value.__cause__, graphql.GraphQLSyntaxError)
 
 
@@ -125,16 +145,40 @@ def test_statement_syntax_error_names_the_call_site_and_the_graphql_core_diagnos
         broken = api_gql({case.text!r})
         """,
     )
-    with pytest.raises(graphql.GraphQLSyntaxError) as oracle:
-        graphql.parse(case.text.strip())
-    [location] = oracle.value.locations or []
+
+    with pytest.raises(GraphQLGenerationError) as exc:
+        test_project.render()
+    assert exc.value.errors == [
+        f"sample_app/queries.py:2: {_statement_syntax_error(case.text.strip())}"
+    ]
+    assert isinstance(exc.value.__cause__, graphql.GraphQLSyntaxError)
+
+
+@pytest.mark.parametrize(
+    "case", EMPTY_SELECTIONS, ids=[case.id for case in EMPTY_SELECTIONS]
+)
+def test_an_empty_selection_is_a_syntax_error(
+    test_project: ProjectBuilder, case: RejectedInput
+):
+    test_project.prepare(
+        schema="""
+        type Query { user: User }
+        type Subscription { user: User }
+        type User { name: String }
+        """,
+        queries=f"""
+        from sample_app.gql.api import api_gql
+        empty = api_gql({case.text!r})
+        """,
+    )
+    graphql.parse(case.text)
 
     with pytest.raises(GraphQLGenerationError) as exc:
         test_project.render()
     assert exc.value.errors == [
         (
-            f"sample_app/queries.py:2: {oracle.value.message} (line "
-            f"{location.line}, column {location.column} of the dedented statement)"
+            "sample_app/queries.py:2: Syntax Error: Expected Name, found '}'. (line "
+            f"1, column {case.text.index('}') + 1} of the dedented statement)"
         )
     ]
     assert isinstance(exc.value.__cause__, graphql.GraphQLSyntaxError)
@@ -168,21 +212,12 @@ def test_statement_syntax_errors_of_several_files_come_in_one_error(
 
     with pytest.raises(GraphQLGenerationError) as exc:
         test_project.render()
-    assert len(exc.value.errors) == 2
-    assert re.match(
-        (
-            r"sample_app/other\.py:3: Syntax Error: Expected Name, found '}'\. "
-            r"\(line 2, column 10 of the dedented statement\)"
-        ),
-        exc.value.errors[0],
-    )
-    assert re.match(
-        (
-            r"sample_app/queries\.py:3: Syntax Error: Expected Name, found <EOF>\. "
-            r"\(line 1, column 20 of the dedented statement\)"
-        ),
-        exc.value.errors[1],
-    )
+    other = _statement_syntax_error("query Other {\n    ping(\n}")
+    broken = _statement_syntax_error("query Broken { ping")
+    assert exc.value.errors == [
+        f"sample_app/other.py:3: {other}",
+        f"sample_app/queries.py:3: {broken}",
+    ]
     cause = exc.value.__cause__
     assert isinstance(cause, ExceptionGroup)
     assert [type(error) for error in cause.exceptions] == [

@@ -55,11 +55,11 @@ TModel_co = TypeVar("TModel_co", bound=pydantic.BaseModel, covariant=True)
 # A fragment's readable closure: the fragment itself plus every fragment from
 # its root-level spreads, intersected over all compatible slots. The parameter
 # is contravariant because `read` accepts a node that offers this closure. PEP
-# 695 does not allow declaring variance, hence UP046.
+# 695 does not allow declaring variance, hence the ignored rule.
 TReads_contra = TypeVar("TReads_contra", contravariant=True)
 
 
-class GQLFragment(Generic[TModel_co, TReads_contra]):  # noqa: UP046
+class GQLFragment(Generic[TModel_co, TReads_contra]):  # ruff: ignore[non-pep695-generic-class]
     # Metadata lives on the instance, taken as required constructor
     # arguments: `TypeAdapter` is invariant in its parameter, so an adapter
     # that does not match `TModel_co` is a static error at the generated
@@ -155,13 +155,13 @@ def _is_readers(value: object) -> TypeIs[tuple[SlotReader, ...]]:
 # Contravariance lets a node with a larger set of fragments be used where a
 # smaller one is expected: `Slot[A | B]` is compatible with `GQLSlotNode[A]`.
 # PEP 695 does not allow setting variance explicitly and infers an unused
-# phantom as covariant, so a plain TypeVar and the UP046 suppression are needed
+# phantom as covariant, so a plain TypeVar and the ignored rule are needed
 # here. The `Never` default means a bare `GQLSlotNode` is readable by no
 # fragment.
 TOffered_contra = TypeVar("TOffered_contra", contravariant=True, default=Never)
 
 
-class GQLSlotNode(pydantic.BaseModel, Generic[TOffered_contra]):  # noqa: UP046
+class GQLSlotNode(pydantic.BaseModel, Generic[TOffered_contra]):  # ruff: ignore[non-pep695-generic-class]
     slot_name__: ClassVar[str]
 
     # The projection belongs to the generated fragment definition, not to a

@@ -605,29 +605,35 @@ def _synthesized_var(
     var_type: graphql.TypeNode,
     schema: graphql.GraphQLSchema,
 ) -> SynthesizedVar:
-    node = graphql.VariableDefinitionNode(
-        variable=graphql.VariableNode(name=graphql.NameNode(value=name)),
-        type=var_type,
-        default_value=None,
-        directives=(),
-    )
     resolved_explicit_value_type = type_from_ast(schema, var_type)
     if resolved_explicit_value_type is None:
         msg = f"cannot resolve synthesized fragment variable ${name}"
         raise AssertionError(msg)
-    # A non-null position with a schema default is not omittable: its variable
-    # would have to be declared nullable, and graphql-core 3.3, like graphql-js
-    # 17, ignores the location default for a variable used inside a fragment.
-    # The spec does not; once https://github.com/graphql/graphql-js/issues/4864
-    # is fixed and ported to graphql-core, such a position can be omittable again.
-    if not isinstance(var_type, graphql.NonNullTypeNode) and all(
-        entry.has_location_default for entry in entries
-    ):
+    # Only a nullable variable can be left out of a request, and the default of
+    # each position is what allows a nullable one there: a server on graphql-js
+    # 17.0 or graphql-core 3.3.0-3.3.1 ignores that default inside a fragment
+    # (https://github.com/graphql/graphql-js/issues/4864) and rejects the
+    # document, also when the request holds a value. The value keeps the type of
+    # the positions: a null is not an absent variable, and takes no default.
+    if all(entry.has_location_default for entry in entries):
         return OmittableSynthesizedVar(
-            node=node, explicit_value_type=resolved_explicit_value_type
+            node=_variable_definition(name, _nullable(var_type)),
+            explicit_value_type=resolved_explicit_value_type,
         )
     return RequiredSynthesizedVar(
-        node=node, explicit_value_type=resolved_explicit_value_type
+        node=_variable_definition(name, var_type),
+        explicit_value_type=resolved_explicit_value_type,
+    )
+
+
+def _variable_definition(
+    name: str, var_type: graphql.TypeNode
+) -> graphql.VariableDefinitionNode:
+    return graphql.VariableDefinitionNode(
+        variable=graphql.VariableNode(name=graphql.NameNode(value=name)),
+        type=var_type,
+        default_value=None,
+        directives=(),
     )
 
 

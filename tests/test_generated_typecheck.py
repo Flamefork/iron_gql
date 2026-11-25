@@ -144,9 +144,11 @@ CHECK_SOURCES = {
 
         queries.image_parts.with_args(width=1)
         queries.image_parts.with_args(width=1, height=20)
-        queries.image_parts.with_args(width=1, height=20, pad=None)
-        queries.image_parts.with_args(width=1, height=20, slots=None)
+        queries.image_parts.with_args(width=1, pad=None)
+        queries.image_parts.with_args(width=1, slots=None)
         queries.image_parts.with_args(width=1, height=None)
+        queries.image_parts.with_args(width=1, edge=20)
+        queries.image_parts.with_args(width=1, edge=None)
     """,
     "check_on_type_constructor.py": """
         from typing import Any
@@ -570,12 +572,12 @@ def test_generated_and_scratch_typing_contracts(tmp_path: Path):
 
     errors = _errors(report, check_paths["check_defaulted_fragment_variables.py"])
     assert [(error.range.start.line, error.rule) for error in errors] == [
-        (3, "reportCallIssue"),
         (7, "reportArgumentType"),
+        (9, "reportArgumentType"),
     ], errors
-    assert "height" in errors[0].message
-    assert "None" in errors[1].message
-    assert "int" in errors[1].message
+    for error in errors:
+        assert "None" in error.message
+        assert "int" in error.message
 
     errors = _errors(report, check_paths["check_on_type_constructor.py"])
     assert len(errors) == 1, errors

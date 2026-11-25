@@ -8,6 +8,10 @@ stage too: `statement=syntax` with the token the parser stops on, and
 rejects. What the diagnosis says comes from graphql-core itself, not from the
 cases. Statements are written against `type Query { ping: String }`.
 
+An empty selection is valid GraphQL that the generator rejects with the
+diagnosis graphql-core gives when it is told not to accept one; an id names
+what selects nothing. Every case is one line long and holds one empty selection.
+
 Statements holding several operations parse and are rejected before
 validation; their ids name how many operations and fragments they hold.
 """
@@ -61,6 +65,23 @@ REJECTED_STATEMENTS: tuple[RejectedInput, ...] = (
     RejectedInput(
         id="statement=syntax/stop=fragment-without-type", text="fragment F { ping }"
     ),
+)
+
+EMPTY_SELECTIONS: tuple[RejectedInput, ...] = (
+    RejectedInput(id="empty-selection/of=field", text="query Find { user { } }"),
+    RejectedInput(id="empty-selection/of=operation", text="query Find { }"),
+    RejectedInput(id="empty-selection/of=anonymous-operation", text="{ }"),
+    RejectedInput(id="empty-selection/of=subscription", text="subscription Watch { }"),
+    RejectedInput(
+        id="empty-selection/of=inline-fragment",
+        text="query Find { user { ... on User { } } }",
+    ),
+    RejectedInput(
+        id="empty-selection/of=inline-fragment-without-type",
+        text="query Find { user { ... { } } }",
+    ),
+    RejectedInput(id="empty-selection/of=fragment", text="fragment Fields on User { }"),
+    RejectedInput(id="empty-selection/of=slot", text="query Find { user @slot { } }"),
 )
 
 INVALID_STATEMENTS: tuple[RejectedInput, ...] = (

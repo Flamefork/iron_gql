@@ -10,7 +10,7 @@ pydantic's own rendering, which writes `input_value=` exactly when it does.
 
 import importlib
 import json
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator
 from collections.abc import Awaitable
 from collections.abc import Callable
 from contextlib import asynccontextmanager
@@ -189,7 +189,7 @@ def _ws_message_app(message: str, *, after_ack: bool) -> ASGIApp:
 @asynccontextmanager
 async def _serving(
     app: ASGIApp, protocol: SubscriptionProtocol = "graphql-sse"
-) -> AsyncIterator[None]:
+) -> AsyncGenerator[None]:
     client = AsyncGQLClient(
         base_url="http://testserver/graphql",
         subscription_protocol=protocol,
@@ -202,7 +202,7 @@ async def _serving(
 # graphql-sse needs a socket: the ASGI transport holds a body until the app
 # returns.
 @asynccontextmanager
-async def _serving_live(app: ASGIApp) -> AsyncIterator[None]:
+async def _serving_live(app: ASGIApp) -> AsyncGenerator[None]:
     async with async_live_asgi_server(app) as base_url:
         client = AsyncGQLClient(base_url=base_url, subscription_protocol="graphql-sse")
         async with use_client(api, client):
@@ -275,25 +275,31 @@ async def _subscription(
     mode: _Mode, protocol: SubscriptionProtocol, app: ASGIApp
 ) -> list[int] | ResponseProtocolError:
     try:
-        match mode:
-            case "async" if protocol == "graphql-sse":
-                async with _serving_live(app):
-                    return await _subscribe()
-            case "async":
-                async with _serving(app, protocol):
-                    return await _subscribe()
-            case "sync":
-                with (
-                    live_asgi_server(app) as base_url,
-                    use_client(
-                        sync_api,
-                        GQLClient(base_url=base_url, subscription_protocol=protocol),
-                    ),
-                    sync_queries.counter.execute() as stream,
-                ):
-                    return [item.counter for item in stream]
+        return await _counters(mode, protocol, app)
     except ResponseProtocolError as exc:
         return exc
+
+
+async def _counters(
+    mode: _Mode, protocol: SubscriptionProtocol, app: ASGIApp
+) -> list[int]:
+    match mode:
+        case "async" if protocol == "graphql-sse":
+            async with _serving_live(app):
+                return await _subscribe()
+        case "async":
+            async with _serving(app, protocol):
+                return await _subscribe()
+        case "sync":
+            with (
+                live_asgi_server(app) as base_url,
+                use_client(
+                    sync_api,
+                    GQLClient(base_url=base_url, subscription_protocol=protocol),
+                ),
+                sync_queries.counter.execute() as stream,
+            ):
+                return [item.counter for item in stream]
 
 
 def _next_app(protocol: SubscriptionProtocol, payload: object) -> ASGIApp:
@@ -465,7 +471,7 @@ def test_use_client_refuses_a_client_on_another_base(base: type[pydantic.BaseMod
             base_url=base_url, subscription_protocol="graphql-sse", model_base=base
         )
         previous = cast("GQLClient", vars(sync_api)["_client"])
-        with pytest.raises(ValueError, match="pass the module's base or none"):  # noqa: SIM117
+        with pytest.raises(ValueError, match="pass the module's base or none"):  # ruff: ignore[multiple-with-statements]
             with use_client(sync_api, client):
                 pass
         assert cast("GQLClient", vars(sync_api)["_client"]) is previous

@@ -1189,14 +1189,13 @@ def test_user_on_type_subclass_cannot_select_a_generated_combination():
         fragvars_queries.get_attachment.bind(attachment=ForgedImageParts())
 
 
-# Four positions, two behaviors. `$width` is nullable without a default, so it
-# behaves like an operation variable in `execute`: the keyword is required, and
-# `None` is sent as an explicit null. `$height` is non-null: a schema default
-# does not exempt it, and the keyword is required (`test_binding_expansion`
-# explains why). `$pad` and `$slots` are nullable with a schema default and can
-# be omitted. `$slots` deliberately matches the name of the runtime module the
-# generated code imports: a valid GraphQL name must not change how the sentinel
-# resolves in the body of `with_args`.
+# Two behaviors. `$width` is nullable without a default, so it behaves like an
+# operation variable in `execute`: the keyword is required, and `None` is sent
+# as an explicit null. The others have a schema default at every position and
+# can be omitted: `$height` at a non-null one, `$pad` and `$slots` at a nullable
+# one, `$edge` at one of each. `$slots` deliberately matches the name of the
+# runtime module the generated code imports: a valid GraphQL name must not
+# change how the sentinel resolves in the body of `with_args`.
 FRAGMENT_VAR_NULLABILITY_SCHEMA = """
 type Query {
     post(id: ID!): Post
@@ -1211,6 +1210,7 @@ union Attachment = ImageAttachment | LinkAttachment
 
 type ImageAttachment {
     url(width: Int, height: Int! = 10, pad: Int = 7, slots: Int = 13): String!
+    edges(inner: Int! = 3, outer: Int = 4): String!
 }
 
 type LinkAttachment {
@@ -1239,6 +1239,7 @@ generated_package(
         """
         fragment ImageParts on ImageAttachment {
             url(width: $width, height: $height, pad: $pad, slots: $slots)
+            edges(inner: $edge, outer: $edge)
         }
         """
     )
@@ -1268,35 +1269,42 @@ def _resolve_sized_url(
     return f"{width}-{height}-{pad}-{slots}"
 
 
-async def test_only_a_nullable_defaulted_fragment_variable_may_be_omitted(
+def _resolve_edges(
+    _root: object, _info: GraphQLResolveInfo[object], *, inner: int, outer: int | None
+) -> str:
+    return f"{inner}-{outer}"
+
+
+async def test_only_a_defaulted_fragment_variable_may_be_omitted(
     httpserver: HTTPServer,
 ):
-    # `$pad` and `$slots` carry a schema default and drop out of the request
-    # when the keyword is left out of `with_args` entirely, so the schema's
-    # own `= 7` and `= 13` apply; `$width` has no default and an explicit
-    # `None` crosses the wire as a real null; `$height` must be written.
+    # The variables with a schema default drop out of the request when the
+    # keyword is left out of `with_args` entirely, so the schema's own values
+    # apply, at each position of `$edge` its own; `$width` has no default, and
+    # an explicit `None` crosses the wire as a real null.
     with_args = cast("Callable[..., object]", nullability_queries.image_parts.with_args)
-    with pytest.raises(TypeError, match="height"):
-        with_args(width=5)
+    with pytest.raises(TypeError, match="width"):
+        with_args(height=10)
 
     async with gql_server(
         httpserver,
         "bindings_fragment_var_nullability",
         {
             "Query": {"post": _resolve_nullability_post},
-            "ImageAttachment": {"url": _resolve_sized_url},
+            "ImageAttachment": {"url": _resolve_sized_url, "edges": _resolve_edges},
         },
     ):
-        applied = nullability_queries.image_parts.with_args(width=None, height=10)
+        applied = nullability_queries.image_parts.with_args(width=None)
         bound = nullability_queries.get_attachment.bind(attachment=applied)
         result = await bound.execute(id="1")
         assert result.post is not None
         image = applied.read(result.post.attachment)
         assert image is not None
         assert image.url == "None-10-7-13"
+        assert image.edges == "3-4"
 
         sized_applied = nullability_queries.image_parts.with_args(
-            width=5, height=20, pad=1, slots=21
+            width=5, height=20, pad=1, slots=21, edge=9
         )
         sized_bound = nullability_queries.get_attachment.bind(attachment=sized_applied)
         result = await sized_bound.execute(id="1")
@@ -1304,22 +1312,22 @@ async def test_only_a_nullable_defaulted_fragment_variable_may_be_omitted(
         image = sized_applied.read(result.post.attachment)
         assert image is not None
         assert image.url == "5-20-1-21"
+        assert image.edges == "9-9"
 
-        # Each application sets the whole set: `pad` and `slots`, omitted here,
-        # fall back to the schema defaults regardless of the previous
-        # application. Applying again creates a new application and bind rather
-        # than changing the previous one.
-        again_applied = nullability_queries.image_parts.with_args(width=5, height=10)
+        # Each application sets the whole set: what is omitted here falls back
+        # to the schema defaults regardless of the previous application.
+        # Applying again creates a new application and bind rather than changing
+        # the previous one.
+        again_applied = nullability_queries.image_parts.with_args(width=5)
         again_bound = nullability_queries.get_attachment.bind(attachment=again_applied)
         result = await again_bound.execute(id="1")
         assert result.post is not None
         image = again_applied.read(result.post.attachment)
         assert image is not None
         assert image.url == "5-10-7-13"
+        assert image.edges == "3-4"
 
-        null_applied = nullability_queries.image_parts.with_args(
-            width=5, height=10, pad=None
-        )
+        null_applied = nullability_queries.image_parts.with_args(width=5, pad=None)
         null_bound = nullability_queries.get_attachment.bind(attachment=null_applied)
         result = await null_bound.execute(id="1")
         assert result.post is not None

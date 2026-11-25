@@ -36,7 +36,7 @@ def interpreter_answer(
     with record_run(root) as recording:
         try:
             imported = importlib.import_module(module)
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:  # ruff: ignore[blind-except]
             # Whatever the module raises *is* the observation: a call site the
             # import never reaches is one Python does not execute.
             return Observed(binds=dict(recording.binds), refusal=describe(exc))
@@ -44,7 +44,7 @@ def interpreter_answer(
             return Observed(binds=dict(recording.binds), refusal=None)
         try:
             _call(imported, invoke)
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:  # ruff: ignore[blind-except]
             return Observed(binds=dict(recording.binds), refusal=describe(exc))
         return Observed(binds=dict(recording.binds), refusal=None)
 

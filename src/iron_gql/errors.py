@@ -78,7 +78,7 @@ class WebSocketClosedError(ResponseError):
 def _graphql_error(error: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(error.get("message"), str):
         msg = "a GraphQL error carries a string `message`"
-        raise ValueError(msg)  # noqa: TRY004 -- pydantic reports ValueError only
+        raise ValueError(msg)  # ruff: ignore[type-check-without-type-error] -- pydantic reports ValueError only
     return error
 
 

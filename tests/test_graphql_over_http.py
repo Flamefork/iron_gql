@@ -8,10 +8,10 @@ rule. Every case goes through a generated operation -- `with_headers()` then
 response in place of its stream: the one rule covers both.
 """
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator
 from collections.abc import Awaitable
 from collections.abc import Callable
-from collections.abc import Iterator
+from collections.abc import Generator
 from contextlib import asynccontextmanager
 from contextlib import contextmanager
 
@@ -221,7 +221,7 @@ _SYNC_PATHS: dict[str, _SyncCall] = {
 @asynccontextmanager
 async def _async_module(
     seen: _Seen, client_headers: dict[str, str] | None = None
-) -> AsyncIterator[None]:
+) -> AsyncGenerator[None]:
     with live_asgi_server(_server(seen)) as base_url:
         client = AsyncGQLClient(
             base_url=base_url,
@@ -235,7 +235,7 @@ async def _async_module(
 @contextmanager
 def _sync_module(
     seen: _Seen, client_headers: dict[str, str] | None = None
-) -> Iterator[None]:
+) -> Generator[None]:
     with live_asgi_server(_server(seen)) as base_url:
         client = GQLClient(
             base_url=base_url,
@@ -249,14 +249,14 @@ def _sync_module(
 async def _async_result(call: _AsyncCall, headers: dict[str, str]) -> object:
     try:
         return await call(headers)
-    except Exception as exc:  # noqa: BLE001 -- judged against the table
+    except Exception as exc:  # ruff: ignore[blind-except] -- judged against the table
         return exc
 
 
 def _sync_result(call: _SyncCall, headers: dict[str, str]) -> object:
     try:
         return call(headers)
-    except Exception as exc:  # noqa: BLE001 -- judged against the table
+    except Exception as exc:  # ruff: ignore[blind-except] -- judged against the table
         return exc
 
 

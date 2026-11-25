@@ -5,6 +5,7 @@ import os
 from typing import Protocol
 from typing import cast
 
+import graphql
 import pydantic
 import pytest
 from graphql import GraphQLResolveInfo
@@ -505,15 +506,17 @@ def test_debug_artifacts_are_written_for_an_invalid_query(
             base_url_import="sample_app.settings:GRAPHQL_URL",
             debug_path=debug_dir,
         )
+    diagnoses = graphql.validate(
+        graphql.build_schema("type Query { ping: String }"),
+        graphql.parse("query Ping($id: NoSuchType!) { ping }"),
+    )
     assert exc.value.errors == [
-        (
-            "Invalid GraphQL query in sample_app/queries.py:2:\nUnknown type "
-            "'NoSuchType'.\n\nGraphQL request:1:17\n1 | query Ping($id: NoSuchType!) { "
-            "ping }\n  |                 ^\nVariable '$id' is never used in operation "
-            "'Ping'.\n\nGraphQL request:1:12\n1 | query Ping($id: NoSuchType!) { ping "
-            "}\n  |            ^"
-        ),
+        "\n".join([
+            "Invalid GraphQL query in sample_app/queries.py:2:",
+            *(str(diagnosis) for diagnosis in diagnoses),
+        ])
     ]
+    assert any("NoSuchType" in diagnosis.message for diagnosis in diagnoses)
 
     # The raw text and AST carry every statement, valid or not; `out.json`
     # carries what the parser resolved, which here is nothing.

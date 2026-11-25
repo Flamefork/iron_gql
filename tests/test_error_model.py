@@ -18,7 +18,6 @@ import time
 from collections.abc import Awaitable
 from collections.abc import Callable
 from collections.abc import Generator
-from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
 from types import SimpleNamespace
@@ -202,7 +201,7 @@ _SOCKET_ADDRESS = pydantic.TypeAdapter(tuple[str, int])
 # A server that talks raw bytes: connections one after another, each in the
 # hands of `talk` until it returns.
 @contextmanager
-def _tcp_server(talk: Callable[[socket.socket], None]) -> Iterator[str]:
+def _tcp_server(talk: Callable[[socket.socket], None]) -> Generator[str]:
     stopped = threading.Event()
     with socket.create_server(("127.0.0.1", 0)) as listener:
         listener.settimeout(0.05)
@@ -506,18 +505,42 @@ def test_a_refusal_with_a_body_cut_short_is_its_status(
     assert isinstance(error.__cause__, httpx2.RemoteProtocolError)
 
 
-# `httpx2` parses the `Location` whether it follows it or not, and gives up the
-# response when it cannot.
+# The statuses `httpx2` follows, and only with a `Location`.
+_followed_statuses = pytest.mark.parametrize("status", [301, 302, 303, 307, 308])
+
+
 @_every_mode
 @_every_operation
-def test_a_redirect_to_no_url_is_a_transport_error(mode: _Mode, operation: _Operation):
-    response = _response(302, b"", "Location: http://testserver:port/")
+@_followed_statuses
+@pytest.mark.parametrize(
+    "options",
+    [{}, {"httpx_options": {"follow_redirects": False}}],
+    ids=["by-default", "not-followed"],
+)
+def test_a_redirect_to_no_url_that_is_not_followed_is_its_status(
+    mode: _Mode, operation: _Operation, status: int, options: GQLClientOptions
+):
+    response = _response(status, _REFUSAL, "Location: http://testserver:port/")
     with _tcp_server(_answering(response)) as url:
-        error = _failure(mode, operation, url)
+        error = _failure(mode, operation, url, options)
+    assert isinstance(error, HTTPResponseError)
+    assert error.status_code == error.response.status_code == status
+    assert "http://testserver:port/" in str(error)
+
+
+@_every_mode
+@_every_operation
+@_followed_statuses
+def test_following_a_redirect_to_no_url_is_a_transport_error(
+    mode: _Mode, operation: _Operation, status: int
+):
+    response = _response(status, _REFUSAL, "Location: http://testserver:port/")
+    options = GQLClientOptions(httpx_options={"follow_redirects": True})
+    with _tcp_server(_answering(response)) as url:
+        error = _failure(mode, operation, url, options)
     _assert_transport_error(error, httpx2.RemoteProtocolError)
 
 
-# `httpx2` follows five statuses, and only with a `Location`.
 @_every_mode
 @_every_operation
 @pytest.mark.parametrize("follow_redirects", [False, True])
@@ -1378,7 +1401,7 @@ def test_a_connection_failure_of_a_callback_is_a_transport_error(
 
 def test_a_group_from_auth_over_a_target_app_stays_itself():
     error = ExceptionGroup("caller", [ValueError("caller")])
-    with pytest.raises(ExceptionGroup) as caught:
+    with pytest.RaisesGroup(ValueError) as caught:
         run_async(
             _async_call(
                 "graphql-transport-ws",
@@ -1571,7 +1594,7 @@ def test_independent_failures_of_an_async_websocket_come_as_a_group(
 
     with (
         _tcp_server(_talk_then_vanish(vanish)) as url,
-        pytest.raises(ExceptionGroup) as caught,
+        pytest.RaisesGroup(KeyError, SubscriptionInterruptedError) as caught,
     ):
         run_async(_hold_a_subscription(url, vanish, hold))
     assert error in caught.value.exceptions

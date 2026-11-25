@@ -78,7 +78,7 @@ def _diff_lines(text: str) -> list[str]:
 # write() puts the module in place and diff() compares it with the file. Any
 # diagnosed rejection of the input -- the import options, schema, statements,
 # scanned sources and their calls -- raises GraphQLGenerationError.
-def render_gql_module(  # noqa: PLR0913 -- keyword-only options of the entry point
+def render_gql_module(  # ruff: ignore[too-many-arguments] -- keyword-only options of the entry point
     *,
     mode: GenerationMode,
     schema_path: Path,

@@ -1,5 +1,5 @@
-from collections.abc import AsyncIterator
-from collections.abc import Iterator
+from collections.abc import AsyncGenerator
+from collections.abc import Generator
 from contextlib import AbstractAsyncContextManager
 from contextlib import AbstractContextManager
 from contextlib import asynccontextmanager
@@ -106,7 +106,7 @@ def _out_of_order(api_module: ModuleType) -> RuntimeError:
 @contextmanager
 def _sync_client_context(
     api_module: ModuleType, client: GQLClient
-) -> Iterator[GQLClient]:
+) -> Generator[GQLClient]:
     swap = _enter(api_module, client)
     try:
         yield client
@@ -120,7 +120,7 @@ def _sync_client_context(
 @asynccontextmanager
 async def _async_client_context(
     api_module: ModuleType, client: AsyncGQLClient
-) -> AsyncIterator[AsyncGQLClient]:
+) -> AsyncGenerator[AsyncGQLClient]:
     swap = _enter(api_module, client)
     try:
         yield client

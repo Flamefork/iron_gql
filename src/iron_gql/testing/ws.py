@@ -15,7 +15,7 @@ _JSON_OBJECT = pydantic.TypeAdapter(dict[str, object])
 async def _receive_json(receive: ASGIReceive) -> dict[str, object]:
     event = await receive()
     text = event.get("text")
-    assert isinstance(text, str), f"expected a text frame, got {event!r}"  # noqa: S101
+    assert isinstance(text, str), f"expected a text frame, got {event!r}"  # ruff: ignore[assert]
     return _JSON_OBJECT.validate_json(text)
 
 
@@ -52,11 +52,11 @@ class WSTestConnection:
         await self.send_message({"type": "connection_ack"})
         message = await _expect(self, "subscribe")
         subscription_id = message.get("id")
-        assert isinstance(subscription_id, str), (  # noqa: S101
+        assert isinstance(subscription_id, str), (  # ruff: ignore[assert]
             f"subscribe carried no string id: {message!r}"
         )
         payload = message.get("payload")
-        assert isinstance(payload, dict), (  # noqa: S101
+        assert isinstance(payload, dict), (  # ruff: ignore[assert]
             f"subscribe carried no payload object: {message!r}"
         )
         # The assertion narrows to a dict of unknown items; validating it again
@@ -106,7 +106,7 @@ class WSTestSubscription:
 
 async def _expect(connection: WSTestConnection, message_type: str) -> dict[str, object]:
     message = await connection.receive_message()
-    assert message.get("type") == message_type, (  # noqa: S101
+    assert message.get("type") == message_type, (  # ruff: ignore[assert]
         f"expected {message_type}, got {message!r}"
     )
     return message
@@ -118,16 +118,16 @@ async def _expect(connection: WSTestConnection, message_type: str) -> dict[str, 
 async def accept_graphql_ws(
     scope: ASGIScope, receive: ASGIReceive, send: ASGISend
 ) -> WSTestConnection:
-    assert scope["type"] == "websocket", (  # noqa: S101
+    assert scope["type"] == "websocket", (  # ruff: ignore[assert]
         f"expected a websocket scope, got {scope['type']!r}"
     )
     # ASGI makes `subprotocols` optional: a missing key means none were offered.
     subprotocols = scope.get("subprotocols", [])
-    assert isinstance(subprotocols, list), (  # noqa: S101
+    assert isinstance(subprotocols, list), (  # ruff: ignore[assert]
         f"scope carried no subprotocol list: {subprotocols!r}"
     )
     event = await receive()
-    assert event["type"] == "websocket.connect", (  # noqa: S101
+    assert event["type"] == "websocket.connect", (  # ruff: ignore[assert]
         f"expected websocket.connect, got {event!r}"
     )
     await send({

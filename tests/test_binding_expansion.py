@@ -6,8 +6,6 @@ import pytest
 
 from iron_gql.codegen import GraphQLGenerationError
 from iron_gql.codegen.bindings import ExpandedBinding
-from iron_gql.codegen.bindings import OmittableSynthesizedVar
-from iron_gql.codegen.bindings import RequiredSynthesizedVar
 from iron_gql.codegen.bindings import SlotTarget
 from iron_gql.codegen.bindings import expand_binding
 from iron_gql.codegen.discovery import Statement
@@ -906,74 +904,6 @@ def test_variable_name_collision_with_template_var_is_rejected():
             "execute; rename the fragment variable"
         ),
     ]
-
-
-SCHEMA_WITH_DEFAULT_ARG = _schema(
-    "photos(limit: Int! = 5): [String!]!",
-    "thumbnail(size: Int = 64): String!",
-)
-
-
-def test_fragment_variable_at_a_non_null_position_with_a_default_is_required():
-    # The schema's `= 5` does not make `$limit` omittable: graphql-core 3.3,
-    # like graphql-js 17, ignores a location default for a variable used inside
-    # a fragment, so a nullable `$limit: Int` is rejected by `graphql.validate`
-    # here and by every server on those versions. The declaration keeps the
-    # position's own type, and the caller supplies the value.
-    schema = graphql.build_schema(SCHEMA_WITH_DEFAULT_ARG)
-    template_doc = graphql.parse(TEMPLATE)
-    image_parts = _fragment(
-        "fragment ImageParts on ImageAttachment { photos(limit: $limit) }"
-    )
-
-    expanded = expand_binding(
-        schema=schema,
-        template_doc=template_doc,
-        template_operation=_operation(template_doc),
-        template_name="GetAttachment",
-        slots=SLOTS,
-        spreads=_bound(
-            schema, {"attachment": (image_parts,)}, {"ImageParts": image_parts}
-        ),
-        location="test:1",
-    )
-
-    [synthesized] = expanded.fragment_vars
-    assert synthesized.node.variable.name.value == "limit"
-    assert isinstance(synthesized.node.type, graphql.NonNullTypeNode)
-    assert isinstance(synthesized, RequiredSynthesizedVar)
-    assert isinstance(synthesized.explicit_value_type, graphql.GraphQLNonNull)
-    assert "$limit: Int!" in expanded.exec_source
-
-
-def test_fragment_variable_at_a_nullable_position_with_a_default_is_optional():
-    # The one position a schema default makes omittable. Left a required
-    # keyword, `$size`'s only possible value without a number would cross the
-    # wire as an explicit null -- and a null is not an absent variable, so the
-    # schema's `= 64` would be unreachable through the generated API.
-    schema = graphql.build_schema(SCHEMA_WITH_DEFAULT_ARG)
-    template_doc = graphql.parse(TEMPLATE)
-    image_parts = _fragment(
-        "fragment ImageParts on ImageAttachment { thumbnail(size: $size) }"
-    )
-
-    expanded = expand_binding(
-        schema=schema,
-        template_doc=template_doc,
-        template_operation=_operation(template_doc),
-        template_name="GetAttachment",
-        slots=SLOTS,
-        spreads=_bound(
-            schema, {"attachment": (image_parts,)}, {"ImageParts": image_parts}
-        ),
-        location="test:1",
-    )
-
-    [synthesized] = expanded.fragment_vars
-    assert synthesized.node.variable.name.value == "size"
-    assert isinstance(synthesized.node.type, graphql.NamedTypeNode)
-    assert isinstance(synthesized, OmittableSynthesizedVar)
-    assert not isinstance(synthesized.explicit_value_type, graphql.GraphQLNonNull)
 
 
 def test_fragment_variable_on_unknown_argument_defers_to_validate():

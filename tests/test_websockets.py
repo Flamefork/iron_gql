@@ -205,7 +205,7 @@ async def test_subscribe_error():
                 _CounterResult, "subscription { counter }", variables={}, headers={}
             ) as stream:
                 async for item in stream:
-                    results.append(item.counter)  # noqa: PERF401
+                    results.append(item.counter)  # ruff: ignore[manual-list-comprehension]
 
         with pytest.raises(GraphQLResponseError, match="boom"):
             await consume()
@@ -877,7 +877,7 @@ async def test_subscribe_abnormal_disconnect_during_messages():
                 _CounterResult, "subscription { counter }", variables={}, headers={}
             ) as stream:
                 async for item in stream:
-                    results.append(item.counter)  # noqa: PERF401
+                    results.append(item.counter)  # ruff: ignore[manual-list-comprehension]
 
         with pytest.raises(
             SubscriptionInterruptedError, match="closed with code 1011: Internal Error"

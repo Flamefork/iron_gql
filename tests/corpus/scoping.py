@@ -239,7 +239,7 @@ def _module_source(*, outer: str, site: Site, shadow: str, order: str) -> str:
         if outer == "enclosing" and index == site.enclosing_after:
             # Internal invariant: `_valid` only pairs `enclosing` with a site
             # that declares where an enclosing holder goes.
-            assert site.enclosing_level is not None  # noqa: S101
+            assert site.enclosing_level is not None  # ruff: ignore[assert]
             lines.extend(_indent([f"tmpl = {TEMPLATE}"], site.enclosing_level))
 
     shadow_block = SHADOWS[shadow]

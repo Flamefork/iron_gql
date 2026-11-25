@@ -6,9 +6,10 @@ import re
 import subprocess
 import sys
 import textwrap
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator
 from collections.abc import Callable
 from collections.abc import Coroutine
+from collections.abc import Generator
 from collections.abc import Iterator
 from collections.abc import Mapping
 from contextlib import asynccontextmanager
@@ -87,7 +88,7 @@ def build_schema(sdl: str, resolvers: Resolvers) -> graphql.GraphQLSchema:
     schema = graphql.build_schema(sdl)
     for type_name, fields in resolvers.items():
         gql_type = schema.get_type(type_name)
-        assert isinstance(gql_type, graphql.GraphQLObjectType)  # noqa: S101
+        assert isinstance(gql_type, graphql.GraphQLObjectType)  # ruff: ignore[assert]
         for field_name, resolver in fields.items():
             object_fields(gql_type)[field_name].resolve = resolver
     return schema
@@ -279,7 +280,7 @@ def make_sse_subscription_app(payloads: list[dict[str, object]]) -> ASGIApp:
 @asynccontextmanager
 async def subscription_server(
     protocol: SubscriptionProtocol, payloads: list[dict[str, object]]
-) -> AsyncIterator[tuple[str, ASGIApp | None]]:
+) -> AsyncGenerator[tuple[str, ASGIApp | None]]:
     match protocol:
         case "graphql-transport-ws":
             yield (
@@ -433,7 +434,7 @@ async def use_package_client(
     base_url: str,
     target_app: ASGIApp | None = None,
     subscription_protocol: SubscriptionProtocol = "graphql-sse",
-) -> AsyncIterator[None]:
+) -> AsyncGenerator[None]:
     """Point the committed generated package's client at base_url."""
     client = AsyncGQLClient(
         base_url=base_url,
@@ -449,7 +450,7 @@ def use_sync_package_client(
     package: str,
     base_url: str,
     subscription_protocol: SubscriptionProtocol = "graphql-sse",
-) -> Iterator[None]:
+) -> Generator[None]:
     """The sync counterpart of `use_package_client`; the sync client takes no
     target_app, so its base_url always points at a real server."""
     client = GQLClient(base_url=base_url, subscription_protocol=subscription_protocol)
@@ -460,7 +461,7 @@ def use_sync_package_client(
 @contextmanager
 def sync_gql_server(
     httpserver: HTTPServer, package: str, resolvers: Resolvers
-) -> Iterator[None]:
+) -> Generator[None]:
     schema = build_schema(_package_schema(package).read_text(), resolvers)
     with use_sync_package_client(package, setup_httpserver(httpserver, schema)):
         yield
@@ -469,7 +470,7 @@ def sync_gql_server(
 @asynccontextmanager
 async def gql_server(
     httpserver: HTTPServer, package: str, resolvers: Resolvers
-) -> AsyncIterator[None]:
+) -> AsyncGenerator[None]:
     """Serve the schema of a committed generated package with the given
     resolvers and point the package's client at the test server."""
     schema = build_schema(_package_schema(package).read_text(), resolvers)
@@ -618,7 +619,7 @@ class ProjectBuilder:
         schema: str,
         queries: str,
         resolvers: Resolvers,
-    ) -> AsyncIterator[tuple[ModuleType, ModuleType]]:
+    ) -> AsyncGenerator[tuple[ModuleType, ModuleType]]:
         base_url = setup_httpserver(httpserver, build_schema(schema, resolvers))
         self.prepare(schema=schema, queries=queries, base_url=base_url)
         api_module, queries_module = self.generate_and_import()

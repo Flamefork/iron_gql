@@ -18,6 +18,7 @@ from collections import UserDict
 from collections.abc import AsyncIterator
 from collections.abc import Callable
 from collections.abc import Coroutine
+from collections.abc import Generator
 from collections.abc import Iterator
 from collections.abc import Mapping
 from contextlib import AbstractAsyncContextManager
@@ -628,7 +629,7 @@ def _module(
     options: str,
     protocol: SubscriptionProtocol = "graphql-sse",
     model_base_import: str = "pydantic:BaseModel",
-) -> Iterator[_Module]:
+) -> Generator[_Module]:
     test_project.prepare(schema=_SCHEMA, queries=_QUERIES)
     test_project.write_file(
         test_project.root / "sample_app/settings.py",

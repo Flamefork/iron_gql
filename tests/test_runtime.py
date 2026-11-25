@@ -1,4 +1,4 @@
-import datetime
+import datetime as dt
 import io
 import json
 from decimal import Decimal
@@ -289,14 +289,14 @@ def test_prepare_variables_handles_nested_structures():
 
 
 def test_prepare_variables_handles_custom_scalar_types():
-    dt = datetime.datetime(2024, 1, 15, 10, 30, 0, tzinfo=datetime.UTC)
-    d = datetime.date(2024, 6, 1)
+    moment = dt.datetime(2024, 1, 15, 10, 30, 0, tzinfo=dt.UTC)
+    day = dt.date(2024, 6, 1)
 
     result, files = serialize_variables({
-        "dt": dt,
-        "d": d,
+        "dt": moment,
+        "d": day,
         "dec": Decimal("12.50"),
-        "dates": [dt, d],
+        "dates": [moment, day],
     })
     assert result == {
         "dt": "2024-01-15T10:30:00Z",
@@ -450,10 +450,10 @@ async def test_custom_scalar_in_variables_and_response(httpserver: HTTPServer):
         "runtime",
         {"Query": {"events": resolve_events}},
     ):
-        dt = datetime.datetime(2024, 1, 15, 10, 30, 0, tzinfo=datetime.UTC)
-        result = await queries.get_events.execute(since=dt)
+        since = dt.datetime(2024, 1, 15, 10, 30, 0, tzinfo=dt.UTC)
+        result = await queries.get_events.execute(since=since)
         assert result.events[0].name == "Launch"
-        assert result.events[0].started_at == dt
+        assert result.events[0].started_at == since
 
 
 async def test_base_url_without_trailing_slash_calls_exact_endpoint(

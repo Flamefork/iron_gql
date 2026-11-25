@@ -168,7 +168,9 @@ def parse_documents(
     failures: list[tuple[Statement, graphql.GraphQLSyntaxError]] = []
     for stmt in statements:
         try:
-            docs.append((stmt, graphql.parse(stmt.clean_text)))
+            # An empty selection `{ }` has no model to generate.
+            doc = graphql.parse(stmt.clean_text, allow_empty_selection_sets=False)
+            docs.append((stmt, doc))
         except graphql.GraphQLSyntaxError as exc:
             failures.append((stmt, exc))
     if not failures:

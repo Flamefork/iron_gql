@@ -1,3 +1,6 @@
+import subprocess
+import sys
+
 import pytest
 
 from example import ch01_queries
@@ -71,3 +74,23 @@ def test_sync_fetch_user(capsys: pytest.CaptureFixture[str]):
 
 def test_generated_modules_are_current():
     assert [rendered.diff() for rendered in render_modules()] == ["", ""]
+
+
+def test_generated_modules_pass_every_rule_of_ruff():
+    # Whatever ruff settings a consumer has, the generated module needs no
+    # exception in them. The text is checked as written, not the file on disk.
+    modules = render_modules()
+    assert modules
+    for rendered in modules:
+        report = subprocess.run(
+            [
+                *(sys.executable, "-m", "ruff", "check", "--isolated", "--no-cache"),
+                *("--preview", "--select", "ALL", "--output-format", "concise"),
+                *("--stdin-filename", str(rendered.path), "-"),
+            ],
+            input=rendered.text,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert report.returncode == 0, report.stdout + report.stderr
