@@ -107,7 +107,7 @@ class GetViewerQuery(runtime.GQLOperation):
             GetViewerQueryResult,
             'fragment ViewerFields on User {\n  name\n}\n\nquery GetViewer {\n  viewer {\n    id\n    ...ViewerFields\n  }\n}',
             variables={},
-            headers=self.headers,
+            options=self.options,
         )
 
 
@@ -183,7 +183,7 @@ class WithSlotQueryBound[TResult: pydantic.BaseModel](runtime.GQLBoundOperation)
             typing.cast("type[TResult]", WithSlotQueryResult),
             self.exec_source,
             variables={"id": id, **self.fragment_args},
-            headers=self.headers,
+            options=self.options,
             slot_readers=self.slot_readers,
         )
 

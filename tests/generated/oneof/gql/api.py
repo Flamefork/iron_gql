@@ -180,7 +180,7 @@ class SearchMutation(runtime.GQLOperation):
             SearchMutationResult,
             'mutation Search($criteria: SearchCriteria!) {\n  search(criteria: $criteria)\n}',
             variables={"criteria": criteria},
-            headers=self.headers,
+            options=self.options,
         )
 
 
@@ -191,7 +191,7 @@ class UpdateMutation(runtime.GQLOperation):
             UpdateMutationResult,
             'mutation Update($input: UpdateAction!) {\n  update(input: $input)\n}',
             variables={"input": input},
-            headers=self.headers,
+            options=self.options,
         )
 
 
@@ -202,7 +202,7 @@ class DoSearchMutation(runtime.GQLOperation):
             DoSearchMutationResult,
             'mutation DoSearch($input: WrapperInput!) {\n  doSearch(input: $input)\n}',
             variables={"input": input},
-            headers=self.headers,
+            options=self.options,
         )
 
 
@@ -213,7 +213,7 @@ class ActMutation(runtime.GQLOperation):
             ActMutationResult,
             'mutation Act($input: SingleChoice!) {\n  act(input: $input)\n}',
             variables={"input": input},
-            headers=self.headers,
+            options=self.options,
         )
 
 
@@ -224,7 +224,7 @@ class FilterMutation(runtime.GQLOperation):
             FilterMutationResult,
             'mutation Filter($by: FilterBy!) {\n  filter(by: $by)\n}',
             variables={"by": by},
-            headers=self.headers,
+            options=self.options,
         )
 
 
@@ -235,7 +235,7 @@ class ListSearchMutation(runtime.GQLOperation):
             ListSearchMutationResult,
             'mutation ListSearch($by: SearchBy!) {\n  searchBy(by: $by)\n}',
             variables={"by": by},
-            headers=self.headers,
+            options=self.options,
         )
 
 
@@ -246,7 +246,7 @@ class ActNestedMutation(runtime.GQLOperation):
             ActNestedMutationResult,
             'mutation ActNested($input: OuterChoice!) {\n  actNested(input: $input)\n}',
             variables={"input": input},
-            headers=self.headers,
+            options=self.options,
         )
 
 

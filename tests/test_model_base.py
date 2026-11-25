@@ -475,7 +475,7 @@ def test_use_client_refuses_a_client_on_another_base(base: type[pydantic.BaseMod
             with use_client(sync_api, client):
                 pass
         assert cast("GQLClient", vars(sync_api)["_client"]) is previous
-        assert client.query(_Answer, "query { ok }", variables={}, headers={}).ok
+        assert client.query(_Answer, "query { ok }", variables={}, options={}).ok
 
 
 @pytest.mark.parametrize("base", [pydantic.BaseModel, sync_settings.Model])
@@ -493,7 +493,7 @@ async def test_use_client_refuses_an_async_client_on_another_base(
         async with use_client(api, client):
             pass
     assert cast("AsyncGQLClient", vars(api)["_client"]) is previous
-    answer = await client.query(_Answer, "query { ok }", variables={}, headers={})
+    answer = await client.query(_Answer, "query { ok }", variables={}, options={})
     assert answer.ok
     await client.close()
 

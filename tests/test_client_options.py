@@ -12,10 +12,10 @@ import importlib
 import inspect
 import re
 import sys
-import textwrap
 import weakref
 from collections import UserDict
 from collections.abc import AsyncIterator
+from collections.abc import Awaitable
 from collections.abc import Callable
 from collections.abc import Coroutine
 from collections.abc import Generator
@@ -26,7 +26,6 @@ from contextlib import AbstractContextManager
 from contextlib import contextmanager
 from dataclasses import dataclass
 from dataclasses import field
-from pathlib import Path
 from types import ModuleType
 from typing import Literal
 from typing import Protocol
@@ -56,11 +55,12 @@ from iron_gql.testing import accept_graphql_ws
 from iron_gql.testing import use_client
 from iron_gql.testing.server import live_asgi_server
 from tests.conftest import ProjectBuilder
-from tests.conftest import SSETestRequest
 from tests.conftest import accept_graphql_sse
 from tests.conftest import basedpyright_report
+from tests.conftest import decode_headers
 from tests.conftest import generated_package
 from tests.conftest import generated_source
+from tests.conftest import readme_block
 from tests.conftest import run_async
 
 _PACKAGE_SCHEMA = "type Query { ping: String! }"
@@ -76,8 +76,9 @@ class CONFIG:
     url: ClassVar[str] = "http://testserver/graphql/"
     gql: ClassVar[{options}] = {{
         "headers": {{"X-Tenant": "t-1"}},
-        "query_timeout": 30,
-        "subscription_idle_timeout": 2.5,
+        "connect_timeout": 2.5,
+        "timeout": 30,
+        "stream_idle_timeout": 60,
         "httpx_options": {{"trust_env": False}},
     }}
 """
@@ -121,17 +122,15 @@ _AUTH_HEADER = "Basic dXNlcjpwdw=="
 # The limits under test, and the time the server outwaits them: a client that
 # reads no limit gets its answer, and one under a limit gives up long before.
 _IDLE = 0.2
-_QUERY_TIMEOUT = 1
+_TIMEOUT = 1
 _PATIENCE = 4
 
-_HEADER_PAIRS = pydantic.TypeAdapter(list[tuple[bytes, bytes]])
 
-
-# Answers `ping` and counts to 1 in either protocol, over a websocket after more
-# than `_IDLE` seconds for `late`. `slow` is answered, and `silent` -- a stream
-# that is open -- counts, only to a client that still waits after `_PATIENCE`
-# seconds. `/moved` redirects to `/graphql`. Records the headers of every
-# request it answers, a websocket upgrade included.
+# Answers `ping` and counts to 1 in either protocol. `slow` is answered, and
+# `silent` -- a stream that is open -- and `late` -- the same over a websocket --
+# count, only to a client that still waits after `_PATIENCE` seconds. `/moved`
+# redirects to `/graphql`. Records the headers of every request it answers, a
+# websocket upgrade included.
 @dataclass
 class _Server:
     seen: list[tuple[_Path, dict[str, str]]] = field(default_factory=list)
@@ -140,13 +139,12 @@ class _Server:
         self, scope: ASGIScope, receive: ASGIReceive, send: ASGISend
     ) -> None:
         if scope["type"] == "websocket":
-            pairs = _HEADER_PAIRS.validate_python(scope["headers"])
-            headers = {key.decode(): value.decode() for key, value in pairs}
-            self.seen.append(("ws", headers))
+            self.seen.append(("ws", dict(decode_headers(scope))))
             connection = await accept_graphql_ws(scope, receive, send)
             subscription = await connection.ack()
-            if "late" in cast("str", subscription.payload["query"]):
-                await asyncio.sleep(_IDLE * 2)
+            query = cast("str", subscription.payload["query"])
+            if "late" in query and await _hung_up(connection.drain()):
+                return
             await subscription.next({"counter": 1})
             await subscription.complete()
             await connection.drain()
@@ -165,14 +163,14 @@ class _Server:
             await request.open_stream()
             # The server sends the head of a response with its first bytes.
             await request.write(b": open\n\n")
-            if "silent" in query and await _hung_up(request):
+            if "silent" in query and await _hung_up(request.wait_disconnect()):
                 return
             self.seen.append(("sse", request.headers))
             await request.next({"data": {"counter": 1}})
             await request.complete()
             await request.end()
         else:
-            if "slow" in query and await _hung_up(request):
+            if "slow" in query and await _hung_up(request.wait_disconnect()):
                 return
             self.seen.append(("query", request.headers))
             await request.respond(200, "application/json", b'{"data":{"ping":"pong"}}')
@@ -181,10 +179,10 @@ class _Server:
         return [(path, headers.get(name)) for path, headers in self.seen]
 
 
-async def _hung_up(request: SSETestRequest) -> bool:
+async def _hung_up(disconnect: Awaitable[object]) -> bool:
     try:
         async with asyncio.timeout(_PATIENCE):
-            await request.wait_disconnect()
+            await disconnect
     except TimeoutError:
         return False
     return True
@@ -211,20 +209,20 @@ def _protocol(path: _Path) -> SubscriptionProtocol:
 
 def _send(client: GQLClient, path: _Path) -> None:
     if path == "query":
-        client.query(_Pong, "query { ping }", variables={}, headers={})
+        client.query(_Pong, "query { ping }", variables={}, options={})
         return
     with client.subscribe(
-        _Count, "subscription { counter }", variables={}, headers={}
+        _Count, "subscription { counter }", variables={}, options={}
     ) as stream:
         assert [item.counter for item in stream] == [1]
 
 
 async def _async_send(client: AsyncGQLClient, path: _Path) -> None:
     if path == "query":
-        await client.query(_Pong, "query { ping }", variables={}, headers={})
+        await client.query(_Pong, "query { ping }", variables={}, options={})
         return
     async with client.subscribe(
-        _Count, "subscription { counter }", variables={}, headers={}
+        _Count, "subscription { counter }", variables={}, options={}
     ) as stream:
         assert [item.counter async for item in stream] == [1]
 
@@ -382,7 +380,8 @@ _OWNED: dict[str, str] = {
     "base_url": "'base_url' (pass base_url to the client)",
     "headers": "'headers' (pass headers to the client)",
     "timeout": (
-        "'timeout' (pass query_timeout and subscription_idle_timeout to the client)"
+        "'timeout' (pass connect_timeout, timeout and stream_idle_timeout to the "
+        "client)"
     ),
     "cookies": "'cookies' (drop it, the client keeps its cookies itself)",
     "transport": f"'transport' ({_IN_PROCESS})",
@@ -688,11 +687,11 @@ def test_module_options_hold_for_websocket_subscriptions(
 
 
 @pytest.mark.parametrize("mode", _MODES)
-def test_module_query_timeout_ends_a_slow_query(
+def test_module_timeout_ends_a_slow_query(
     test_project: ProjectBuilder, server: tuple[_Server, str], mode: _Mode
 ):
     _app, base_url = server
-    options = f'{{"query_timeout": {_QUERY_TIMEOUT}}}'
+    options = f'{{"timeout": {_TIMEOUT}}}'
     with (
         _module(test_project, mode, base_url, options) as module,
         pytest.raises(TransportError) as error,
@@ -706,7 +705,7 @@ def test_module_idle_timeout_ends_a_silent_sse_subscription(
     test_project: ProjectBuilder, server: tuple[_Server, str], mode: _Mode
 ):
     _app, base_url = server
-    options = f'{{"subscription_idle_timeout": {_IDLE}}}'
+    options = f'{{"stream_idle_timeout": {_IDLE}}}'
     with (
         _module(test_project, mode, base_url, options) as module,
         pytest.raises(SubscriptionInterruptedError),
@@ -715,15 +714,18 @@ def test_module_idle_timeout_ends_a_silent_sse_subscription(
 
 
 @pytest.mark.parametrize("mode", _MODES)
-def test_websocket_subscription_does_not_read_the_idle_timeout(
+def test_module_idle_timeout_ends_a_silent_websocket_subscription(
     test_project: ProjectBuilder, server: tuple[_Server, str], mode: _Mode
 ):
     _app, base_url = server
-    options = f'{{"subscription_idle_timeout": {_IDLE}}}'
-    with _module(
-        test_project, mode, base_url, options, "graphql-transport-ws"
-    ) as module:
-        assert module.counters("late") == [1]
+    options = f'{{"stream_idle_timeout": {_IDLE}}}'
+    with (
+        _module(
+            test_project, mode, base_url, options, "graphql-transport-ws"
+        ) as module,
+        pytest.raises(SubscriptionInterruptedError),
+    ):
+        module.counters("late")
 
 
 def test_async_module_calls_the_app_its_options_name(test_project: ProjectBuilder):
@@ -1050,15 +1052,7 @@ def test_client_its_own_options_refer_to_is_collected_once_closed():
 
 # The README's own example of a typed dict, as the settings of a project.
 def _readme_settings() -> str:
-    readme = Path(__file__).parent.parent / "README.md"
-    blocks = [
-        match.group(1)
-        for match in re.finditer(
-            r"```python\n(.*?)```", readme.read_text(encoding="utf-8"), re.DOTALL
-        )
-    ]
-    [block] = [block for block in blocks if "AsyncGQLClientOptions" in block]
-    return textwrap.dedent(block)
+    return readme_block("AsyncGQLClientOptions")
 
 
 def test_readme_options_make_a_module_that_imports(test_project: ProjectBuilder):
@@ -1098,7 +1092,7 @@ def test_basedpyright_judges_the_options_dict_and_its_module(
         """
         from iron_gql.runtime import GQLClientOptions
 
-        OPTIONS: GQLClientOptions = {"query_timeot": 30}
+        OPTIONS: GQLClientOptions = {"timeuot": 30}
         """,
     )
     modes: tuple[_Mode, ...] = ("async", "sync")

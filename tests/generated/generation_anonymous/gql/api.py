@@ -66,7 +66,7 @@ class Anonymous97588d2694772639a577fd66f9013e54Query(runtime.GQLOperation):
             Anonymous97588d2694772639a577fd66f9013e54QueryResult,
             '{\n  ping\n}',
             variables={},
-            headers=self.headers,
+            options=self.options,
         )
 
 

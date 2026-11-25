@@ -83,7 +83,7 @@ class GetNodeAndCountQuery(runtime.GQLOperation):
             GetNodeAndCountQueryResult,
             'query GetNodeAndCount($id: ID!) {\n  node(id: $id) {\n    __typename\n    ... on User {\n      id\n      name\n    }\n    ... on Admin {\n      id\n      name\n      permissions\n    }\n  }\n  count\n}',
             variables={"id": id},
-            headers=self.headers,
+            options=self.options,
         )
 
 

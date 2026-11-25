@@ -133,7 +133,7 @@ class PingQuery(runtime.GQLOperation):
             PingQueryResult,
             'query Ping {\n  ping\n}',
             variables={},
-            headers=self.headers,
+            options=self.options,
         )
 
 
@@ -144,7 +144,7 @@ class FailQuery(runtime.GQLOperation):
             FailQueryResult,
             'query Fail {\n  fail\n}',
             variables={},
-            headers=self.headers,
+            options=self.options,
         )
 
 
@@ -155,7 +155,7 @@ class OkQuery(runtime.GQLOperation):
             OkQueryResult,
             'query Ok {\n  ok\n}',
             variables={},
-            headers=self.headers,
+            options=self.options,
         )
 
 
@@ -166,7 +166,7 @@ class GetUserQuery(runtime.GQLOperation):
             GetUserQueryResult,
             'query GetUser($id: ID!) {\n  user(id: $id) {\n    id\n    name\n  }\n}',
             variables={"id": id},
-            headers=self.headers,
+            options=self.options,
         )
 
 
@@ -177,7 +177,7 @@ class UpdateUserMutation(runtime.GQLOperation):
             UpdateUserMutationResult,
             'mutation UpdateUser($input: UpdateUserInput!) {\n  updateUser(input: $input) {\n    id\n    name\n  }\n}',
             variables={"input": input},
-            headers=self.headers,
+            options=self.options,
         )
 
 
@@ -188,7 +188,7 @@ class NumbersQuery(runtime.GQLOperation):
             NumbersQueryResult,
             'query Numbers {\n  numbers1\n  numbers2\n}',
             variables={},
-            headers=self.headers,
+            options=self.options,
         )
 
 
@@ -199,7 +199,7 @@ class GetPostsQuery(runtime.GQLOperation):
             GetPostsQueryResult,
             'query GetPosts($limit: Int = 5) {\n  posts(limit: $limit)\n}',
             variables={"limit": limit},
-            headers=self.headers,
+            options=self.options,
         )
 
 
@@ -210,7 +210,7 @@ class GetEventsQuery(runtime.GQLOperation):
             GetEventsQueryResult,
             'query GetEvents($since: DateTime!) {\n  events(since: $since) {\n    name\n    startedAt\n  }\n}',
             variables={"since": since},
-            headers=self.headers,
+            options=self.options,
         )
 
 
@@ -221,7 +221,7 @@ class SearchQuery(runtime.GQLOperation):
             SearchQueryResult,
             'query Search($criteria: SearchCriteria!) {\n  search(criteria: $criteria)\n}',
             variables={"criteria": criteria},
-            headers=self.headers,
+            options=self.options,
         )
 
 
@@ -232,7 +232,7 @@ class UploadFileMutation(runtime.GQLOperation):
             UploadFileMutationResult,
             'mutation UploadFile($file: Upload!, $label: String!) {\n  uploadFile(file: $file, label: $label)\n}',
             variables={"file": file, "label": label},
-            headers=self.headers,
+            options=self.options,
         )
 
 
@@ -243,7 +243,7 @@ class UploadMutation(runtime.GQLOperation):
             UploadMutationResult,
             'mutation Upload($file: Upload!) {\n  uploadFile(file: $file)\n}',
             variables={"file": file},
-            headers=self.headers,
+            options=self.options,
         )
 
 

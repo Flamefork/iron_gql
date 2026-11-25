@@ -73,7 +73,7 @@ class GetUserQuery(runtime.GQLOperation):
             GetUserQueryResult,
             'query GetUser($id: ID!) {\n  user(id: $id) {\n    ...UserFields\n  }\n}\n\nfragment ContactFields on User {\n  email\n  ...RoleFields\n}\n\nfragment RoleFields on User {\n  role\n}\n\nfragment UserFields on User {\n  id\n  name\n  ...ContactFields\n}',
             variables={"id": id},
-            headers=self.headers,
+            options=self.options,
         )
 
 

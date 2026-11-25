@@ -76,7 +76,7 @@ class GetNodeQuery(runtime.GQLOperation):
             GetNodeQueryResult,
             'query GetNode($id: ID!) {\n  node(id: $id) {\n    __typename\n    id\n    child {\n      id\n    }\n  }\n}',
             variables={"id": id},
-            headers=self.headers,
+            options=self.options,
         )
 
 

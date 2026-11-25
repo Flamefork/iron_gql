@@ -69,7 +69,7 @@ class SearchQuery(runtime.GQLOperation):
             SearchQueryResult,
             'query Search($status: Status!) {\n  search(status: $status)\n}',
             variables={"status": status},
-            headers=self.headers,
+            options=self.options,
         )
 
 

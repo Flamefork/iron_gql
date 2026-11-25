@@ -772,42 +772,30 @@ def _render_execute(
     variables: tuple[CollectedOperationVar, ...],
     source_expr: str,
     variables_expr: str,
-    extra_kwargs: tuple[str, ...] = (),
+    result_expr: str | None = None,
+    slot_readers_expr: str | None = None,
     mode: ModeConfig,
 ) -> str:
     # The one `execute` emitter: a plain operation and a template's shared base
-    # differ only in where the document text comes from, what fills `variables`
-    # and whether a validation context rides along -- never in how a
-    # subscription is shaped or which client method answers it.
+    # differ only in where the document text comes from, what fills `variables`,
+    # how the result class is spelled for the client and whether a validation
+    # context rides along -- never in how a subscription is shaped or which client
+    # method answers it.
     await_kw = "" if is_subscription else mode.await_kw
     client_method = "subscribe" if is_subscription else "query"
     body = "\n".join([
         f"return {await_kw}_client.{client_method}(",
-        f"    {result_type},",
+        f"    {result_type if result_expr is None else result_expr},",
         f"    {source_expr},",
         f"    variables={variables_expr},",
-        "    headers=self.headers,",
-        *(f"    {kwarg}," for kwarg in extra_kwargs),
+        "    options=self.options,",
+        *(
+            []
+            if slot_readers_expr is None
+            else [f"    slot_readers={slot_readers_expr},"]
+        ),
         ")",
     ])
-    return _render_execute_signature(
-        result_type=result_type,
-        is_subscription=is_subscription,
-        variables=variables,
-        mode=mode,
-        body=body,
-    )
-
-
-def _render_execute_signature(
-    *,
-    result_type: str,
-    is_subscription: bool,
-    variables: tuple[CollectedOperationVar, ...],
-    mode: ModeConfig,
-    body: str,
-    decorator: str = "",
-) -> str:
     # A subscription's execute hands back the context manager the client
     # returns, so it is never awaited and never declared async in either mode.
     if is_subscription:
@@ -816,11 +804,10 @@ def _render_execute_signature(
     else:
         async_kw = mode.async_kw
         return_type = result_type
-    signature_line = (
+    signature = (
         f"{async_kw}def execute({_execute_signature(variables)}) -> {return_type}:"
     )
-    lines = [*([decorator] if decorator else []), signature_line]
-    return "\n".join([*lines[:-1], f"{lines[-1]}\n    {indent_block(body, '    ')}"])
+    return f"{signature}\n    {indent_block(body, '    ')}"
 
 
 def render_operations(
@@ -886,33 +873,23 @@ def render_template_bases(
 def _render_template_bound_execute(
     template: CollectedTemplate, mode: ModeConfig
 ) -> str:
-    await_kw = "" if template.is_subscription else mode.await_kw
-    client_method = "subscribe" if template.is_subscription else "query"
-    variables_expr = _variables_expr(template.variables, "**self.fragment_args")
     # The single point named in the class-level comment above: the runtime
     # value pydantic actually validates against is the template's own bare
     # result class (every phantom at its `Never` default), while the method's
     # declared return type stays `TResult` -- the parametrisation a caller's
     # own `bind()` overload promised. `cast` reconciles the two; nothing here
     # checks that they agree, because nothing at runtime could.
-    query_type_expr = (
-        f'typing.cast("type[{BOUND_RESULT_PARAM}]", {template.result_type})'
-    )
-    body = "\n".join([
-        f"return {await_kw}_client.{client_method}(",
-        f"    {query_type_expr},",
-        "    self.exec_source,",
-        f"    variables={variables_expr},",
-        "    headers=self.headers,",
-        "    slot_readers=self.slot_readers,",
-        ")",
-    ])
-    return _render_execute_signature(
+    return _render_execute(
         result_type=BOUND_RESULT_PARAM,
+        result_expr=(
+            f'typing.cast("type[{BOUND_RESULT_PARAM}]", {template.result_type})'
+        ),
         is_subscription=template.is_subscription,
         variables=template.variables,
+        source_expr="self.exec_source",
+        variables_expr=_variables_expr(template.variables, "**self.fragment_args"),
+        slot_readers_expr="self.slot_readers",
         mode=mode,
-        body=body,
     )
 
 

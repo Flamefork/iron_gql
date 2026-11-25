@@ -80,7 +80,7 @@ class GetUserQuery(runtime.GQLOperation):
             GetUserQueryResult,
             'query GetUser($id: ID!) {\n  user(id: $id) {\n    ...UserFields\n  }\n}\n\nfragment UserFields on User {\n  id\n  name\n}',
             variables={"id": id},
-            headers=self.headers,
+            options=self.options,
         )
 
 
@@ -91,7 +91,7 @@ class GetPostQuery(runtime.GQLOperation):
             GetPostQueryResult,
             'query GetPost($id: ID!) {\n  post(id: $id) {\n    ...PostFields\n  }\n}\n\nfragment PostFields on Post {\n  id\n  title\n}',
             variables={"id": id},
-            headers=self.headers,
+            options=self.options,
         )
 
 

@@ -81,7 +81,7 @@ class GetNodeQuery(runtime.GQLOperation):
             GetNodeQueryResult,
             'query GetNode {\n  node {\n    __typename\n    ... on User {\n      id\n      name\n    }\n    ... on Post {\n      id\n      title\n    }\n  }\n}',
             variables={},
-            headers=self.headers,
+            options=self.options,
         )
 
 

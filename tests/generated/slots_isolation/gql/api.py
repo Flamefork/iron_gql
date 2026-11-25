@@ -178,7 +178,7 @@ class GetBoardQueryBound[TResult: pydantic.BaseModel](runtime.GQLBoundOperation)
             typing.cast("type[TResult]", GetBoardQueryResult),
             self.exec_source,
             variables={"id": id, **self.fragment_args},
-            headers=self.headers,
+            options=self.options,
             slot_readers=self.slot_readers,
         )
 
@@ -189,7 +189,7 @@ class PingBoardQueryBound[TResult: pydantic.BaseModel](runtime.GQLBoundOperation
             typing.cast("type[TResult]", PingBoardQueryResult),
             self.exec_source,
             variables={"id": id, **self.fragment_args},
-            headers=self.headers,
+            options=self.options,
             slot_readers=self.slot_readers,
         )
 
@@ -200,7 +200,7 @@ class PingMainQueryBound[TResult: pydantic.BaseModel](runtime.GQLBoundOperation)
             typing.cast("type[TResult]", PingMainQueryResult),
             self.exec_source,
             variables={"id": id, **self.fragment_args},
-            headers=self.headers,
+            options=self.options,
             slot_readers=self.slot_readers,
         )
 
@@ -211,7 +211,7 @@ class MergedBoardQueryBound[TResult: pydantic.BaseModel](runtime.GQLBoundOperati
             typing.cast("type[TResult]", MergedBoardQueryResult),
             self.exec_source,
             variables={"id": id, **self.fragment_args},
-            headers=self.headers,
+            options=self.options,
             slot_readers=self.slot_readers,
         )
 

@@ -58,7 +58,7 @@ def test_sync_query_sends_variables_and_headers(httpserver: HTTPServer):
             _UserResult,
             _GET_USER,
             variables={"id": "1"},
-            headers={"X-Token": "secret"},
+            options={"headers": {"X-Token": "secret"}},
         )
     finally:
         client.close()
@@ -80,7 +80,7 @@ def test_sync_query_raises_graphql_errors(httpserver: HTTPServer):
     )
     try:
         with pytest.raises(GraphQLResponseError, match="boom"):
-            client.query(_UserResult, _GET_USER, variables={"id": "1"}, headers={})
+            client.query(_UserResult, _GET_USER, variables={"id": "1"}, options={})
     finally:
         client.close()
 
@@ -94,7 +94,7 @@ def test_sync_query_rejects_redirect(httpserver: HTTPServer):
     )
     try:
         with pytest.raises(HTTPResponseError, match="https://elsewhere/graphql"):
-            client.query(_UserResult, _GET_USER, variables={"id": "1"}, headers={})
+            client.query(_UserResult, _GET_USER, variables={"id": "1"}, options={})
     finally:
         client.close()
 
@@ -119,7 +119,7 @@ def test_sync_query_uploads_files(httpserver: HTTPServer):
             _UploadResult,
             "mutation Upload($file: Upload!) { uploadFile(file: $file) }",
             variables={"file": FileVar(io.BytesIO(b"hello"), filename="a.txt")},
-            headers={},
+            options={},
         )
     finally:
         client.close()

@@ -18,7 +18,6 @@ from iron_gql import GraphQLResponseError
 from iron_gql import ResponseError
 from iron_gql import ResponseProtocolError
 from iron_gql import SubscriptionInterruptedError
-from iron_gql import TransportError
 from iron_gql.runtime import ASGIApp
 from iron_gql.runtime import ASGIReceive
 from iron_gql.runtime import ASGIScope
@@ -100,13 +99,13 @@ def _sse_app(handler: _Handler) -> ASGIApp:
 
 @asynccontextmanager
 async def _sse_client(
-    handler: _Handler, subscription_idle_timeout: float | None = None
+    handler: _Handler, stream_idle_timeout: float | None = None
 ) -> AsyncGenerator[AsyncGQLClient]:
     async with async_live_asgi_server(_sse_app(handler)) as base_url:
         client = AsyncGQLClient(
             subscription_protocol="graphql-sse",
             base_url=base_url,
-            subscription_idle_timeout=subscription_idle_timeout,
+            stream_idle_timeout=stream_idle_timeout,
         )
         try:
             yield client
@@ -116,7 +115,7 @@ async def _sse_client(
 
 async def _read_counters(client: AsyncGQLClient, into: list[int]) -> None:
     async with client.subscribe(
-        _CounterResult, _SUBSCRIPTION, variables={}, headers={}
+        _CounterResult, _SUBSCRIPTION, variables={}, options={}
     ) as stream:
         async for item in stream:
             into.append(item.counter)  # ruff: ignore[manual-list-comprehension]
@@ -139,7 +138,7 @@ async def test_events_arrive_while_the_response_is_still_open():
     async with _sse_client(handler) as client, asyncio.timeout(_STEP_TIMEOUT):
         counters: list[int] = []
         async with client.subscribe(
-            _CounterResult, _SUBSCRIPTION, variables={}, headers={}
+            _CounterResult, _SUBSCRIPTION, variables={}, options={}
         ) as stream:
             async for item in stream:
                 counters.append(item.counter)
@@ -178,7 +177,7 @@ async def test_leaving_the_subscription_early_closes_the_connection():
 
     async with _sse_client(handler) as client, asyncio.timeout(_STEP_TIMEOUT):
         async with client.subscribe(
-            _CounterResult, _SUBSCRIPTION, variables={}, headers={}
+            _CounterResult, _SUBSCRIPTION, variables={}, options={}
         ) as stream:
             async for item in stream:
                 assert item.counter == 1
@@ -222,12 +221,12 @@ async def test_request_is_a_post_that_asks_for_an_event_stream():
             headers={"X-Default": "on"},
         )
         try:
-            await client.query(_PingResult, "query { ping }", variables={}, headers={})
+            await client.query(_PingResult, "query { ping }", variables={}, options={})
             async with client.subscribe(
                 _CounterResult,
                 "subscription ($n: Int!) { counter(n: $n) }",
                 variables={"n": 3},
-                headers={"X-Call": "yes"},
+                options={"headers": {"X-Call": "yes"}},
             ) as stream:
                 assert [item async for item in stream] == []
         finally:
@@ -292,7 +291,7 @@ async def test_generated_module_subscribes_by_the_protocol_it_was_generated_with
         client = cast("AsyncGQLClient", vars(api_module)["_client"])
         try:
             async with client.subscribe(
-                _CounterResult, "subscription { counter }", variables={}, headers={}
+                _CounterResult, "subscription { counter }", variables={}, options={}
             ) as stream:
                 assert [item.counter async for item in stream] == [7]
         finally:
@@ -472,26 +471,6 @@ async def test_response_ending_without_complete_is_an_interruption():
     assert len(requests) == 1
 
 
-async def test_query_timeout_does_not_limit_the_wait_between_events():
-    async def handler(request: SSETestRequest) -> None:
-        await request.open_stream()
-        await asyncio.sleep(1.5)
-        await request.next(_counter(1))
-        await request.complete()
-        await request.end()
-
-    async with async_live_asgi_server(_sse_app(handler)) as base_url:
-        client = AsyncGQLClient(
-            subscription_protocol="graphql-sse", base_url=base_url, query_timeout=1
-        )
-        counters: list[int] = []
-        try:
-            await _read_counters(client, counters)
-        finally:
-            await client.close()
-    assert counters == [1]
-
-
 async def test_response_broken_mid_body_is_an_interruption():
     # The app returns without finishing its response: uvicorn drops the
     # connection in the middle of the chunked body.
@@ -566,39 +545,10 @@ async def test_silence_past_the_idle_timeout_is_an_interruption():
         await request.wait_disconnect()
 
     counters: list[int] = []
-    async with _sse_client(handler, subscription_idle_timeout=0.2) as client:
+    async with _sse_client(handler, stream_idle_timeout=0.2) as client:
         with pytest.raises(SubscriptionInterruptedError) as error:
             await _read_counters(client, counters)
     assert counters == [1]
-    assert isinstance(error.value.__cause__, httpx2.ReadTimeout)
-
-
-async def test_heartbeat_comments_keep_a_quiet_stream_within_the_idle_timeout():
-    async def handler(request: SSETestRequest) -> None:
-        await request.open_stream()
-        for _ in range(8):
-            await asyncio.sleep(0.05)
-            await request.write(b": ping\n\n")
-        await request.next(_counter(1))
-        await request.complete()
-        await request.end()
-
-    counters: list[int] = []
-    async with _sse_client(handler, subscription_idle_timeout=0.2) as client:
-        await _read_counters(client, counters)
-    assert counters == [1]
-
-
-async def test_waiting_for_the_response_headers_is_bounded_by_the_idle_timeout():
-    # The stream is not accepted yet, so this is a failure to reach the server,
-    # not an interruption of a subscription.
-    async def handler(request: SSETestRequest) -> None:
-        await request.wait_disconnect()
-
-    async with _sse_client(handler, subscription_idle_timeout=0.2) as client:
-        with pytest.raises(TransportError) as error:
-            await _read_counters(client, [])
-    assert not isinstance(error.value, SubscriptionInterruptedError)
     assert isinstance(error.value.__cause__, httpx2.ReadTimeout)
 
 
@@ -625,7 +575,7 @@ async def test_file_variables_are_refused():
                 _CounterResult,
                 _SUBSCRIPTION,
                 variables={"file": FileVar(b"x")},
-                headers={},
+                options={},
             ):
                 pass
     finally:
@@ -640,7 +590,7 @@ def _sync_counters(base_url: str) -> list[int]:
     client = GQLClient(subscription_protocol="graphql-sse", base_url=base_url)
     try:
         with client.subscribe(
-            _CounterResult, _SUBSCRIPTION, variables={}, headers={}
+            _CounterResult, _SUBSCRIPTION, variables={}, options={}
         ) as stream:
             return [item.counter for item in stream]
     finally:
@@ -663,7 +613,7 @@ def test_sync_events_arrive_while_the_response_is_still_open():
         try:
             counters: list[int] = []
             with client.subscribe(
-                _CounterResult, _SUBSCRIPTION, variables={}, headers={}
+                _CounterResult, _SUBSCRIPTION, variables={}, options={}
             ) as stream:
                 for item in stream:
                     counters.append(item.counter)
@@ -686,7 +636,7 @@ def test_sync_leaving_the_subscription_early_closes_the_connection():
         client = GQLClient(subscription_protocol="graphql-sse", base_url=base_url)
         try:
             with client.subscribe(
-                _CounterResult, _SUBSCRIPTION, variables={}, headers={}
+                _CounterResult, _SUBSCRIPTION, variables={}, options={}
             ) as stream:
                 for item in stream:
                     assert item.counter == 1

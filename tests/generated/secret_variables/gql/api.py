@@ -85,7 +85,7 @@ class DirectQuery(runtime.GQLOperation):
             DirectQueryResult,
             'query Direct($string: SecretString, $blob: SecretBlob, $number: SecretNumber) {\n  direct(string: $string, blob: $blob, number: $number)\n}',
             variables={"string": string, "blob": blob, "number": number},
-            headers=self.headers,
+            options=self.options,
         )
 
 
@@ -96,7 +96,7 @@ class InInputQuery(runtime.GQLOperation):
             InInputQueryResult,
             'query InInput($vault: Vault!) {\n  inInput(vault: $vault)\n}',
             variables={"vault": vault},
-            headers=self.headers,
+            options=self.options,
         )
 
 
@@ -107,7 +107,7 @@ class InListQuery(runtime.GQLOperation):
             InListQueryResult,
             'query InList($strings: [SecretString!], $blobs: [SecretBlob!], $numbers: [SecretNumber!]) {\n  inList(strings: $strings, blobs: $blobs, numbers: $numbers)\n}',
             variables={"strings": strings, "blobs": blobs, "numbers": numbers},
-            headers=self.headers,
+            options=self.options,
         )
 
 
@@ -118,7 +118,7 @@ class InMappingQuery(runtime.GQLOperation):
             InMappingQueryResult,
             'query InMapping($bag: JSON!) {\n  inMapping(bag: $bag)\n}',
             variables={"bag": bag},
-            headers=self.headers,
+            options=self.options,
         )
 
 

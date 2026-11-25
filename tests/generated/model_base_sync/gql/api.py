@@ -131,7 +131,7 @@ class GetPostQuery(runtime.GQLOperation):
             GetPostQueryResult,
             'query GetPost {\n  post {\n    id\n    postTitle\n  }\n}',
             variables={},
-            headers=self.headers,
+            options=self.options,
         )
 
 
@@ -142,7 +142,7 @@ class GetAttachmentQuery(runtime.GQLOperation):
             GetAttachmentQueryResult,
             'query GetAttachment {\n  post {\n    attachment {\n      __typename\n      ... on ImageAttachment {\n        url\n      }\n      ... on LinkAttachment {\n        href\n      }\n    }\n  }\n}',
             variables={},
-            headers=self.headers,
+            options=self.options,
         )
 
 
@@ -153,7 +153,7 @@ class CounterSubscription(runtime.GQLOperation):
             CounterSubscriptionResult,
             'subscription Counter {\n  counter\n}',
             variables={},
-            headers=self.headers,
+            options=self.options,
         )
 
 
@@ -198,7 +198,7 @@ class GetSlottedQueryBound[TResult: pydantic.BaseModel](runtime.GQLBoundOperatio
             typing.cast("type[TResult]", GetSlottedQueryResult),
             self.exec_source,
             variables={**self.fragment_args},
-            headers=self.headers,
+            options=self.options,
             slot_readers=self.slot_readers,
         )
 

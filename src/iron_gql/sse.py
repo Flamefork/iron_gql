@@ -14,6 +14,7 @@ from typing import Never
 import httpx2
 import pydantic
 
+from iron_gql.call import Call
 from iron_gql.errors import ResponseProtocolError
 from iron_gql.errors import SubscriptionInterruptedError
 from iron_gql.protocol import ProtocolModels
@@ -93,8 +94,7 @@ async def async_graphql_sse_subscribe[T: pydantic.BaseModel](
     url: httpx2.URL,
     payload: dict[str, Any],
     *,
-    headers: dict[str, str],
-    timeouts: httpx2.Timeout,
+    call: Call,
     result_type: type[T],
     slot_readers: SlotReaders | None,
     models: ProtocolModels,
@@ -102,15 +102,14 @@ async def async_graphql_sse_subscribe[T: pydantic.BaseModel](
     async with AsyncExitStack() as stack:
         with translated(_OPENING):
             source = await stack.enter_async_context(
-                client.sse(
-                    url, method="POST", json=payload, headers=headers, timeout=timeouts
-                )
+                client.sse(url, method="POST", json=payload, **call.request)
             )
         response = source.response
         if not (response.is_success and _is_event_stream(response)):
             with reading_body(response):
                 await response.aread()
             _reject(response, models)
+        call.stream_accepted()
         yield await stack.enter_async_context(
             aclosing(_async_receive_events(source, result_type, slot_readers, models))
         )
@@ -142,8 +141,7 @@ def graphql_sse_subscribe[T: pydantic.BaseModel](
     url: httpx2.URL,
     payload: dict[str, Any],
     *,
-    headers: dict[str, str],
-    timeouts: httpx2.Timeout,
+    call: Call,
     result_type: type[T],
     slot_readers: SlotReaders | None,
     models: ProtocolModels,
@@ -151,15 +149,14 @@ def graphql_sse_subscribe[T: pydantic.BaseModel](
     with ExitStack() as stack:
         with translated(_OPENING):
             source = stack.enter_context(
-                client.sse(
-                    url, method="POST", json=payload, headers=headers, timeout=timeouts
-                )
+                client.sse(url, method="POST", json=payload, **call.request)
             )
         response = source.response
         if not (response.is_success and _is_event_stream(response)):
             with reading_body(response):
                 response.read()
             _reject(response, models)
+        call.stream_accepted()
         yield stack.enter_context(
             closing(_receive_events(source, result_type, slot_readers, models))
         )

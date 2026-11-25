@@ -379,8 +379,8 @@ Every `.bind()` the scan leaves alone is recorded with the reason, and `debug_pa
   GRAPHQL_URL = "https://api.example.com/graphql"
   CLIENT_OPTIONS: AsyncGQLClientOptions = {
       "headers": {"X-Tenant": "acme"},
-      "query_timeout": 30,
-      "subscription_idle_timeout": 60,
+      "timeout": 30,
+      "stream_idle_timeout": 60,
       "httpx_options": {
           "limits": httpx2.Limits(max_connections=20),
           "trust_env": False,
@@ -418,9 +418,9 @@ Every `.bind()` the scan leaves alone is recorded with the reason, and `debug_pa
 ## Runtime Highlights
 - `AsyncGQLClient` accepts an ASGI `target_app`. You can use the same runtime for production HTTP calls and for in-process ASGI execution.
 - `GQLClient.subscribe` returns a plain context manager over a blocking generator, so a synchronous consumer reads subscription messages with `for`.
-- Both clients take `subscription_protocol` (required); see [Subscriptions](#subscriptions). `headers`, `query_timeout`, `subscription_idle_timeout` and `httpx_options` are optional; see [Client Options](#client-options).
+- Both clients take `subscription_protocol` (required); see [Subscriptions](#subscriptions). `headers`, `connect_timeout`, `timeout`, `stream_idle_timeout` and `httpx_options` are optional; see [Client Options](#client-options).
 - Both clients take `model_base`, the base of the models that the client parses the protocol with; `pydantic.BaseModel` when you pass none. A generated module passes its own; see **Model base** in [Customization Hooks](#customization-hooks).
-- `GQLOperation.with_headers` clones the operation object. The original does not change, so each call can have its own headers.
+- `with_options`, `with_timeout` and `with_headers` of an operation return a copy of it with its own options. The original does not change, so each call can have its own; see [Operation Options](#operation-options).
 - `Upload` scalars map to `iron_gql.FileVar`. When variables contain `FileVar` instances, the client automatically sends a multipart upload (see the [GraphQL multipart request spec](https://github.com/jaydenseric/graphql-multipart-request-spec)).
 - Variables are converted to JSON-compatible structures: dicts, lists, and nested input models are walked, and values of other types, such as custom scalars, are dumped with the Pydantic `TypeAdapter`.
 - Pydantic secrets (`SecretStr`, `SecretBytes`, `Secret[T]`) go to the server as their values at any depth of the variables: a variable, a field of an input model, a list element, a mapping value. In `repr` and in the dumps of your models they stay masked. Map a secret scalar to one of them, e.g. `"Secret": "pydantic:SecretStr"`; for `Secret[T]`, give the parameterized type a name in your module and map the scalar to that name.
@@ -429,26 +429,66 @@ Every `.bind()` the scan leaves alone is recorded with the reason, and `debug_pa
 
 A client takes these options when you create it, and a generated module passes them from its `client_options_import` (**Client options** in [Customization Hooks](#customization-hooks)). Every key of `GQLClientOptions` and `AsyncGQLClientOptions` is optional.
 
-| Option | What it sets |
-|---|---|
-| `headers` | the headers of every request |
-| `query_timeout` | the `httpx2` timeout of a query or a mutation, in seconds |
-| `subscription_idle_timeout` | the longest silence of an SSE subscription ([Subscriptions](#subscriptions)); a WebSocket subscription does not read it |
-| `httpx_options` | the settings passed on to `httpx2` |
-| `target_app` | the ASGI app that an `AsyncGQLClient` calls in process; a key of `AsyncGQLClientOptions` only |
+| Option | Default | What it sets |
+|---|---|---|
+| `headers` | none | the headers of every request |
+| `connect_timeout` | `10` | the longest wait, in seconds, of each step of reaching the server and sending the operation: for a place in the connection pool, for the connection, for each part of the request |
+| `timeout` | `10` | the longest wait, in seconds, for the server's answer: each wait for data of the response of a query or a mutation; the opening of a subscription |
+| `stream_idle_timeout` | `None` | the longest silence, in seconds, of an open subscription ([Subscriptions](#subscriptions)); a query and a mutation do not read it |
+| `httpx_options` | none | the settings passed on to `httpx2` |
+| `target_app` | none | the ASGI app that an `AsyncGQLClient` calls in process; a key of `AsyncGQLClientOptions` only |
+
+`None` at a limit waits without one. A limit holds for each wait of its step: there is no limit on an operation as a whole. Under `target_app`, `connect_timeout` and `timeout` do not limit a query, a mutation or the WebSocket connection, because the in-process transports of `httpx2` do not read them; the waits for the messages of a WebSocket subscription are limited there too. The wait for a proxy's answer to the request for a tunnel is limited by `timeout`. Over HTTP/2, which takes `httpx2[http2]` and is off until `httpx_options` turns it on, the limits are not promised to hold for each step and each operation apart: operations that run at the same time share a connection.
+
+The options but `target_app` are those of an operation too, which refines them for itself ([Operation Options](#operation-options)).
 
 The endpoint, the subscription protocol and the model base have generator options of their own and are not keys of the types. A key that the client does not take, such as `target_app` in a sync module, fails the import of the module with `TypeError`. A client that [`use_client`](#testing) sets on a module does not get the module's options: create it with the options that it needs.
 
 `httpx_options` holds keyword arguments of `httpx2.Client` in a sync client and of `httpx2.AsyncClient` in an async one: `verify`, `cert`, `proxy`, `limits`, `auth`, `event_hooks` and others. They apply to queries, SSE subscriptions and WebSocket subscriptions, in every event loop. The client copies the dict when it is created: a key that you add later has no effect.
 
 The client checks the keys when it is created:
-- `base_url`, `headers`, `timeout`, `cookies`, `transport` and `mounts` raise `ValueError`: they belong to the client. Use the options of the client instead of the first three. The client keeps its cookies itself. To call an app in process, use `target_app`.
+- `base_url`, `headers`, `timeout`, `cookies`, `transport` and `mounts` raise `ValueError`: they belong to the client. Use the options of the client instead of the first three; instead of `timeout`, they are `connect_timeout`, `timeout` and `stream_idle_timeout`. The client keeps its cookies itself. To call an app in process, use `target_app`.
 - A key that the installed `httpx2` does not take raises `TypeError`.
 - `proxy` other than `None` together with `target_app` raises `ValueError`: `httpx2` would send the requests to the proxy instead of the app.
 
 A value that `httpx2` refuses raises its own exception: in `GQLClient` when the client is created, in `AsyncGQLClient` at the first operation in an event loop.
 
 The settings can change what this document says about the client. `follow_redirects=True` follows a 3xx response, which otherwise raises ([Errors](#errors)). `auth` overwrites the `Authorization` header of an operation, such as one set by `with_headers`.
+
+### Operation Options
+
+An operation takes the options of its client, under the same names and with the same meaning: `headers`, `connect_timeout`, `timeout`, `stream_idle_timeout` and `httpx_options`. The client's options are the defaults, and the operation's refine them:
+
+```python
+from iron_gql.runtime import GQLOperationOptions
+
+HEAVY: GQLOperationOptions = {"timeout": 60}
+
+
+async def get_user_slowly(user_id: str, token: str) -> GetUserQueryResult:
+    heavy = get_user.with_options(**HEAVY)
+    return await heavy.with_headers({"Authorization": token}).execute(id=user_id)
+```
+
+`with_options` returns a copy of the operation, or of the binding that `bind()` returned; the original does not change. `with_timeout(t)` is `with_options(timeout=t)`, and `with_headers(h)` is `with_options(headers=h)`. Set the options where the operation is declared, at a call, or at both: `api_gql("...").with_timeout(60)` is an operation like any other. `options` returns the options of the operation itself, without its client's.
+
+The client's options and the operation's merge by one rule, and so do two `with_options` in a row. The later layer wins:
+- `headers` merge by name, regardless of case.
+- `httpx_options` merge by key, and the value of a key is replaced as a whole. `auth` of an operation goes over the client's, and `None` there takes the client's away.
+- Any other option is replaced. `None` at a limit removes it; `None` at `headers` or `httpx_options` adds nothing.
+
+An option that a call does not name keeps its value. The dicts `headers` and `httpx_options` are copied when you call `with_options`: a key that you add to them later has no effect. What a later change of a value inside them does, such as of the dict of `extensions`, is not specified.
+
+`timeout` of a subscription limits its opening, not the silence of its stream: that is `stream_idle_timeout`. A longer `timeout` does not make the client slower to notice a server that is down: that is `connect_timeout`.
+
+An operation's options hold on the client that executes it, also on one that [`use_client`](#testing) sets: the defaults are then the ones of that client.
+
+`httpx_options` of an operation takes `auth`, `follow_redirects` and `extensions` of an `httpx2` request. They apply to a query, a mutation, the request that opens an SSE stream and the one that opens a WebSocket, but not to the messages in an open WebSocket. `with_options` checks the names and the keys, in this order:
+- An option that an operation does not take, such as `target_app`, raises `TypeError`.
+- A key of `httpx_options` that the client sets itself raises `ValueError`: `method`, `url`, `content`, `data`, `files`, `json`, `params`, `headers`, `cookies`, `timeout`, and `timeout` inside `extensions`. Instead of `headers` and `timeout`, use the options of the operation.
+- Any other key of `httpx_options` raises `TypeError`.
+
+A value that `httpx2` refuses raises its own exception when the operation runs.
 
 ## Errors
 
@@ -549,9 +589,10 @@ With `"graphql-sse"`, each subscription is one `POST` request with `Accept: text
 | sends `complete` | ends the stream |
 | sends `next` with neither, or an event that it should not | raises `ResponseProtocolError` |
 | ends the response, or the connection breaks, before `complete` | raises `SubscriptionInterruptedError` |
-| sends nothing for `subscription_idle_timeout` seconds | raises `SubscriptionInterruptedError`, or `TransportError` while the client waits for the response headers |
+| sends no response headers for `timeout` seconds | raises `TransportError` |
+| sends nothing on the open stream for `stream_idle_timeout` seconds | raises `SubscriptionInterruptedError` |
 | refuses with a status that is not 2xx | raises as for a query ([Responses](#responses)) |
-| answers with a 2xx response that is not a stream | raises `GraphQLResponseError` if the body is a GraphQL response with errors, `TransportError` if the body breaks off, `ResponseProtocolError` otherwise |
+| answers with a 2xx response that is not a stream | raises `GraphQLResponseError` if the body is a GraphQL response with errors, `TransportError` if the body breaks off or nothing of it comes for `timeout` seconds, `ResponseProtocolError` otherwise |
 
 With `"graphql-transport-ws"`, each subscription is one WebSocket:
 
@@ -561,7 +602,8 @@ With `"graphql-transport-ws"`, each subscription is one WebSocket:
 | sends `error`, or `next` with data or without, with errors | raises `GraphQLResponseError` |
 | sends `complete` | ends the stream |
 | refuses the WebSocket with any status but 101 | raises `HTTPResponseError`, also when the body holds GraphQL errors |
-| sends no `connection_ack` in time | raises `TransportError` |
+| does not answer the connection, or sends no message before `connection_ack`, for `timeout` seconds | raises `TransportError` |
+| sends no message for `stream_idle_timeout` seconds after the client has sent `subscribe` | raises `SubscriptionInterruptedError` |
 | sends another message than the protocol allows, a binary one, or one over the size limit of the client | raises `ResponseProtocolError` |
 | sends too many messages before `connection_ack` | raises `ResponseProtocolError`; the text names the limit of the client |
 | closes with a code from 4000 to 4999 | raises `WebSocketClosedError` |
@@ -572,7 +614,7 @@ The rules of the close codes hold at any moment of the subscription, and for a `
 
 `SubscriptionInterruptedError` tells you that the server did not confirm the end of the operation. Only `complete` ends it. It is a `TransportError`: put its `except` first. The client does not open the subscription again. Open it again yourself if your server lets a new subscription continue from its current state.
 
-`subscription_idle_timeout` is the longest wait for the response headers and for the next data on the stream. The default `None` waits without a limit. A server that sends heartbeat comments keeps a healthy stream within the limit: set the timeout above the heartbeat interval of your server.
+`stream_idle_timeout` is the longest wait for the next data on an SSE stream, and for the next message on a WebSocket. The default `None` waits without a limit. A server that sends heartbeats keeps a healthy stream within the limit: set the timeout above the heartbeat interval of your server. Over SSE a heartbeat comment counts. Over a WebSocket the `ping` and `pong` messages of graphql-transport-ws count, and the control frames of the WebSocket itself do not.
 
 ## Client Lifetime
 

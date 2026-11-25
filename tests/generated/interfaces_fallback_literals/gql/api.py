@@ -94,7 +94,7 @@ class GetPostQuery(runtime.GQLOperation):
             GetPostQueryResult,
             'query GetPost($id: ID!) {\n  node(id: $id) {\n    __typename\n    ... on Post {\n      title\n    }\n  }\n}',
             variables={"id": id},
-            headers=self.headers,
+            options=self.options,
         )
 
 
@@ -105,7 +105,7 @@ class GetCommentQuery(runtime.GQLOperation):
             GetCommentQueryResult,
             'query GetComment($id: ID!) {\n  node(id: $id) {\n    __typename\n    ... on Comment {\n      body\n    }\n  }\n}',
             variables={"id": id},
-            headers=self.headers,
+            options=self.options,
         )
 
 

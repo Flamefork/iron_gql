@@ -187,7 +187,7 @@ class GetPostAttachmentQueryBound[TResult: pydantic.BaseModel](runtime.GQLBoundO
             typing.cast("type[TResult]", GetPostAttachmentQueryResult),
             self.exec_source,
             variables={"id": id, **self.fragment_args},
-            headers=self.headers,
+            options=self.options,
             slot_readers=self.slot_readers,
         )
 
@@ -198,7 +198,7 @@ class GetPageAttachmentQueryBound[TResult: pydantic.BaseModel](runtime.GQLBoundO
             typing.cast("type[TResult]", GetPageAttachmentQueryResult),
             self.exec_source,
             variables={"id": id, **self.fragment_args},
-            headers=self.headers,
+            options=self.options,
             slot_readers=self.slot_readers,
         )
 

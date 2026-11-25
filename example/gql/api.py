@@ -275,7 +275,7 @@ class GetUserQuery(runtime.GQLOperation):
             GetUserQueryResult,
             'query GetUser($id: ID!) {\n  user(id: $id) {\n    ...UserFields\n    posts {\n      id\n      title\n    }\n  }\n}\n\nfragment UserFields on User {\n  id\n  name\n  email\n  phone\n  role\n}',
             variables={"id": id},
-            headers=self.headers,
+            options=self.options,
         )
 
 
@@ -286,7 +286,7 @@ class GetUserNameQuery(runtime.GQLOperation):
             GetUserNameQueryResult,
             'query GetUserName($id: ID!) {\n  user(id: $id) {\n    name\n  }\n}',
             variables={"id": id},
-            headers=self.headers,
+            options=self.options,
         )
 
 
@@ -297,7 +297,7 @@ class CreateUserMutation(runtime.GQLOperation):
             CreateUserMutationResult,
             'mutation CreateUser($input: CreateUserInput!) {\n  createUser(input: $input) {\n    id\n    name\n    email\n    role\n  }\n}',
             variables={"input": input},
-            headers=self.headers,
+            options=self.options,
         )
 
 
@@ -308,7 +308,7 @@ class SearchQuery(runtime.GQLOperation):
             SearchQueryResult,
             'query Search($query: String!) {\n  search(query: $query) {\n    __typename\n    ... on User {\n      id\n      name\n      role\n    }\n    ... on Post {\n      id\n      title\n      author {\n        name\n      }\n    }\n  }\n}',
             variables={"query": query},
-            headers=self.headers,
+            options=self.options,
         )
 
 
@@ -319,7 +319,7 @@ class GetNodeQuery(runtime.GQLOperation):
             GetNodeQueryResult,
             'query GetNode($id: ID!) {\n  node(id: $id) {\n    __typename\n    id\n    ... on User {\n      name\n    }\n    ... on Post {\n      title\n    }\n  }\n}',
             variables={"id": id},
-            headers=self.headers,
+            options=self.options,
         )
 
 
@@ -330,7 +330,7 @@ class GetProfileQuery(runtime.GQLOperation):
             GetProfileQueryResult,
             'query GetProfile($id: ID!, $withEmail: Boolean!, $skipPhone: Boolean!) {\n  user(id: $id) {\n    id\n    name\n    email @include(if: $withEmail)\n    phone @skip(if: $skipPhone)\n    role\n  }\n}',
             variables={"id": id, "withEmail": with_email, "skipPhone": skip_phone},
-            headers=self.headers,
+            options=self.options,
         )
 
 
@@ -341,7 +341,7 @@ class FindUserQuery(runtime.GQLOperation):
             FindUserQueryResult,
             'query FindUser($by: FindUserBy!) {\n  findUser(by: $by) {\n    id\n    name\n    email\n  }\n}',
             variables={"by": by},
-            headers=self.headers,
+            options=self.options,
         )
 
 
@@ -352,7 +352,7 @@ class GetPostQuery(runtime.GQLOperation):
             GetPostQueryResult,
             'query GetPost($id: ID!) {\n  post(id: $id) {\n    id\n    title\n    createdAt\n  }\n}',
             variables={"id": id},
-            headers=self.headers,
+            options=self.options,
         )
 
 
@@ -363,7 +363,7 @@ class UploadAvatarMutation(runtime.GQLOperation):
             UploadAvatarMutationResult,
             'mutation UploadAvatar($userId: ID!, $file: Upload!) {\n  uploadAvatar(userId: $userId, file: $file) {\n    id\n    name\n  }\n}',
             variables={"userId": user_id, "file": file},
-            headers=self.headers,
+            options=self.options,
         )
 
 
@@ -374,7 +374,7 @@ class PostAddedSubscription(runtime.GQLOperation):
             PostAddedSubscriptionResult,
             'subscription PostAdded($userId: ID!) {\n  postAdded(userId: $userId) {\n    id\n    title\n    body\n    author {\n      name\n    }\n  }\n}',
             variables={"userId": user_id},
-            headers=self.headers,
+            options=self.options,
         )
 
 
@@ -478,7 +478,7 @@ class PostAttachmentQueryBound[TResult: pydantic.BaseModel](runtime.GQLBoundOper
             typing.cast("type[TResult]", PostAttachmentQueryResult),
             self.exec_source,
             variables={"id": id, **self.fragment_args},
-            headers=self.headers,
+            options=self.options,
             slot_readers=self.slot_readers,
         )
 
@@ -489,7 +489,7 @@ class GetPostAttachmentQueryBound[TResult: pydantic.BaseModel](runtime.GQLBoundO
             typing.cast("type[TResult]", GetPostAttachmentQueryResult),
             self.exec_source,
             variables={"id": id, **self.fragment_args},
-            headers=self.headers,
+            options=self.options,
             slot_readers=self.slot_readers,
         )
 

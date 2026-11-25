@@ -212,7 +212,7 @@ class Ping(pydantic.BaseModel):
 
 
 client = GQLClient(base_url={base_url!r}, subscription_protocol="graphql-sse")
-client.query(Ping, "query {{ ping }}", variables={{}}, headers={{}})
+client.query(Ping, "query {{ ping }}", variables={{}}, options={{}})
 connected = open_fds()
 del client
 gc.collect()
@@ -248,7 +248,7 @@ class Ping(pydantic.BaseModel):
 
 
 def ping():
-    client.query(Ping, "query {{ ping }}", variables={{}}, headers={{}})
+    client.query(Ping, "query {{ ping }}", variables={{}}, options={{}})
 
 
 client = GQLClient(base_url={base_url!r}, subscription_protocol="graphql-sse")
@@ -549,10 +549,10 @@ async def test_async_client_with_target_app_refuses_operations_after_close(
     await client.close()
 
     with pytest.raises(RuntimeError, match=_CLOSED):
-        await client.query(_PingModel, "query { ping }", variables={}, headers={})
+        await client.query(_PingModel, "query { ping }", variables={}, options={})
     with pytest.raises(RuntimeError, match=_CLOSED):
         async with client.subscribe(
-            _CounterModel, "subscription { counter }", variables={}, headers={}
+            _CounterModel, "subscription { counter }", variables={}, options={}
         ):
             pass
 
@@ -582,7 +582,7 @@ async def test_async_client_sends_the_headers_it_was_created_with():
     )
     headers["X-Tenant"] = "second"
     try:
-        await client.query(_PingModel, "query { ping }", variables={}, headers={})
+        await client.query(_PingModel, "query { ping }", variables={}, options={})
     finally:
         await client.close()
 
@@ -636,7 +636,7 @@ def test_async_close_completes_under_an_eager_task_factory():
             subscription_protocol="graphql-sse",
             target_app=_ok_app,
         )
-        await client.query(_PingModel, "query { ping }", variables={}, headers={})
+        await client.query(_PingModel, "query { ping }", variables={}, options={})
         http = _transports(client)[asyncio.get_running_loop()].http
         await asyncio.wait_for(client.close(), 5)
         return http
@@ -650,7 +650,7 @@ async def test_async_close_cancelled_in_one_caller_completes_for_the_others():
         subscription_protocol="graphql-sse",
         target_app=_ok_app,
     )
-    await client.query(_PingModel, "query { ping }", variables={}, headers={})
+    await client.query(_PingModel, "query { ping }", variables={}, options={})
     http = _transports(client)[asyncio.get_running_loop()].http
 
     cancelled = asyncio.create_task(client.close())

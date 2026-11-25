@@ -81,7 +81,7 @@ class GetNodeQuery(runtime.GQLOperation):
             GetNodeQueryResult,
             'query GetNode($id: ID!) {\n  node(id: $id) {\n    ...NodeBase\n    ... on User {\n      name\n    }\n    ... on Post {\n      title\n    }\n  }\n}\n\nfragment NodeBase on Node {\n  __typename\n  id\n}',
             variables={"id": id},
-            headers=self.headers,
+            options=self.options,
         )
 
 

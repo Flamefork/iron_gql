@@ -71,7 +71,7 @@ class EventsSubscription(runtime.GQLOperation):
             EventsSubscriptionResult,
             'subscription Events($channel: String!) {\n  events(channel: $channel) {\n    id\n    message\n  }\n}',
             variables={"channel": channel},
-            headers=self.headers,
+            options=self.options,
         )
 
 

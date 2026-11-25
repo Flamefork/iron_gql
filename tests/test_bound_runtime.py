@@ -66,41 +66,48 @@ def _application(
     return _Application(definition_type, name, args if args is not None else {})
 
 
-def test_with_headers_preserves_fragment_args():
+def test_with_options_preserves_the_binding():
     # `fragment_args` is set once in `bound__` from the fragment application's
     # values; at the bound level there is no `with_args` that could replace it.
-    # `with_headers` copies the object through `_copy`, so `_copy` must carry
-    # the values along with `exec_source` and `slot_readers`.
+    # `with_options` copies the object, so the copy must carry the values along
+    # with `exec_source` and `slot_readers`.
     spec: runtime.BoundSpec = (
         "query Q { x }",
         {"x": ((_ImageDefinition, frozenset()),)},
     )
     fragment = _application(_ImageDefinition, "Image", args={"limit": 1})
     bound = runtime.GQLBoundOperation.bound__(spec, {"x": (fragment,)})
-    op = bound.with_headers({"A": "b"})
-    assert op.headers == {"A": "b"}
+    op = bound.with_options(headers={"A": "b"}, timeout=1)
+    assert op.options == {"headers": {"A": "b"}, "timeout": 1}
     assert op.fragment_args == {"limit": 1}
+    assert op.exec_source == bound.exec_source
+    assert op.slot_readers is bound.slot_readers
 
 
 def test_operation_object_protocol_does_not_expose_request_state():
     token = "Bearer secret-token"
+    password = "secret-password"
     fragment_secret = "secret-fragment-value"
-    operation = runtime.GQLOperation().with_headers({"Authorization": token})
+    options = runtime.GQLOperationOptions(
+        headers={"Authorization": token}, httpx_options={"auth": ("user", password)}
+    )
+    operation = runtime.GQLOperation().with_options(**options)
     spec: runtime.BoundSpec = (
         "query Q { x }",
         {"x": ((_ImageDefinition, frozenset()),)},
     )
     fragment = _application(_ImageDefinition, "Image", args={"value": fragment_secret})
-    bound = runtime.GQLBoundOperation.bound__(spec, {"x": (fragment,)}).with_headers({
-        "Authorization": token
-    })
+    bound = runtime.GQLBoundOperation.bound__(spec, {"x": (fragment,)}).with_options(
+        **options
+    )
     equivalent_bound = runtime.GQLBoundOperation.bound__(
         spec, {"x": (fragment,)}
-    ).with_headers({"Authorization": token})
+    ).with_options(**options)
 
-    assert token not in repr(operation)
-    assert token not in repr(bound)
-    assert fragment_secret not in repr(bound)
+    for shown in (repr(operation), str(operation), repr(bound), str(bound)):
+        assert token not in shown
+        assert password not in shown
+        assert fragment_secret not in shown
     assert runtime.GQLOperation() != runtime.GQLOperation()
     assert bound != equivalent_bound
 

@@ -207,7 +207,7 @@ class OverloadedQueryBound[TResult: pydantic.BaseModel](runtime.GQLBoundOperatio
             typing.cast("type[TResult]", OverloadedQueryResult),
             self.exec_source,
             variables={"cast": cast, **self.fragment_args},
-            headers=self.headers,
+            options=self.options,
             slot_readers=self.slot_readers,
         )
 
@@ -218,7 +218,7 @@ class InlineQueryBound[TResult: pydantic.BaseModel](runtime.GQLBoundOperation):
             typing.cast("type[TResult]", InlineQueryResult),
             self.exec_source,
             variables={"id": id, **self.fragment_args},
-            headers=self.headers,
+            options=self.options,
             slot_readers=self.slot_readers,
         )
 

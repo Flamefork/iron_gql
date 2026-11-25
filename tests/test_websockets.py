@@ -1,4 +1,3 @@
-import asyncio
 import json
 from dataclasses import dataclass
 from dataclasses import field
@@ -13,19 +12,17 @@ from iron_gql import GraphQLResponseError
 from iron_gql import ResponseError
 from iron_gql import ResponseProtocolError
 from iron_gql import SubscriptionInterruptedError
-from iron_gql import TransportError
 from iron_gql import WebSocketClosedError
-from iron_gql import websockets
 from iron_gql.runtime import ASGIApp
 from iron_gql.runtime import ASGIReceive
 from iron_gql.runtime import ASGIScope
 from iron_gql.runtime import ASGISend
 from iron_gql.runtime import AsyncGQLClient
 from iron_gql.runtime import GQLClient
-from iron_gql.runtime import GQLOperation
 from iron_gql.testing import WSTestConnection
 from iron_gql.testing import accept_graphql_ws
 from iron_gql.testing.server import live_asgi_server
+from tests.conftest import decode_headers
 from tests.conftest import errors_read_by_form
 from tests.conftest import generated_package
 from tests.conftest import use_package_client
@@ -67,15 +64,6 @@ generated_package(
 
 from tests.generated.websockets_codegen import queries as codegen_queries
 
-_HEADER_PAIRS = pydantic.TypeAdapter(list[tuple[bytes, bytes]])
-
-
-def _decode_headers(scope: ASGIScope) -> list[tuple[str, str]]:
-    return [
-        (key.decode(), value.decode())
-        for key, value in _HEADER_PAIRS.validate_python(scope["headers"])
-    ]
-
 
 @dataclass
 class _Captured:
@@ -113,7 +101,7 @@ def _make_ws_app(
 
 
 def _capture_scope(scope: ASGIScope, captured: _Captured) -> None:
-    scope_headers = _decode_headers(scope)
+    scope_headers = decode_headers(scope)
     captured.scope_raw_headers = scope_headers
     captured.scope_headers = dict(scope_headers)
     captured.scope_scheme = scope["scheme"]
@@ -176,7 +164,7 @@ async def test_subscribe_asgi():
     )
     try:
         async with client.subscribe(
-            _CounterResult, "subscription { counter }", variables={}, headers={}
+            _CounterResult, "subscription { counter }", variables={}, options={}
         ) as stream:
             results = [item.counter async for item in stream]
         assert results == [1, 2, 3]
@@ -202,7 +190,7 @@ async def test_subscribe_error():
 
         async def consume():
             async with client.subscribe(
-                _CounterResult, "subscription { counter }", variables={}, headers={}
+                _CounterResult, "subscription { counter }", variables={}, options={}
             ) as stream:
                 async for item in stream:
                     results.append(item.counter)  # ruff: ignore[manual-list-comprehension]
@@ -232,7 +220,7 @@ async def test_subscribe_next_with_errors():
 
         async def consume():
             async with client.subscribe(
-                _CounterResult, "subscription { counter }", variables={}, headers={}
+                _CounterResult, "subscription { counter }", variables={}, options={}
             ) as stream:
                 async for _ in stream:
                     pass
@@ -241,15 +229,6 @@ async def test_subscribe_next_with_errors():
             await consume()
     finally:
         await client.close()
-
-
-def test_gql_operation_with_headers():
-    op = GQLOperation()
-    assert op.headers == {}
-
-    op2 = op.with_headers({"Authorization": "Bearer token"})
-    assert op2.headers == {"Authorization": "Bearer token"}
-    assert op.headers == {}
 
 
 async def test_subscribe_codegen_asgi():
@@ -298,7 +277,7 @@ async def test_subscribe_connection_rejected():
 
         async def consume():
             async with client.subscribe(
-                _CounterResult, "subscription { counter }", variables={}, headers={}
+                _CounterResult, "subscription { counter }", variables={}, options={}
             ) as stream:
                 async for _ in stream:
                     pass
@@ -323,7 +302,7 @@ async def test_subscribe_no_data_in_next():
 
         async def consume():
             async with client.subscribe(
-                _CounterResult, "subscription { counter }", variables={}, headers={}
+                _CounterResult, "subscription { counter }", variables={}, options={}
             ) as stream:
                 async for _ in stream:
                     pass
@@ -348,7 +327,7 @@ async def test_subscribe_unexpected_message_type():
 
         async def consume():
             async with client.subscribe(
-                _CounterResult, "subscription { counter }", variables={}, headers={}
+                _CounterResult, "subscription { counter }", variables={}, options={}
             ) as stream:
                 async for _ in stream:
                     pass
@@ -379,7 +358,7 @@ async def test_subscribe_with_headers_propagation():
             _CounterResult,
             "subscription { counter }",
             variables={},
-            headers={"Authorization": "Bearer token"},
+            options={"headers": {"Authorization": "Bearer token"}},
         ) as stream:
             async for _ in stream:
                 pass
@@ -409,7 +388,7 @@ async def test_subscribe_ping_pong():
     )
     try:
         async with client.subscribe(
-            _CounterResult, "subscription { counter }", variables={}, headers={}
+            _CounterResult, "subscription { counter }", variables={}, options={}
         ) as stream:
             results = [item.counter async for item in stream]
         assert results == [1, 2, 3]
@@ -436,7 +415,7 @@ async def test_subscribe_ping_before_connection_ack():
     )
     try:
         async with client.subscribe(
-            _CounterResult, "subscription { counter }", variables={}, headers={}
+            _CounterResult, "subscription { counter }", variables={}, options={}
         ) as stream:
             results = [item.counter async for item in stream]
         assert results == [1]
@@ -460,7 +439,7 @@ async def test_subscribe_with_headers_override_case_insensitive():
             _CounterResult,
             "subscription { counter }",
             variables={},
-            headers={"authorization": "Bearer override-token"},
+            options={"headers": {"authorization": "Bearer override-token"}},
         ) as stream:
             async for _ in stream:
                 pass
@@ -494,7 +473,7 @@ async def test_subscribe_carries_http_cookies():
             return
 
         connection = await accept_graphql_ws(scope, receive, send)
-        captured.scope_headers = dict(_decode_headers(connection.scope))
+        captured.scope_headers = dict(decode_headers(connection.scope))
         subscription = await connection.ack()
         await subscription.complete()
         await connection.drain()
@@ -506,12 +485,12 @@ async def test_subscribe_carries_http_cookies():
     )
     try:
         result = await client.query(
-            _PingResult, "query { ping }", variables={}, headers={}
+            _PingResult, "query { ping }", variables={}, options={}
         )
         assert result.ping == "pong"
 
         async with client.subscribe(
-            _CounterResult, "subscription { counter }", variables={}, headers={}
+            _CounterResult, "subscription { counter }", variables={}, options={}
         ) as stream:
             async for _ in stream:
                 pass
@@ -535,42 +514,13 @@ async def test_subscribe_disconnect_before_connection_ack():
 
         async def consume():
             async with client.subscribe(
-                _CounterResult, "subscription { counter }", variables={}, headers={}
+                _CounterResult, "subscription { counter }", variables={}, options={}
             ) as stream:
                 async for _ in stream:
                     pass
 
         with pytest.raises(
             WebSocketClosedError, match=r"handshake failed.* with code 4401"
-        ):
-            await consume()
-    finally:
-        await client.close()
-
-
-async def test_subscribe_connection_ack_timeout(monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setattr(websockets, "_WS_CONNECTION_ACK_TIMEOUT_SECONDS", 0.01)
-
-    async def app(scope: ASGIScope, receive: ASGIReceive, send: ASGISend) -> None:
-        await accept_graphql_ws(scope, receive, send)
-        await asyncio.sleep(0.1)
-
-    client = AsyncGQLClient(
-        subscription_protocol="graphql-transport-ws",
-        base_url="http://testserver/graphql",
-        target_app=app,
-    )
-    try:
-
-        async def consume():
-            async with client.subscribe(
-                _CounterResult, "subscription { counter }", variables={}, headers={}
-            ) as stream:
-                async for _ in stream:
-                    pass
-
-        with pytest.raises(
-            TransportError, match="Timed out waiting for connection_ack"
         ):
             await consume()
     finally:
@@ -588,7 +538,7 @@ async def test_subscribe_url_scheme_https_to_wss():
     )
     try:
         async with client.subscribe(
-            _CounterResult, "subscription { counter }", variables={}, headers={}
+            _CounterResult, "subscription { counter }", variables={}, options={}
         ) as stream:
             async for _ in stream:
                 pass
@@ -611,7 +561,7 @@ async def test_subscribe_malformed_message_no_type():
 
         async def consume():
             async with client.subscribe(
-                _CounterResult, "subscription { counter }", variables={}, headers={}
+                _CounterResult, "subscription { counter }", variables={}, options={}
             ) as stream:
                 async for _ in stream:
                     pass
@@ -635,7 +585,7 @@ async def test_subscribe_no_variables_key_when_none():
     )
     try:
         async with client.subscribe(
-            _CounterResult, "subscription { counter }", variables={}, headers={}
+            _CounterResult, "subscription { counter }", variables={}, options={}
         ) as stream:
             async for _ in stream:
                 pass
@@ -659,7 +609,7 @@ async def test_subscribe_error_without_payload():
 
         async def consume():
             async with client.subscribe(
-                _CounterResult, "subscription { counter }", variables={}, headers={}
+                _CounterResult, "subscription { counter }", variables={}, options={}
             ) as stream:
                 async for _ in stream:
                     pass
@@ -685,7 +635,7 @@ async def test_subscribe_pong_during_messages():
     )
     try:
         async with client.subscribe(
-            _CounterResult, "subscription { counter }", variables={}, headers={}
+            _CounterResult, "subscription { counter }", variables={}, options={}
         ) as stream:
             results = [item.counter async for item in stream]
         assert results == [1, 2]
@@ -711,7 +661,7 @@ async def test_subscribe_pong_before_connection_ack():
     )
     try:
         async with client.subscribe(
-            _CounterResult, "subscription { counter }", variables={}, headers={}
+            _CounterResult, "subscription { counter }", variables={}, options={}
         ) as stream:
             results = [item.counter async for item in stream]
         assert results == [1]
@@ -733,7 +683,7 @@ async def test_subscribe_next_without_payload_key():
 
         async def consume():
             async with client.subscribe(
-                _CounterResult, "subscription { counter }", variables={}, headers={}
+                _CounterResult, "subscription { counter }", variables={}, options={}
             ) as stream:
                 async for _ in stream:
                     pass
@@ -760,7 +710,7 @@ async def test_subscribe_pre_ack_messages_exhaustion():
 
         async def consume():
             async with client.subscribe(
-                _CounterResult, "subscription { counter }", variables={}, headers={}
+                _CounterResult, "subscription { counter }", variables={}, options={}
             ) as stream:
                 async for _ in stream:
                     pass
@@ -784,7 +734,7 @@ async def test_subscribe_unsupported_url_scheme():
 
         async def consume():
             async with client.subscribe(
-                _CounterResult, "subscription { counter }", variables={}, headers={}
+                _CounterResult, "subscription { counter }", variables={}, options={}
             ) as stream:
                 async for _ in stream:
                     pass
@@ -817,7 +767,7 @@ async def test_subscribe_next_with_data_and_errors():
 
         async def consume():
             async with client.subscribe(
-                _CounterResult, "subscription { counter }", variables={}, headers={}
+                _CounterResult, "subscription { counter }", variables={}, options={}
             ) as stream:
                 async for _ in stream:
                     pass
@@ -844,7 +794,7 @@ async def test_subscribe_normal_closure_without_complete_is_an_interruption():
     )
     try:
         async with client.subscribe(
-            _CounterResult, "subscription { counter }", variables={}, headers={}
+            _CounterResult, "subscription { counter }", variables={}, options={}
         ) as stream:
             assert [(await anext(stream)).counter for _ in range(2)] == [1, 2]
             with pytest.raises(
@@ -874,7 +824,7 @@ async def test_subscribe_abnormal_disconnect_during_messages():
 
         async def consume():
             async with client.subscribe(
-                _CounterResult, "subscription { counter }", variables={}, headers={}
+                _CounterResult, "subscription { counter }", variables={}, options={}
             ) as stream:
                 async for item in stream:
                     results.append(item.counter)  # ruff: ignore[manual-list-comprehension]
@@ -903,7 +853,7 @@ async def test_subscribe_disconnect_before_ack_with_reason():
 
         async def consume():
             async with client.subscribe(
-                _CounterResult, "subscription { counter }", variables={}, headers={}
+                _CounterResult, "subscription { counter }", variables={}, options={}
             ) as stream:
                 async for _ in stream:
                     pass
@@ -928,7 +878,7 @@ async def test_subscribe_not_json_during_messages():
 
         async def consume():
             async with client.subscribe(
-                _CounterResult, "subscription { counter }", variables={}, headers={}
+                _CounterResult, "subscription { counter }", variables={}, options={}
             ) as stream:
                 async for _ in stream:
                     pass
@@ -950,7 +900,7 @@ async def test_subscribe_not_json_during_handshake():
 
         async def consume():
             async with client.subscribe(
-                _CounterResult, "subscription { counter }", variables={}, headers={}
+                _CounterResult, "subscription { counter }", variables={}, options={}
             ) as stream:
                 async for _ in stream:
                     pass
@@ -979,7 +929,7 @@ async def test_subscribe_validation_error():
 
         async def consume():
             async with client.subscribe(
-                _CounterResult, "subscription { counter }", variables={}, headers={}
+                _CounterResult, "subscription { counter }", variables={}, options={}
             ) as stream:
                 async for _ in stream:
                     pass
@@ -1012,7 +962,7 @@ def test_sync_subscribe_streams_messages():
                 _CounterResult,
                 "subscription { counter }",
                 variables={},
-                headers={"X-Call": "yes"},
+                options={"headers": {"X-Call": "yes"}},
             ) as stream:
                 counters = [event.counter for event in stream]
         finally:
@@ -1037,7 +987,7 @@ def test_sync_subscribe_answers_ping():
         )
         try:
             with client.subscribe(
-                _CounterResult, "subscription { counter }", variables={}, headers={}
+                _CounterResult, "subscription { counter }", variables={}, options={}
             ) as stream:
                 assert next(stream).counter == 7
         finally:
@@ -1059,7 +1009,7 @@ def test_sync_subscribe_raises_on_abnormal_close():
                     _CounterResult,
                     "subscription { counter }",
                     variables={},
-                    headers={},
+                    options={},
                 ) as stream,
             ):
                 list(stream)
@@ -1079,7 +1029,7 @@ def test_sync_subscribe_rejects_file_variables():
                 _CounterResult,
                 "subscription { counter }",
                 variables={"file": FileVar(b"x")},
-                headers={},
+                options={},
             ),
         ):
             pass
@@ -1128,7 +1078,7 @@ def _sync_subscribe_error(
                     _CounterResult,
                     "subscription { counter }",
                     variables={},
-                    headers={},
+                    options={},
                 ) as stream,
             ):
                 list(stream)
@@ -1149,7 +1099,7 @@ def test_sync_subscribe_answers_ping_before_connection_ack():
         )
         try:
             with client.subscribe(
-                _CounterResult, "subscription { counter }", variables={}, headers={}
+                _CounterResult, "subscription { counter }", variables={}, options={}
             ) as stream:
                 assert list(stream) == []
         finally:
@@ -1166,7 +1116,7 @@ def test_sync_subscribe_ignores_pong_before_connection_ack():
         )
         try:
             with client.subscribe(
-                _CounterResult, "subscription { counter }", variables={}, headers={}
+                _CounterResult, "subscription { counter }", variables={}, options={}
             ) as stream:
                 assert list(stream) == []
         finally:
@@ -1185,7 +1135,7 @@ def test_sync_subscribe_ignores_pong_during_messages():
         )
         try:
             with client.subscribe(
-                _CounterResult, "subscription { counter }", variables={}, headers={}
+                _CounterResult, "subscription { counter }", variables={}, options={}
             ) as stream:
                 assert [event.counter for event in stream] == [3]
         finally:
@@ -1202,7 +1152,7 @@ def test_sync_subscribe_normal_closure_without_complete_is_an_interruption():
         )
         try:
             with client.subscribe(
-                _CounterResult, "subscription { counter }", variables={}, headers={}
+                _CounterResult, "subscription { counter }", variables={}, options={}
             ) as stream:
                 assert next(stream).counter == 5
                 with pytest.raises(
@@ -1238,12 +1188,6 @@ def test_sync_subscribe_malformed_message_during_handshake():
     _sync_subscribe_error(app, "Malformed protocol message during handshake")
 
 
-def test_sync_subscribe_connection_ack_timeout(monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setattr(websockets, "_WS_CONNECTION_ACK_TIMEOUT_SECONDS", 0.05)
-    app = _make_ws_raw_app(ack=False)
-    _sync_subscribe_error(app, "Timed out waiting for connection_ack", TransportError)
-
-
 def test_sync_subscribe_not_json_during_messages():
     app = _make_ws_raw_app(post_subscribe_texts=("not valid json{{{",))
     _sync_subscribe_error(app, "Malformed protocol message:")
@@ -1265,7 +1209,7 @@ async def _async_subscribe_error(
 
     async def consume() -> None:
         async with client.subscribe(
-            _CounterResult, "subscription { counter }", variables={}, headers={}
+            _CounterResult, "subscription { counter }", variables={}, options={}
         ) as stream:
             async for _ in stream:
                 pass
@@ -1364,7 +1308,7 @@ async def test_subscribe_url_scheme_ws_is_kept(scheme: str):
     )
     try:
         async with client.subscribe(
-            _CounterResult, "subscription { counter }", variables={}, headers={}
+            _CounterResult, "subscription { counter }", variables={}, options={}
         ) as stream:
             assert [item async for item in stream] == []
         assert captured.subscribe is not None

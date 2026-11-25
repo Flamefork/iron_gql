@@ -94,7 +94,7 @@ class Q1Query(runtime.GQLOperation):
             Q1QueryResult,
             'query Q1 {\n  feed {\n    author {\n      posts {\n        id\n      }\n    }\n  }\n}',
             variables={},
-            headers=self.headers,
+            options=self.options,
         )
 
 
@@ -105,7 +105,7 @@ class Q2Query(runtime.GQLOperation):
             Q2QueryResult,
             'query Q2 {\n  feed {\n    author {\n      posts {\n        title\n      }\n    }\n  }\n}',
             variables={},
-            headers=self.headers,
+            options=self.options,
         )
 
 

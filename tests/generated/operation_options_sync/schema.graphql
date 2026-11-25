@@ -1,0 +1,22 @@
+type Query {
+    ping: String!
+    node: Node!
+    user(id: ID!): User
+}
+
+type User {
+    id: ID!
+}
+
+type Mutation {
+    touch: String!
+}
+
+type Subscription {
+    counter: Int!
+}
+
+type Node {
+    id: ID!
+    thumbnail(width: Int!): String!
+}

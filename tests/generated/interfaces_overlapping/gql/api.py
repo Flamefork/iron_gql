@@ -80,7 +80,7 @@ class GetNodeQuery(runtime.GQLOperation):
             GetNodeQueryResult,
             'query GetNode($id: ID!) {\n  node(id: $id) {\n    __typename\n    id\n    ... on Named {\n      name\n    }\n  }\n}',
             variables={"id": id},
-            headers=self.headers,
+            options=self.options,
         )
 
 

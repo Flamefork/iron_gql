@@ -75,7 +75,7 @@ class UpdateUserMutation(runtime.GQLOperation):
             UpdateUserMutationResult,
             'mutation UpdateUser($input: UpdateUserInput!) {\n  updateUser(input: $input)\n}',
             variables={"input": input},
-            headers=self.headers,
+            options=self.options,
         )
 
 

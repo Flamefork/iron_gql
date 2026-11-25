@@ -118,7 +118,7 @@ class FindQueryBound[TResult: pydantic.BaseModel](runtime.GQLBoundOperation):
             typing.cast("type[TResult]", FindQueryResult),
             self.exec_source,
             variables={**self.fragment_args},
-            headers=self.headers,
+            options=self.options,
             slot_readers=self.slot_readers,
         )
 

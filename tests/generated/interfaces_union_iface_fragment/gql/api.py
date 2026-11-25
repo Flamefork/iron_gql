@@ -81,7 +81,7 @@ class GetActorQuery(runtime.GQLOperation):
             GetActorQueryResult,
             'query GetActor($id: ID!) {\n  actor(id: $id) {\n    __typename\n    ... on Node {\n      id\n    }\n    ... on User {\n      name\n    }\n    ... on Admin {\n      permissions\n    }\n  }\n}',
             variables={"id": id},
-            headers=self.headers,
+            options=self.options,
         )
 
 

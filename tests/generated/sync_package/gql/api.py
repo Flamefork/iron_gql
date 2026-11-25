@@ -105,7 +105,7 @@ class GetUserQuery(runtime.GQLOperation):
             GetUserQueryResult,
             'query GetUser($id: ID!) {\n  user(id: $id) {\n    id\n    name\n  }\n}',
             variables={"id": id},
-            headers=self.headers,
+            options=self.options,
         )
 
 
@@ -116,7 +116,7 @@ class RenameUserMutation(runtime.GQLOperation):
             RenameUserMutationResult,
             'mutation RenameUser($id: ID!, $name: String!) {\n  renameUser(id: $id, name: $name) {\n    id\n    name\n  }\n}',
             variables={"id": id, "name": name},
-            headers=self.headers,
+            options=self.options,
         )
 
 
@@ -127,7 +127,7 @@ class UserRenamedSubscription(runtime.GQLOperation):
             UserRenamedSubscriptionResult,
             'subscription UserRenamed($id: ID!) {\n  userRenamed(id: $id) {\n    id\n    name\n  }\n}',
             variables={"id": id},
-            headers=self.headers,
+            options=self.options,
         )
 
 
@@ -172,7 +172,7 @@ class GetUserWithManagerQueryBound[TResult: pydantic.BaseModel](runtime.GQLBound
             typing.cast("type[TResult]", GetUserWithManagerQueryResult),
             self.exec_source,
             variables={"id": id, **self.fragment_args},
-            headers=self.headers,
+            options=self.options,
             slot_readers=self.slot_readers,
         )
 

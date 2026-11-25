@@ -152,7 +152,7 @@ class GetAttachmentQueryBound[TResult: pydantic.BaseModel](runtime.GQLBoundOpera
             typing.cast("type[TResult]", GetAttachmentQueryResult),
             self.exec_source,
             variables={"id": id, **self.fragment_args},
-            headers=self.headers,
+            options=self.options,
             slot_readers=self.slot_readers,
         )
 
@@ -163,7 +163,7 @@ class GetHighlightQueryBound[TResult: pydantic.BaseModel](runtime.GQLBoundOperat
             typing.cast("type[TResult]", GetHighlightQueryResult),
             self.exec_source,
             variables={"id": id, **self.fragment_args},
-            headers=self.headers,
+            options=self.options,
             slot_readers=self.slot_readers,
         )
 

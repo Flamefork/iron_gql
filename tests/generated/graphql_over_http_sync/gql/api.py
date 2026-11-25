@@ -70,7 +70,7 @@ class PingQuery(runtime.GQLOperation):
             PingQueryResult,
             'query Ping {\n  ping\n}',
             variables={},
-            headers=self.headers,
+            options=self.options,
         )
 
 
@@ -81,7 +81,7 @@ class CounterSubscription(runtime.GQLOperation):
             CounterSubscriptionResult,
             'subscription Counter {\n  counter\n}',
             variables={},
-            headers=self.headers,
+            options=self.options,
         )
 
 

@@ -19,7 +19,6 @@ from collections.abc import Awaitable
 from collections.abc import Callable
 from collections.abc import Generator
 from contextlib import contextmanager
-from pathlib import Path
 from types import SimpleNamespace
 from typing import Literal
 from typing import cast
@@ -50,7 +49,6 @@ from iron_gql import TransportError
 from iron_gql import WebSocketClosedError
 from iron_gql import errors
 from iron_gql import runtime
-from iron_gql import websockets
 from iron_gql.protocol import WSMessage
 from iron_gql.runtime import ASGIApp
 from iron_gql.runtime import ASGIReceive
@@ -59,12 +57,14 @@ from iron_gql.runtime import ASGISend
 from iron_gql.runtime import AsyncGQLClient
 from iron_gql.runtime import GQLClient
 from iron_gql.runtime import GQLClientOptions
+from iron_gql.runtime import GQLOperationOptions
 from iron_gql.testing.server import live_asgi_server
 from iron_gql.testing.ws import SUBPROTOCOL
 from iron_gql.testing.ws import accept_graphql_ws
 from tests.conftest import accept_graphql_sse
 from tests.conftest import make_sse_subscription_app
 from tests.conftest import make_subscription_app
+from tests.conftest import readme_block
 from tests.conftest import run_async
 
 type _Mode = Literal["async", "sync"]
@@ -106,6 +106,7 @@ async def _async_call(
     body: _Body = _read_nothing,
     target_app: ASGIApp | None = None,
     model_base: type[pydantic.BaseModel] | None = None,
+    own: GQLOperationOptions | None = None,
 ) -> list[int]:
     client = AsyncGQLClient(
         base_url=url,
@@ -117,11 +118,11 @@ async def _async_call(
     try:
         if operation == "query":
             result = await client.query(
-                _Result, "query { counter }", variables={}, headers={}
+                _Result, "query { counter }", variables={}, options=own or {}
             )
             return [result.counter]
         async with client.subscribe(
-            _Result, "subscription { counter }", variables={}, headers={}
+            _Result, "subscription { counter }", variables={}, options=own or {}
         ) as stream:
             body()
             return [item.counter async for item in stream]
@@ -135,6 +136,7 @@ def _sync_call(
     options: GQLClientOptions,
     body: _Body = _read_nothing,
     model_base: type[pydantic.BaseModel] | None = None,
+    own: GQLOperationOptions | None = None,
 ) -> list[int]:
     client = GQLClient(
         base_url=url,
@@ -145,11 +147,11 @@ def _sync_call(
     try:
         if operation == "query":
             result = client.query(
-                _Result, "query { counter }", variables={}, headers={}
+                _Result, "query { counter }", variables={}, options=own or {}
             )
             return [result.counter]
         with client.subscribe(
-            _Result, "subscription { counter }", variables={}, headers={}
+            _Result, "subscription { counter }", variables={}, options=own or {}
         ) as stream:
             body()
             return [item.counter for item in stream]
@@ -164,14 +166,17 @@ def _call(
     options: GQLClientOptions | None = None,
     body: _Body = _read_nothing,
     model_base: type[pydantic.BaseModel] | None = None,
+    own: GQLOperationOptions | None = None,
 ) -> list[int]:
     match mode:
         case "async":
             return run_async(
-                _async_call(operation, url, options or {}, body, model_base=model_base)
+                _async_call(
+                    operation, url, options or {}, body, model_base=model_base, own=own
+                )
             )
         case "sync":
-            return _sync_call(operation, url, options or {}, body, model_base)
+            return _sync_call(operation, url, options or {}, body, model_base, own)
 
 
 def _failure(
@@ -181,9 +186,10 @@ def _failure(
     options: GQLClientOptions | None = None,
     body: _Body = _read_nothing,
     model_base: type[pydantic.BaseModel] | None = None,
+    own: GQLOperationOptions | None = None,
 ) -> Exception:
     with pytest.raises(Exception, match=_ANY_TEXT) as failure:
-        _call(mode, operation, url, options, body, model_base)
+        _call(mode, operation, url, options, body, model_base, own)
     return failure.value
 
 
@@ -391,32 +397,6 @@ def test_a_connection_reset_before_the_response_head_is_a_transport_error(
     with _tcp_server(talk) as url:
         error = _failure(mode, operation, url)
     _assert_transport_error(error, httpx2.ReadError)
-
-
-# The async client opens a WebSocket without its `query_timeout`, under the
-# default of `httpx2`; a hook makes that shorter.
-def _read_timeout_hook(mode: _Mode) -> Callable[..., object]:
-    def hook(request: httpx2.Request) -> None:
-        request.extensions["timeout"] = httpx2.Timeout(1, read=0.2).as_dict()
-
-    async def async_hook(request: httpx2.Request) -> None:
-        await asyncio.sleep(0)
-        hook(request)
-
-    return async_hook if mode == "async" else hook
-
-
-@_every_mode
-@_every_operation
-def test_waiting_too_long_for_the_response_head_is_a_transport_error(
-    mode: _Mode, operation: _Operation
-):
-    options = GQLClientOptions(
-        httpx_options={"event_hooks": {"request": [_read_timeout_hook(mode)]}}
-    )
-    with _tcp_server(_wait_for_hangup) as url:
-        error = _failure(mode, operation, url, options)
-    _assert_transport_error(error, httpx2.ReadTimeout)
 
 
 @_every_mode
@@ -676,22 +656,6 @@ def test_a_stream_reset_is_interrupted(mode: _Mode, events: bytes):
 
 
 @_every_mode
-@pytest.mark.parametrize("events", [b"", _NEXT])
-def test_a_stream_silent_past_the_idle_timeout_is_interrupted(
-    mode: _Mode, events: bytes
-):
-    def talk(connection: socket.socket) -> None:
-        _read_request(connection)
-        connection.sendall(_event_stream(events, missing=10))
-        _wait_for_hangup(connection)
-
-    with _tcp_server(talk) as url:
-        error = _failure(mode, "graphql-sse", url, {"subscription_idle_timeout": 0.2})
-    assert isinstance(error, SubscriptionInterruptedError)
-    assert isinstance(error.__cause__, httpx2.ReadTimeout)
-
-
-@_every_mode
 def test_a_stream_that_does_not_decode_is_a_protocol_error(mode: _Mode):
     stream = _event_stream(b"not gzip", "Content-Encoding: gzip")
     with _tcp_server(_answering(stream)) as url:
@@ -835,19 +799,529 @@ def test_a_target_app_that_does_not_answer_the_connection_is_a_runtime_error():
     assert type(error) is RuntimeError
 
 
-@pytest.mark.parametrize("mode", _MODES)
-def test_silence_before_connection_ack_is_a_transport_error(
-    mode: _Mode, monkeypatch: pytest.MonkeyPatch
-):
-    monkeypatch.setattr(websockets, "_WS_CONNECTION_ACK_TIMEOUT_SECONDS", 0.1)
+# --- the limits ------------------------------------------------------------------
 
+
+# Each limit, given to the client or to the operation, ends a wait of its step
+# and no other.
+type _Level = Literal["client", "operation"]
+
+_every_level = pytest.mark.parametrize("level", ["client", "operation"])
+
+# A limit that ends a silence the server keeps, a silence that outlasts it, and a
+# wait that does not.
+_LIMIT = 0.3
+_SILENCE = 0.6
+_STEP = 0.1
+
+# The rest of a stream that counts to 1.
+_COUNTED = (
+    _message({"type": "next", "payload": {"data": {"counter": 1}}}),
+    _message({"type": "complete"}),
+)
+_COUNTED_EVENTS = _NEXT + b"event: complete\ndata:\n\n"
+
+
+# The options of the client and of the operation, with `limits` at `level`.
+def _at(
+    level: _Level, limits: GQLOperationOptions
+) -> tuple[GQLClientOptions, GQLOperationOptions]:
+    match level:
+        case "client":
+            return GQLClientOptions(**limits), {}
+        case "operation":
+            return {}, limits
+
+
+def _limited(
+    mode: _Mode,
+    operation: _Operation,
+    url: str,
+    level: _Level,
+    limits: GQLOperationOptions,
+) -> list[int]:
+    of_client, of_operation = _at(level, limits)
+    return _call(mode, operation, url, of_client, own=of_operation)
+
+
+def _limited_failure(
+    mode: _Mode,
+    operation: _Operation,
+    url: str,
+    level: _Level,
+    limits: GQLOperationOptions,
+) -> Exception:
+    of_client, of_operation = _at(level, limits)
+    return _failure(mode, operation, url, of_client, own=of_operation)
+
+
+# The server takes the connection and never answers its TLS handshake.
+@_every_mode
+@_every_operation
+@_every_level
+def test_connect_timeout_ends_the_wait_for_a_connection(
+    mode: _Mode, operation: _Operation, level: _Level
+):
+    with _tcp_server(_wait_for_hangup) as url:
+        error = _limited_failure(
+            mode,
+            operation,
+            url.replace("http", "https", 1),
+            level,
+            {"connect_timeout": _LIMIT},
+        )
+    _assert_transport_error(error, httpx2.ConnectTimeout)
+
+
+# The answer of a proxy that is asked for a tunnel is an answer to `httpx2`. One
+# that outlasts the limit is a refusal, which a longer limit would show.
+@_every_mode
+@_every_operation
+def test_timeout_ends_the_wait_for_a_tunnel(mode: _Mode, operation: _Operation):
+    def talk(connection: socket.socket) -> None:
+        _read_request(connection)
+        time.sleep(_SILENCE)
+        connection.sendall(b"HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\n\r\n")
+
+    with _tcp_server(talk) as proxy:
+        error = _failure(
+            mode,
+            operation,
+            "https://testserver.invalid/graphql",
+            {
+                "timeout": _LIMIT,
+                "httpx_options": {"proxy": proxy.removesuffix("/graphql")},
+            },
+        )
+    _assert_transport_error(error, httpx2.ReadTimeout)
+
+
+# The one connection of the pool is held by an open stream.
+@_every_level
+def test_connect_timeout_ends_the_wait_for_a_place_in_the_pool(level: _Level):
+    of_client, of_operation = _at(level, {"connect_timeout": _LIMIT})
+    of_client["httpx_options"] = {"limits": httpx2.Limits(max_connections=1)}
+
+    def talk(connection: socket.socket) -> None:
+        _read_request(connection)
+        connection.sendall(_event_stream(b"", missing=10))
+        _wait_for_hangup(connection)
+
+    with _tcp_server(talk) as url:
+        client = GQLClient(
+            base_url=url,
+            subscription_protocol="graphql-sse",
+            **of_client,
+        )
+        with (
+            client.subscribe(
+                _Result, "subscription { counter }", variables={}, options={}
+            ),
+            pytest.raises(TransportError) as failure,
+        ):
+            client.query(
+                _Result,
+                "query { counter }",
+                variables={},
+                options=of_operation,
+            )
+        client.close()
+    _assert_transport_error(failure.value, httpx2.PoolTimeout)
+
+
+@_every_mode
+@_every_operation
+@_every_level
+def test_timeout_ends_the_wait_for_the_response_head(
+    mode: _Mode, operation: _Operation, level: _Level
+):
+    with _tcp_server(_wait_for_hangup) as url:
+        error = _limited_failure(mode, operation, url, level, {"timeout": _LIMIT})
+    _assert_transport_error(error, httpx2.ReadTimeout)
+
+
+def _falling_silent(response: bytes) -> Callable[[socket.socket], None]:
+    def talk(connection: socket.socket) -> None:
+        _read_request(connection)
+        connection.sendall(response)
+        _wait_for_hangup(connection)
+
+    return talk
+
+
+# A 2xx response that opens no stream is read as a query's is.
+@_every_mode
+@_http_operations
+@_every_level
+def test_timeout_ends_the_wait_for_the_body(
+    mode: _Mode, operation: _Operation, level: _Level
+):
+    response = _response(200, b'{"data":', missing=10)
+    with _tcp_server(_falling_silent(response)) as url:
+        error = _limited_failure(mode, operation, url, level, {"timeout": _LIMIT})
+    _assert_transport_error(error, httpx2.ReadTimeout)
+
+
+# A refusal stays what its status says, a stream by its type too.
+@_every_mode
+@_http_operations
+@_every_level
+def test_timeout_that_ends_the_wait_for_the_body_of_a_refusal_leaves_its_status(
+    mode: _Mode, operation: _Operation, level: _Level
+):
+    response = _response(503, _REFUSAL, missing=10, content_type="text/event-stream")
+    with _tcp_server(_falling_silent(response)) as url:
+        error = _limited_failure(mode, operation, url, level, {"timeout": _LIMIT})
+    assert isinstance(error, HTTPResponseError)
+    assert error.status_code == 503
+    assert isinstance(error.__cause__, httpx2.ReadTimeout)
+
+
+@_every_mode
+@_every_level
+def test_timeout_ends_the_wait_for_connection_ack(mode: _Mode, level: _Level):
     def talk(connection: socket.socket) -> None:
         _Peer(connection).accept()
         _wait_for_hangup(connection)
 
     with _tcp_server(talk) as url:
-        error = _failure(mode, "graphql-transport-ws", url)
+        error = _limited_failure(
+            mode, "graphql-transport-ws", url, level, {"timeout": _LIMIT}
+        )
     _assert_transport_error(error, TimeoutError)
+    assert str(error) == "Timed out waiting for connection_ack after 0.3 seconds"
+
+
+# Each message before `connection_ack` is waited for anew.
+@_every_mode
+@_every_level
+def test_timeout_holds_for_each_wait_before_connection_ack(mode: _Mode, level: _Level):
+    def talk(connection: socket.socket) -> None:
+        peer = _Peer(connection)
+        peer.accept()
+        peer.expect("connection_init")
+        for _ in range(4):
+            time.sleep(_STEP)
+            peer.send(_message({"type": "pong"}))
+        peer.send(_message({"type": "connection_ack"}))
+        peer.expect("subscribe")
+        peer.send(*_COUNTED)
+        _wait_for_hangup(connection)
+
+    with _tcp_server(talk) as url:
+        limits = GQLOperationOptions(timeout=_LIMIT)
+        assert _limited(mode, "graphql-transport-ws", url, level, limits) == [1]
+
+
+@_every_mode
+@_every_level
+@pytest.mark.parametrize("events", [b"", _NEXT])
+def test_stream_idle_timeout_ends_the_silence_of_an_sse_stream(
+    mode: _Mode, level: _Level, events: bytes
+):
+    with _tcp_server(_falling_silent(_event_stream(events, missing=10))) as url:
+        error = _limited_failure(
+            mode, "graphql-sse", url, level, {"stream_idle_timeout": _LIMIT}
+        )
+    assert type(error) is SubscriptionInterruptedError
+    assert isinstance(error.__cause__, httpx2.ReadTimeout)
+
+
+@_every_mode
+@_every_level
+@pytest.mark.parametrize("messages", [(), _COUNTED[:1]], ids=["first", "next"])
+def test_stream_idle_timeout_ends_the_silence_of_a_websocket(
+    mode: _Mode, level: _Level, messages: tuple[wsproto.events.Event, ...]
+):
+    def talk(connection: socket.socket) -> None:
+        peer = _Peer(connection)
+        peer.acknowledge()
+        peer.send(*messages)
+        _wait_for_hangup(connection)
+
+    with _tcp_server(talk) as url:
+        error = _limited_failure(
+            mode,
+            "graphql-transport-ws",
+            url,
+            level,
+            {"stream_idle_timeout": _LIMIT},
+        )
+    assert type(error) is SubscriptionInterruptedError
+    assert isinstance(error.__cause__, TimeoutError)
+    assert str(error) == "Timed out waiting for the next message after 0.3 seconds"
+
+
+# The control frames of the WebSocket, which `httpx2` answers itself, are no
+# messages: if they were, the stream would end within the limit. The frame comes
+# well before the limit: `httpx2` fails in a thread of its own on one that meets
+# its close.
+@_every_mode
+def test_control_frames_of_a_websocket_do_not_count_for_stream_idle_timeout(
+    mode: _Mode,
+):
+    def talk(connection: socket.socket) -> None:
+        peer = _Peer(connection)
+        peer.acknowledge()
+        time.sleep(_LIMIT)
+        peer.send(wsproto.events.Ping())
+        time.sleep(_LIMIT * 1.5)
+        peer.send(*_COUNTED)
+        _wait_for_hangup(connection)
+
+    with _tcp_server(talk) as url:
+        error = _failure(
+            mode, "graphql-transport-ws", url, {"stream_idle_timeout": _LIMIT * 2}
+        )
+    assert type(error) is SubscriptionInterruptedError
+    assert isinstance(error.__cause__, TimeoutError)
+
+
+# Heartbeats are data, though the subscription yields nothing for them.
+@_every_mode
+def test_heartbeats_of_an_sse_stream_count_for_stream_idle_timeout(mode: _Mode):
+    end = _COUNTED_EVENTS
+    beat = b": ping\n\n"
+
+    def talk(connection: socket.socket) -> None:
+        _read_request(connection)
+        connection.sendall(_event_stream(b"", missing=4 * len(beat) + len(end)))
+        for _ in range(4):
+            time.sleep(_STEP)
+            connection.sendall(beat)
+        connection.sendall(end)
+        _wait_for_hangup(connection)
+
+    with _tcp_server(talk) as url:
+        options = GQLClientOptions(stream_idle_timeout=_LIMIT)
+        assert _call(mode, "graphql-sse", url, options) == [1]
+
+
+@_every_mode
+@pytest.mark.parametrize("beat", ["ping", "pong"])
+def test_heartbeats_of_a_websocket_count_for_stream_idle_timeout(
+    mode: _Mode, beat: str
+):
+    def talk(connection: socket.socket) -> None:
+        peer = _Peer(connection)
+        peer.acknowledge()
+        for _ in range(4):
+            time.sleep(_STEP)
+            peer.send(_message({"type": beat}))
+        peer.send(*_COUNTED)
+        _wait_for_hangup(connection)
+
+    with _tcp_server(talk) as url:
+        options = GQLClientOptions(stream_idle_timeout=_LIMIT)
+        assert _call(mode, "graphql-transport-ws", url, options) == [1]
+
+
+# Answers as `operation` asks, silent for `_SILENCE` before the answer opens and
+# for as long before the stream goes on.
+def _slow_server(
+    operation: _Operation, *, opening: bool, stream: bool
+) -> Callable[[socket.socket], None]:
+    def wait(applies: bool) -> None:
+        if applies:
+            time.sleep(_SILENCE)
+
+    def talk(connection: socket.socket) -> None:
+        if operation == "graphql-transport-ws":
+            peer = _Peer(connection)
+            peer.accept()
+            peer.expect("connection_init")
+            wait(opening)
+            peer.send(_message({"type": "connection_ack"}))
+            peer.expect("subscribe")
+            wait(stream)
+            peer.send(*_COUNTED)
+            _wait_for_hangup(connection)
+            return
+        _read_request(connection)
+        wait(opening)
+        if operation == "query":
+            connection.sendall(_response(200, b'{"data": {"counter": 1}}'))
+            return
+        connection.sendall(_event_stream(b"", missing=len(_COUNTED_EVENTS)))
+        wait(stream)
+        connection.sendall(_COUNTED_EVENTS)
+        _wait_for_hangup(connection)
+
+    return talk
+
+
+# Nor does it end a query, which has no stream.
+@_every_mode
+@_every_operation
+@_every_level
+def test_stream_idle_timeout_does_not_end_the_wait_for_an_answer(
+    mode: _Mode, operation: _Operation, level: _Level
+):
+    server = _slow_server(operation, opening=True, stream=False)
+    with _tcp_server(server) as url:
+        limits = GQLOperationOptions(stream_idle_timeout=_LIMIT)
+        assert _limited(mode, operation, url, level, limits) == [1]
+
+
+@_every_mode
+@pytest.mark.parametrize("operation", _SUBSCRIPTIONS)
+@_every_level
+def test_timeout_does_not_end_the_silence_of_an_open_stream(
+    mode: _Mode, operation: _Operation, level: _Level
+):
+    server = _slow_server(operation, opening=False, stream=True)
+    with _tcp_server(server) as url:
+        limits = GQLOperationOptions(timeout=_LIMIT, stream_idle_timeout=None)
+        assert _limited(mode, operation, url, level, limits) == [1]
+
+
+# `None` takes away the limit of the client.
+@_every_mode
+@pytest.mark.parametrize("operation", _OPERATIONS)
+def test_an_operation_takes_away_the_limits_of_its_client(
+    mode: _Mode, operation: _Operation
+):
+    server = _slow_server(operation, opening=True, stream=True)
+    with _tcp_server(server) as url:
+        counted = _call(
+            mode,
+            operation,
+            url,
+            GQLClientOptions(timeout=_LIMIT, stream_idle_timeout=_LIMIT),
+            own={"timeout": None, "stream_idle_timeout": None},
+        )
+    assert counted == [1]
+
+
+# The request that opens the stream is not the one the client made, or goes out
+# in another one.
+type _Route = Literal["redirect", "proxy"]
+
+_every_route = pytest.mark.parametrize("route", ["redirect", "proxy"])
+
+
+# The URL and the settings with which a client reaches `answer`.
+@contextmanager
+def _routed(
+    route: _Route, answer: Callable[[socket.socket], None]
+) -> Generator[tuple[str, dict[str, object]]]:
+    if route == "proxy":
+        with _tcp_server(answer) as proxy:
+            settings: dict[str, object] = {"proxy": proxy.removesuffix("/graphql")}
+            yield "http://testserver.invalid/graphql", settings
+        return
+    with _tcp_server(answer) as target:
+        redirect = _response(307, b"", f"Location: {target}")
+        with _tcp_server(_answering(redirect)) as url:
+            yield url, {"follow_redirects": True}
+
+
+@_every_mode
+@_every_route
+def test_timeout_does_not_end_the_silence_of_a_routed_stream(
+    mode: _Mode, route: _Route
+):
+    server = _slow_server("graphql-sse", opening=False, stream=True)
+    with _routed(route, server) as (url, settings):
+        options = GQLClientOptions(timeout=_LIMIT, httpx_options=settings)
+        assert _call(mode, "graphql-sse", url, options) == [1]
+
+
+@_every_mode
+@_every_route
+def test_stream_idle_timeout_ends_the_silence_of_a_routed_stream(
+    mode: _Mode, route: _Route
+):
+    server = _falling_silent(_event_stream(b"", missing=10))
+    with _routed(route, server) as (url, settings):
+        options = GQLClientOptions(stream_idle_timeout=_LIMIT, httpx_options=settings)
+        error = _failure(mode, "graphql-sse", url, options)
+    assert type(error) is SubscriptionInterruptedError
+    assert isinstance(error.__cause__, httpx2.ReadTimeout)
+
+
+# A hook may give its request limits of its own: they hold, and the dict is the
+# hook's.
+@_every_mode
+def test_limits_a_hook_puts_on_a_stream_are_left_alone(mode: _Mode):
+    limits = httpx2.Timeout(_STEP_TIMEOUT, read=_LIMIT).as_dict()
+
+    def hook(request: httpx2.Request) -> None:
+        request.extensions["timeout"] = limits
+
+    async def async_hook(request: httpx2.Request) -> None:
+        await asyncio.sleep(0)
+        hook(request)
+
+    hooks = {"request": [async_hook if mode == "async" else hook]}
+    with _tcp_server(_falling_silent(_event_stream(b"", missing=10))) as url:
+        options = GQLClientOptions(
+            stream_idle_timeout=None, httpx_options={"event_hooks": hooks}
+        )
+        error = _failure(mode, "graphql-sse", url, options)
+    assert type(error) is SubscriptionInterruptedError
+    assert limits == httpx2.Timeout(_STEP_TIMEOUT, read=_LIMIT).as_dict()
+
+
+# The in-process transports of `httpx2` read no limits.
+@pytest.mark.parametrize("operation", ["query", "graphql-transport-ws"])
+def test_the_limits_of_a_request_do_not_end_one_to_a_target_app(
+    operation: _Operation,
+):
+    async def app(scope: ASGIScope, receive: ASGIReceive, send: ASGISend) -> None:
+        await asyncio.sleep(_SILENCE)
+        if scope["type"] == "websocket":
+            connection = await accept_graphql_ws(scope, receive, send)
+            subscription = await connection.ack()
+            await subscription.next({"counter": 1})
+            await subscription.complete()
+            await connection.drain()
+            return
+        request = await accept_graphql_sse(scope, receive, send)
+        await request.respond(200, "application/json", b'{"data": {"counter": 1}}')
+
+    limits = GQLClientOptions(connect_timeout=_LIMIT, timeout=_LIMIT)
+    call = _async_call(operation, _IN_PROCESS, limits, target_app=app)
+    assert run_async(call) == [1]
+
+
+@pytest.mark.parametrize(
+    ("limits", "acknowledges", "expected"),
+    [
+        (GQLOperationOptions(timeout=_LIMIT), False, TransportError),
+        (
+            GQLOperationOptions(stream_idle_timeout=_LIMIT),
+            True,
+            SubscriptionInterruptedError,
+        ),
+    ],
+    ids=["before-ack", "after-subscribe"],
+)
+@_every_level
+def test_the_waits_for_messages_of_a_target_app_are_limited(
+    level: _Level,
+    limits: GQLOperationOptions,
+    acknowledges: bool,
+    expected: type[Exception],
+):
+    async def app(scope: ASGIScope, receive: ASGIReceive, send: ASGISend) -> None:
+        connection = await accept_graphql_ws(scope, receive, send)
+        if acknowledges:
+            await connection.ack()
+        await connection.drain()
+
+    of_client, of_operation = _at(level, limits)
+    call = _async_call(
+        "graphql-transport-ws",
+        _IN_PROCESS,
+        of_client,
+        target_app=app,
+        own=of_operation,
+    )
+    with pytest.raises(expected) as failure:
+        run_async(call)
+    assert type(failure.value) is expected
+    assert isinstance(failure.value.__cause__, TimeoutError)
 
 
 # --- the end of a websocket ------------------------------------------------------
@@ -1550,7 +2024,7 @@ async def _hold_a_subscription(
     client = AsyncGQLClient(base_url=url, subscription_protocol="graphql-transport-ws")
     try:
         async with client.subscribe(
-            _Result, "subscription { counter }", variables={}, headers={}
+            _Result, "subscription { counter }", variables={}, options={}
         ):
             await asyncio.sleep(0.2)
             vanish.set()
@@ -1615,15 +2089,6 @@ def test_the_response_of_an_error_keeps_its_request():
     assert error.response.text == "Bad Gateway"
 
 
-def _readme_retry() -> str:
-    readme = Path(__file__).parent.parent / "README.md"
-    blocks: list[str] = re.findall(
-        r"```python\n(.*?)```", readme.read_text(encoding="utf-8"), re.DOTALL
-    )
-    [block] = [block for block in blocks if "get_user_patiently" in block]
-    return block
-
-
 # Runs the README's retry against a server that answers with `answers` in turn,
 # and returns the outcome with the number of delays it waited.
 async def _run_readme_retry(answers: list[bytes]) -> tuple[int | Exception, int]:
@@ -1646,7 +2111,7 @@ async def _run_readme_retry(answers: list[bytes]) -> tuple[int | Exception, int]
 
     with _tcp_server(talk) as url:
         namespace: dict[str, object] = {"GetUserQueryResult": list}
-        exec(_readme_retry(), namespace)
+        exec(readme_block("get_user_patiently"), namespace)
         namespace["get_user"] = Operation(url)
         namespace["asyncio"] = SimpleNamespace(sleep=sleep)
         retry = cast(

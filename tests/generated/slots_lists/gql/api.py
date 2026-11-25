@@ -190,7 +190,7 @@ class GetEventsQueryBound[TResult: pydantic.BaseModel](runtime.GQLBoundOperation
             typing.cast("type[TResult]", GetEventsQueryResult),
             self.exec_source,
             variables={"id": id, **self.fragment_args},
-            headers=self.headers,
+            options=self.options,
             slot_readers=self.slot_readers,
         )
 
@@ -201,7 +201,7 @@ class GetCardsQueryBound[TResult: pydantic.BaseModel](runtime.GQLBoundOperation)
             typing.cast("type[TResult]", GetCardsQueryResult),
             self.exec_source,
             variables={"id": id, **self.fragment_args},
-            headers=self.headers,
+            options=self.options,
             slot_readers=self.slot_readers,
         )
 

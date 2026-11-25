@@ -15,6 +15,7 @@ from contextlib import asynccontextmanager
 from contextlib import contextmanager
 from copy import replace
 from dataclasses import dataclass
+from dataclasses import field
 from http.cookiejar import CookieJar
 from types import MappingProxyType
 from typing import IO
@@ -23,6 +24,7 @@ from typing import Literal
 from typing import Self
 from typing import TypedDict
 from typing import TypeIs
+from typing import Unpack
 from typing import cast
 
 import httpx2
@@ -31,6 +33,9 @@ from httpx2.websockets import ASGIWebSocketTransport
 from httpx2.websockets import AsyncWebSocketClient
 from httpx2.websockets import WebSocketClient
 
+from iron_gql.call import Call
+from iron_gql.call import CallLimits
+from iron_gql.call import RequestOptions
 from iron_gql.errors import ResponseProtocolError
 from iron_gql.errors import SubscriptionInterruptedError
 from iron_gql.errors import TransportError
@@ -53,7 +58,8 @@ from iron_gql.websockets import async_graphql_ws_subscribe
 from iron_gql.websockets import graphql_ws_subscribe
 from iron_gql.websockets import ws_url
 
-DEFAULT_QUERY_TIMEOUT = 10
+DEFAULT_CONNECT_TIMEOUT = 10
+DEFAULT_TIMEOUT = 10
 
 # ASGI carries heterogeneous values, so `object` rather than `Any`: a fake that
 # reads a scope key has to narrow it, and the type checker keeps that honest.
@@ -88,16 +94,141 @@ class FileVar:
         self.content_type = content_type
 
 
+# The options of an operation: those of its client under the same names, which
+# refine the client's (ADR 0010).
+class GQLOperationOptions(TypedDict, total=False):
+    headers: dict[str, str] | None
+    connect_timeout: float | None
+    timeout: float | None
+    stream_idle_timeout: float | None
+    httpx_options: Mapping[str, Any] | None
+
+
+# The options of a client that a generated module takes as a dict (ADR 0008):
+# the constructor's parameters but those the generator has options of its own
+# for -- the endpoint, the subscription protocol and the model base.
+class GQLClientOptions(GQLOperationOptions, total=False):
+    pass
+
+
+class AsyncGQLClientOptions(GQLClientOptions, total=False):
+    target_app: ASGIApp | None
+
+
+# The settings of a request of `httpx2` that an operation may hold in its
+# `httpx_options`: those of a call but the headers, an option of their own. Below
+# are those the client sets itself, with what to do instead.
+_REQUEST_OPTIONS = sorted(
+    (RequestOptions.__required_keys__ | RequestOptions.__optional_keys__) - {"headers"}
+)
+_SENDS_THE_OPERATION = "drop it, the client sends the operation itself"
+_OWNED_REQUEST_OPTIONS: Mapping[str, str] = {
+    "method": _SENDS_THE_OPERATION,
+    "url": _SENDS_THE_OPERATION,
+    "content": _SENDS_THE_OPERATION,
+    "data": _SENDS_THE_OPERATION,
+    "files": _SENDS_THE_OPERATION,
+    "json": _SENDS_THE_OPERATION,
+    "params": _SENDS_THE_OPERATION,
+    "headers": "use the option headers of the operation",
+    "cookies": "drop it, the client keeps its cookies itself",
+    "timeout": (
+        "use the options connect_timeout, timeout and stream_idle_timeout "
+        "of the operation"
+    ),
+}
+
+
+# Refuses options an operation does not take: the names first, then the keys of
+# `httpx_options`. The values are `httpx2`'s to judge.
+def _check_operation_options(options: GQLOperationOptions) -> None:
+    known = GQLOperationOptions.__optional_keys__
+    unknown = [repr(name) for name in options if name not in known]
+    if unknown:
+        msg = (
+            f"An operation does not take the options {', '.join(unknown)}; "
+            f"correct the spelling or drop them: it takes {', '.join(sorted(known))}"
+        )
+        raise TypeError(msg)
+    httpx_options = _or_empty(options.get("httpx_options"))
+    owned = [
+        f"{key!r} ({hint})"
+        for key, hint in _OWNED_REQUEST_OPTIONS.items()
+        if key in httpx_options
+    ]
+    # `httpx2` would put it over the limits of the operation without a word.
+    extensions: object = httpx_options.get("extensions")
+    if isinstance(extensions, Mapping) and "timeout" in extensions:
+        hint = _OWNED_REQUEST_OPTIONS["timeout"]
+        owned.append(f"'timeout' in 'extensions' ({hint})")
+    if owned:
+        msg = (
+            "httpx_options of an operation holds keys the client sets itself: "
+            f"{', '.join(owned)}"
+        )
+        raise ValueError(msg)
+    foreign = [repr(key) for key in httpx_options if key not in _REQUEST_OPTIONS]
+    if foreign:
+        msg = (
+            "httpx_options of an operation holds keys that a request does not "
+            f"take: {', '.join(foreign)}; it takes {', '.join(_REQUEST_OPTIONS)}: "
+            "correct the spelling, or pass the settings of a connection to the client"
+        )
+        raise TypeError(msg)
+
+
+# Only `None` stands for an empty layer: what a mapping is worth as a condition
+# does not matter.
+def _or_empty[T](mapping: Mapping[str, T] | None) -> Mapping[str, T]:
+    return {} if mapping is None else mapping
+
+
+# A header name has no case: its last spelling stands for all of them.
+def _merged_headers(*layers: Mapping[str, str] | None) -> dict[str, str]:
+    merged = {
+        name.lower(): (name, value)
+        for layer in layers
+        for name, value in _or_empty(layer).items()
+    }
+    return dict(merged.values())
+
+
+# Checked options with a later layer over them, in dicts of their own: the dict
+# options merge by key, any other is replaced (ADR 0010).
+def _refined(
+    options: GQLOperationOptions, layer: GQLOperationOptions
+) -> GQLOperationOptions:
+    refined: GQLOperationOptions = {**options, **layer}
+    if "headers" in refined:
+        refined["headers"] = _merged_headers(
+            options.get("headers"), layer.get("headers")
+        )
+    if "httpx_options" in refined:
+        refined["httpx_options"] = {
+            **_or_empty(options.get("httpx_options")),
+            **_or_empty(layer.get("httpx_options")),
+        }
+    return refined
+
+
+# The options stay out of `repr`: headers and `auth` hold credentials.
 @dataclass(frozen=True, slots=True, kw_only=True, repr=False, eq=False)
 class GQLOperation:
-    _headers: tuple[tuple[str, str], ...] = ()
+    _options: GQLOperationOptions = field(default_factory=GQLOperationOptions)
 
     @property
-    def headers(self) -> dict[str, str]:
-        return dict(self._headers)
+    def options(self) -> GQLOperationOptions:
+        return _refined({}, self._options)
 
-    def with_headers(self, headers: dict[str, str]) -> Self:
-        return replace(self, _headers=tuple(headers.items()))
+    def with_options(self, **options: Unpack[GQLOperationOptions]) -> Self:
+        _check_operation_options(options)
+        return replace(self, _options=_refined(self._options, options))
+
+    def with_timeout(self, timeout: float | None) -> Self:
+        return self.with_options(timeout=timeout)
+
+    def with_headers(self, headers: dict[str, str] | None) -> Self:
+        return self.with_options(headers=headers)
 
 
 # The base every generated template class derives from. Deliberately empty: a
@@ -370,8 +501,8 @@ def _parse_query_response[T: pydantic.BaseModel](
 _QUERY_ACCEPT = "application/graphql-response+json, application/json;q=0.9"
 
 
-def _caller_accept(headers: dict[str, str] | None) -> str | None:
-    return httpx2.Headers(headers or {}).get("Accept")
+def _caller_accept(headers: dict[str, str]) -> str | None:
+    return httpx2.Headers(headers).get("Accept")
 
 
 # The headers of one request: an `Accept` the caller set goes as it is, empty
@@ -407,14 +538,32 @@ def _subscription_payload(query: str, variables: dict[str, Any]) -> dict[str, An
     return payload
 
 
-# An SSE stream reads under `subscription_idle_timeout`, not `query_timeout`:
-# a quiet stream is healthy for as long as the server's heartbeat says so.
-# httpx2 has one read timeout for the response headers and the body alike, so
-# the wait for the headers falls under it too.
-def _subscription_timeouts(
-    query_timeout: int, subscription_idle_timeout: float | None
-) -> httpx2.Timeout:
-    return httpx2.Timeout(query_timeout, read=subscription_idle_timeout)
+# What a client brings to every call of an operation, beside the headers and
+# the settings its `httpx2` client holds.
+@dataclass(frozen=True, slots=True, kw_only=True)
+class _CallDefaults:
+    accept: str | None
+    limits: CallLimits
+
+    # `accept` stands in for an `Accept` that neither the client nor the
+    # operation has. The options are checked here too: a caller of the client
+    # itself passes them past `with_options`.
+    def call(self, options: GQLOperationOptions, *, accept: str | None = None) -> Call:
+        _check_operation_options(options)
+        limits = self.limits
+        return Call(
+            CallLimits(
+                connect_timeout=options.get("connect_timeout", limits.connect_timeout),
+                timeout=options.get("timeout", limits.timeout),
+                stream_idle_timeout=options.get(
+                    "stream_idle_timeout", limits.stream_idle_timeout
+                ),
+            ),
+            headers=_with_accept(
+                self.accept, accept, _merged_headers(options.get("headers"))
+            ),
+            httpx_options=_or_empty(options.get("httpx_options")),
+        )
 
 
 # The base a client takes from its module in `use_client`: one built without a
@@ -458,7 +607,7 @@ _IN_PROCESS_HINT = "to call an app in process, pass target_app to AsyncGQLClient
 _OWNED_HTTPX_OPTIONS: Mapping[str, str] = {
     "base_url": "pass base_url to the client",
     "headers": "pass headers to the client",
-    "timeout": "pass query_timeout and subscription_idle_timeout to the client",
+    "timeout": ("pass connect_timeout, timeout and stream_idle_timeout to the client"),
     "cookies": "drop it, the client keeps its cookies itself",
     "transport": _IN_PROCESS_HINT,
     "mounts": _IN_PROCESS_HINT,
@@ -513,20 +662,6 @@ _CLOSED = (
 )
 
 
-# The options of a client that a generated module takes as a dict (ADR 0008):
-# the constructor's parameters but those the generator has options of its own
-# for -- the endpoint, the subscription protocol and the model base.
-class GQLClientOptions(TypedDict, total=False):
-    headers: dict[str, str] | None
-    query_timeout: int
-    subscription_idle_timeout: float | None
-    httpx_options: Mapping[str, Any] | None
-
-
-class AsyncGQLClientOptions(GQLClientOptions, total=False):
-    target_app: ASGIApp | None
-
-
 # How one WebSocket session went, read once the task groups of
 # `httpx2.websockets` are done: `own` is what this side of it failed with, the
 # body of the caller's `with` included, which those groups wrap in groups of
@@ -553,8 +688,9 @@ class AsyncGQLClient:
         subscription_protocol: SubscriptionProtocol,
         target_app: ASGIApp | None = None,
         headers: dict[str, str] | None = None,
-        query_timeout: int = DEFAULT_QUERY_TIMEOUT,
-        subscription_idle_timeout: float | None = None,
+        connect_timeout: float | None = DEFAULT_CONNECT_TIMEOUT,
+        timeout: float | None = DEFAULT_TIMEOUT,
+        stream_idle_timeout: float | None = None,
         httpx_options: Mapping[str, Any] | None = None,
         model_base: type[pydantic.BaseModel] | None = None,
     ):
@@ -564,14 +700,17 @@ class AsyncGQLClient:
         self._httpx_options = options
         self._endpoint_url = httpx2.URL(base_url)
         self._subscription_protocol: SubscriptionProtocol = subscription_protocol
-        self._subscription_timeouts = _subscription_timeouts(
-            query_timeout, subscription_idle_timeout
-        )
         self._model_base = model_base
         self._target_app = target_app
-        self._caller_accept = _caller_accept(headers)
-        self._headers = dict(headers or {})
-        self._query_timeout = query_timeout
+        self._headers = _merged_headers(headers)
+        self._defaults = _CallDefaults(
+            accept=_caller_accept(self._headers),
+            limits=CallLimits(
+                connect_timeout=connect_timeout,
+                timeout=timeout,
+                stream_idle_timeout=stream_idle_timeout,
+            ),
+        )
         # One jar for every transport: a cookie a response sets in one loop
         # goes out with the next request whatever loop sends it. httpx2 shares
         # a `CookieJar` it is given, where it would copy its own `Cookies`.
@@ -620,7 +759,6 @@ class AsyncGQLClient:
                 ),
                 headers=self._headers,
                 cookies=self._cookies,
-                timeout=self._query_timeout,
                 **self._httpx_options,
             )
             hook = self._closed_with(loop, http)
@@ -663,15 +801,15 @@ class AsyncGQLClient:
         query: str,
         *,
         variables: dict[str, Any],
-        headers: dict[str, str],
+        options: GQLOperationOptions,
         slot_readers: SlotReaders | None = None,
     ) -> T:
         content = _request_content(query, variables)
-        headers = _with_accept(self._caller_accept, _QUERY_ACCEPT, headers)
+        call = self._defaults.call(options, accept=_QUERY_ACCEPT)
         transport = await self._transport()
         with translated(_REQUESTING):
             async with transport.stream(
-                "POST", self._endpoint_url, headers=headers, **content
+                "POST", self._endpoint_url, **call.request, **content
             ) as response:
                 with reading_body(response):
                     await response.aread()
@@ -684,10 +822,11 @@ class AsyncGQLClient:
         query: str,
         *,
         variables: dict[str, Any],
-        headers: dict[str, str],
+        options: GQLOperationOptions,
         slot_readers: SlotReaders | None = None,
     ) -> AsyncGenerator[AsyncGenerator[T]]:
         payload = _subscription_payload(query, variables)
+        call = self._defaults.call(options)
         match self._subscription_protocol:
             case "graphql-sse":
                 transport = await self._transport()
@@ -697,8 +836,7 @@ class AsyncGQLClient:
                     transport,
                     self._endpoint_url,
                     payload,
-                    headers=_with_accept(self._caller_accept, None, headers),
-                    timeouts=self._subscription_timeouts,
+                    call=call,
                     result_type=result_type,
                     slot_readers=slot_readers,
                     models=self._models,
@@ -706,7 +844,7 @@ class AsyncGQLClient:
                     yield stream
             case "graphql-transport-ws":
                 async with self._ws_subscribe(
-                    result_type, payload, headers, slot_readers
+                    result_type, payload, call, slot_readers
                 ) as stream:
                     yield stream
 
@@ -715,7 +853,7 @@ class AsyncGQLClient:
         self,
         result_type: type[T],
         payload: dict[str, Any],
-        headers: dict[str, str],
+        call: Call,
         slot_readers: SlotReaders | None,
     ) -> AsyncGenerator[AsyncGenerator[T]]:
         side = _WSSide()
@@ -724,7 +862,7 @@ class AsyncGQLClient:
             async with AsyncExitStack() as stack:
                 with side.recording():
                     stream = await self._open_ws_stream(
-                        stack, result_type, payload, headers, slot_readers
+                        stack, result_type, payload, call, slot_readers
                     )
                     side.broken = SubscriptionInterruptedError
                     yield stream
@@ -741,7 +879,7 @@ class AsyncGQLClient:
         stack: AsyncExitStack,
         result_type: type[T],
         payload: dict[str, Any],
-        headers: dict[str, str],
+        call: Call,
         slot_readers: SlotReaders | None,
     ) -> AsyncGenerator[T]:
         # A websocket needs a transport of its own under `target_app`, so the
@@ -755,7 +893,7 @@ class AsyncGQLClient:
                     if self._target_app
                     else None
                 ),
-                headers={**httpx2.Headers(transport.headers), **headers},
+                headers=transport.headers,
                 cookies=self._cookies,
                 **self._httpx_options,
             )
@@ -763,11 +901,11 @@ class AsyncGQLClient:
         with translated(_OPENING_WS):
             ws = await stack.enter_async_context(
                 AsyncWebSocketClient(http).connect(
-                    url, subprotocols=["graphql-transport-ws"]
+                    url, subprotocols=["graphql-transport-ws"], **call.request
                 )
             )
         return await async_graphql_ws_subscribe(
-            ws, result_type, payload, slot_readers, self._models
+            ws, result_type, payload, call.limits, slot_readers, self._models
         )
 
     # Final in every loop. The transport of the running loop is closed before
@@ -791,21 +929,26 @@ class GQLClient:
         base_url: str,
         subscription_protocol: SubscriptionProtocol,
         headers: dict[str, str] | None = None,
-        query_timeout: int = DEFAULT_QUERY_TIMEOUT,
-        subscription_idle_timeout: float | None = None,
+        connect_timeout: float | None = DEFAULT_CONNECT_TIMEOUT,
+        timeout: float | None = DEFAULT_TIMEOUT,
+        stream_idle_timeout: float | None = None,
         httpx_options: Mapping[str, Any] | None = None,
         model_base: type[pydantic.BaseModel] | None = None,
     ):
         self._endpoint_url = httpx2.URL(base_url)
         self._subscription_protocol: SubscriptionProtocol = subscription_protocol
-        self._subscription_timeouts = _subscription_timeouts(
-            query_timeout, subscription_idle_timeout
-        )
         self._model_base = model_base
-        self._caller_accept = _caller_accept(headers)
+        own_headers = _merged_headers(headers)
+        self._defaults = _CallDefaults(
+            accept=_caller_accept(own_headers),
+            limits=CallLimits(
+                connect_timeout=connect_timeout,
+                timeout=timeout,
+                stream_idle_timeout=stream_idle_timeout,
+            ),
+        )
         http = _open_http(
-            headers=headers or {},
-            timeout=query_timeout,
+            headers=own_headers,
             **_checked_httpx_options(httpx2.Client, httpx_options),
         )
         self._http = http
@@ -834,16 +977,16 @@ class GQLClient:
         query: str,
         *,
         variables: dict[str, Any],
-        headers: dict[str, str],
+        options: GQLOperationOptions,
         slot_readers: SlotReaders | None = None,
     ) -> T:
         content = _request_content(query, variables)
-        headers = _with_accept(self._caller_accept, _QUERY_ACCEPT, headers)
+        call = self._defaults.call(options, accept=_QUERY_ACCEPT)
         http = self._open_http()
         with (
             translated(_REQUESTING),
             http.stream(
-                "POST", self._endpoint_url, headers=headers, **content
+                "POST", self._endpoint_url, **call.request, **content
             ) as response,
             reading_body(response),
         ):
@@ -857,18 +1000,18 @@ class GQLClient:
         query: str,
         *,
         variables: dict[str, Any],
-        headers: dict[str, str],
+        options: GQLOperationOptions,
         slot_readers: SlotReaders | None = None,
     ) -> Generator[Generator[T]]:
         payload = _subscription_payload(query, variables)
+        call = self._defaults.call(options)
         match self._subscription_protocol:
             case "graphql-sse":
                 with graphql_sse_subscribe(
                     self._open_http(),
                     self._endpoint_url,
                     payload,
-                    headers=_with_accept(self._caller_accept, None, headers),
-                    timeouts=self._subscription_timeouts,
+                    call=call,
                     result_type=result_type,
                     slot_readers=slot_readers,
                     models=self._models,
@@ -886,11 +1029,16 @@ class GQLClient:
                             WebSocketClient(self._open_http()).connect(
                                 url,
                                 subprotocols=["graphql-transport-ws"],
-                                headers=headers,
+                                **call.request,
                             )
                         )
                     yield graphql_ws_subscribe(
-                        ws, result_type, payload, slot_readers, self._models
+                        ws,
+                        result_type,
+                        payload,
+                        call.limits,
+                        slot_readers,
+                        self._models,
                     )
 
     def _open_http(self) -> httpx2.Client:

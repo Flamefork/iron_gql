@@ -1,6 +1,6 @@
-import asyncio
 from collections.abc import AsyncGenerator
 from collections.abc import Generator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Any
 from typing import Literal
@@ -11,6 +11,7 @@ from httpx2.websockets import AsyncWebSocketSession
 from httpx2.websockets import WebSocketSession
 from wsproto.utilities import LocalProtocolError
 
+from iron_gql.call import CallLimits
 from iron_gql.errors import GraphQLResponseError
 from iron_gql.errors import ResponseProtocolError
 from iron_gql.errors import SubscriptionInterruptedError
@@ -24,7 +25,6 @@ from iron_gql.subscription import next_result
 from iron_gql.transport import translated
 
 _MAX_PRE_ACK_MESSAGES = 16
-_WS_CONNECTION_ACK_TIMEOUT_SECONDS = 10
 
 
 # How the failures of a session read before `subscribe` goes out, when a broken
@@ -34,17 +34,20 @@ class _Stage:
     action: str
     broken: type[TransportError]
     malformed: str
+    awaited: str
 
 
 _HANDSHAKE = _Stage(
     action="The WebSocket handshake",
     broken=TransportError,
     malformed="Malformed protocol message during handshake",
+    awaited="connection_ack",
 )
 _STREAM = _Stage(
     action="The subscription",
     broken=SubscriptionInterruptedError,
     malformed="Malformed protocol message",
+    awaited="the next message",
 )
 
 
@@ -114,11 +117,14 @@ def _parsed(text: str, models: ProtocolModels, stage: _Stage) -> WSMessage:
         raise ResponseProtocolError(msg, status_code=None) from exc
 
 
-def _ack_timeout() -> TransportError:
-    timeout = _WS_CONNECTION_ACK_TIMEOUT_SECONDS
-    return TransportError(
-        f"Timed out waiting for connection_ack after {timeout} seconds"
-    )
+@contextmanager
+def _receiving(stage: _Stage, limit: float | None) -> Generator[None]:
+    try:
+        with translated(stage.action, broken=stage.broken):
+            yield
+    except TimeoutError as exc:
+        msg = f"Timed out waiting for {stage.awaited} after {limit} seconds"
+        raise stage.broken(msg) from exc
 
 
 def _no_ack() -> ResponseProtocolError:
@@ -155,38 +161,37 @@ async def _async_send(
     return True
 
 
-async def _async_receive(ws: AsyncWebSocketSession, stage: _Stage) -> str:
-    with translated(stage.action, broken=stage.broken):
-        return await ws.receive_text()
+async def _async_receive(
+    ws: AsyncWebSocketSession, stage: _Stage, limit: float | None
+) -> str:
+    with _receiving(stage, limit):
+        return await ws.receive_text(timeout=limit)
 
 
 async def async_graphql_ws_subscribe[T: pydantic.BaseModel](
     ws: AsyncWebSocketSession,
     result_type: type[T],
     payload: dict[str, Any],
+    limits: CallLimits,
     slot_readers: SlotReaders | None,
     models: ProtocolModels,
 ) -> AsyncGenerator[T]:
-    await _async_ws_handshake(ws, models)
+    await _async_ws_handshake(ws, limits.timeout, models)
     subscribe = {"id": "1", "type": "subscribe", "payload": payload}
     if not await _async_send(ws, subscribe, _HANDSHAKE):
         while True:
-            await _async_receive(ws, _HANDSHAKE)
-    return _async_ws_receive_messages(ws, result_type, slot_readers, models)
+            await _async_receive(ws, _HANDSHAKE, None)
+    return _async_ws_receive_messages(
+        ws, result_type, limits.stream_idle_timeout, slot_readers, models
+    )
 
 
 async def _async_ws_handshake(
-    ws: AsyncWebSocketSession, models: ProtocolModels
+    ws: AsyncWebSocketSession, limit: float | None, models: ProtocolModels
 ) -> None:
     await _async_send(ws, {"type": "connection_init"}, _HANDSHAKE)
     for _ in range(_MAX_PRE_ACK_MESSAGES):
-        try:
-            text = await asyncio.wait_for(
-                _async_receive(ws, _HANDSHAKE),
-                timeout=_WS_CONNECTION_ACK_TIMEOUT_SECONDS,
-            )
-        except TimeoutError as exc:
-            raise _ack_timeout() from exc
+        text = await _async_receive(ws, _HANDSHAKE, limit)
         match _handshake_action(_parsed(text, models, _HANDSHAKE)):
             case "ack":
                 return
@@ -200,11 +205,12 @@ async def _async_ws_handshake(
 async def _async_ws_receive_messages[T: pydantic.BaseModel](
     ws: AsyncWebSocketSession,
     result_type: type[T],
+    idle_limit: float | None,
     slot_readers: SlotReaders | None,
     models: ProtocolModels,
 ) -> AsyncGenerator[T]:
     while True:
-        text = await _async_receive(ws, _STREAM)
+        text = await _async_receive(ws, _STREAM, idle_limit)
         message = _parsed(text, models, _STREAM)
         match _message_action(message, result_type, slot_readers, models):
             case Emit(value=value):
@@ -226,33 +232,35 @@ def _send(ws: WebSocketSession, message: dict[str, Any], stage: _Stage) -> bool:
     return True
 
 
-def _receive(ws: WebSocketSession, stage: _Stage, timeout: float | None = None) -> str:
-    with translated(stage.action, broken=stage.broken):
-        return ws.receive_text(timeout=timeout)
+def _receive(ws: WebSocketSession, stage: _Stage, limit: float | None) -> str:
+    with _receiving(stage, limit):
+        return ws.receive_text(timeout=limit)
 
 
 def graphql_ws_subscribe[T: pydantic.BaseModel](
     ws: WebSocketSession,
     result_type: type[T],
     payload: dict[str, Any],
+    limits: CallLimits,
     slot_readers: SlotReaders | None,
     models: ProtocolModels,
 ) -> Generator[T]:
-    _ws_handshake(ws, models)
+    _ws_handshake(ws, limits.timeout, models)
     subscribe = {"id": "1", "type": "subscribe", "payload": payload}
     if not _send(ws, subscribe, _HANDSHAKE):
         while True:
-            _receive(ws, _HANDSHAKE)
-    return _ws_receive_messages(ws, result_type, slot_readers, models)
+            _receive(ws, _HANDSHAKE, None)
+    return _ws_receive_messages(
+        ws, result_type, limits.stream_idle_timeout, slot_readers, models
+    )
 
 
-def _ws_handshake(ws: WebSocketSession, models: ProtocolModels) -> None:
+def _ws_handshake(
+    ws: WebSocketSession, limit: float | None, models: ProtocolModels
+) -> None:
     _send(ws, {"type": "connection_init"}, _HANDSHAKE)
     for _ in range(_MAX_PRE_ACK_MESSAGES):
-        try:
-            text = _receive(ws, _HANDSHAKE, timeout=_WS_CONNECTION_ACK_TIMEOUT_SECONDS)
-        except TimeoutError as exc:
-            raise _ack_timeout() from exc
+        text = _receive(ws, _HANDSHAKE, limit)
         match _handshake_action(_parsed(text, models, _HANDSHAKE)):
             case "ack":
                 return
@@ -266,11 +274,12 @@ def _ws_handshake(ws: WebSocketSession, models: ProtocolModels) -> None:
 def _ws_receive_messages[T: pydantic.BaseModel](
     ws: WebSocketSession,
     result_type: type[T],
+    idle_limit: float | None,
     slot_readers: SlotReaders | None,
     models: ProtocolModels,
 ) -> Generator[T]:
     while True:
-        text = _receive(ws, _STREAM)
+        text = _receive(ws, _STREAM, idle_limit)
         message = _parsed(text, models, _STREAM)
         match _message_action(message, result_type, slot_readers, models):
             case Emit(value=value):

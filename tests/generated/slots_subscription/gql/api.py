@@ -130,7 +130,7 @@ class WatchAttachmentSubscriptionBound[TResult: pydantic.BaseModel](runtime.GQLB
             typing.cast("type[TResult]", WatchAttachmentSubscriptionResult),
             self.exec_source,
             variables={"id": id, **self.fragment_args},
-            headers=self.headers,
+            options=self.options,
             slot_readers=self.slot_readers,
         )
 

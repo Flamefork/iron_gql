@@ -72,7 +72,7 @@ class GetViewerQuery(runtime.GQLOperation):
             GetViewerQueryResult,
             'query GetViewer {\n  viewer {\n    id\n    ... {\n      name\n      email\n    }\n  }\n}',
             variables={},
-            headers=self.headers,
+            options=self.options,
         )
 
 

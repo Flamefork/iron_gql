@@ -19,6 +19,7 @@ from dataclasses import field
 from pathlib import Path
 from types import ModuleType
 from typing import Any
+from typing import Unpack
 from typing import cast
 
 import graphql
@@ -41,7 +42,9 @@ from iron_gql.runtime import ASGIReceive
 from iron_gql.runtime import ASGIScope
 from iron_gql.runtime import ASGISend
 from iron_gql.runtime import AsyncGQLClient
+from iron_gql.runtime import AsyncGQLClientOptions
 from iron_gql.runtime import GQLClient
+from iron_gql.runtime import GQLClientOptions
 from iron_gql.runtime import SubscriptionProtocol
 from iron_gql.slots import GQLFragment
 from iron_gql.slots import GQLSlotNode
@@ -193,6 +196,14 @@ _HEADER_PAIRS = pydantic.TypeAdapter(list[tuple[bytes, bytes]])
 _JSON_OBJECT = pydantic.TypeAdapter(dict[str, object])
 
 
+# In the order they came, a header that comes more than once as often.
+def decode_headers(scope: ASGIScope) -> list[tuple[str, str]]:
+    return [
+        (key.decode(), value.decode())
+        for key, value in _HEADER_PAIRS.validate_python(scope["headers"])
+    ]
+
+
 # The server end of one GraphQL over SSE request, as steps a fake drives
 # itself: the request as received, then whatever response the test needs --
 # a stream it writes event by event, or a single response in its place.
@@ -251,10 +262,7 @@ async def accept_graphql_sse(
         event = await receive()
         body += _BODY_CHUNK.validate_python(event["body"])
         more_body = bool(event.get("more_body"))
-    headers = {
-        key.decode(): value.decode()
-        for key, value in _HEADER_PAIRS.validate_python(scope["headers"])
-    }
+    headers = dict(decode_headers(scope))
     return SSETestRequest(
         scope, headers, _JSON_OBJECT.validate_json(body), receive, send
     )
@@ -323,14 +331,27 @@ def run_async[T](coroutine: Coroutine[object, object, T]) -> T:
     return asyncio.run(coroutine, loop_factory=asyncio.new_event_loop)
 
 
-def readme_fenced_blocks() -> list[str]:
-    readme = (Path(__file__).parent.parent / "README.md").read_text(encoding="utf-8")
-    _, _, after = readme.partition("\n## Fragment Slots\n")
-    section, _, _ = after.partition("\n## Customization Hooks\n")
+def _readme() -> str:
+    return (Path(__file__).parent.parent / "README.md").read_text(encoding="utf-8")
+
+
+def _python_blocks(text: str) -> list[str]:
     return [
         match.group(1).rstrip("\n")
-        for match in re.finditer(r"```python\n(.*?)```", section, re.DOTALL)
+        for match in re.finditer(r"```python\n(.*?)```", text, re.DOTALL)
     ]
+
+
+def readme_fenced_blocks() -> list[str]:
+    _, _, after = _readme().partition("\n## Fragment Slots\n")
+    section, _, _ = after.partition("\n## Customization Hooks\n")
+    return _python_blocks(section)
+
+
+# The one Python block of the whole README that names `marker`.
+def readme_block(marker: str) -> str:
+    [block] = [block for block in _python_blocks(_readme()) if marker in block]
+    return textwrap.dedent(block)
 
 
 # What a fixture's schema gets unless it asks for more. A scalar mapping is
@@ -432,14 +453,14 @@ def generated_queries_path(package: str) -> Path:
 async def use_package_client(
     package: str,
     base_url: str,
-    target_app: ASGIApp | None = None,
     subscription_protocol: SubscriptionProtocol = "graphql-sse",
+    **client_options: Unpack[AsyncGQLClientOptions],
 ) -> AsyncGenerator[None]:
     """Point the committed generated package's client at base_url."""
     client = AsyncGQLClient(
         base_url=base_url,
         subscription_protocol=subscription_protocol,
-        target_app=target_app,
+        **client_options,
     )
     async with use_client(_generated_api_module(package), client):
         yield
@@ -450,10 +471,15 @@ def use_sync_package_client(
     package: str,
     base_url: str,
     subscription_protocol: SubscriptionProtocol = "graphql-sse",
+    **client_options: Unpack[GQLClientOptions],
 ) -> Generator[None]:
     """The sync counterpart of `use_package_client`; the sync client takes no
     target_app, so its base_url always points at a real server."""
-    client = GQLClient(base_url=base_url, subscription_protocol=subscription_protocol)
+    client = GQLClient(
+        base_url=base_url,
+        subscription_protocol=subscription_protocol,
+        **client_options,
+    )
     with use_client(_generated_api_module(package), client):
         yield
 

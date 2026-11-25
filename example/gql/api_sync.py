@@ -101,7 +101,7 @@ class GetUserQuery(runtime.GQLOperation):
             GetUserQueryResult,
             'query GetUser($id: ID!) {\n  user(id: $id) {\n    id\n    name\n    email\n    role\n  }\n}',
             variables={"id": id},
-            headers=self.headers,
+            options=self.options,
         )
 
 
@@ -112,7 +112,7 @@ class CreateUserMutation(runtime.GQLOperation):
             CreateUserMutationResult,
             'mutation CreateUser($input: CreateUserInput!) {\n  createUser(input: $input) {\n    id\n    name\n    email\n    role\n  }\n}',
             variables={"input": input},
-            headers=self.headers,
+            options=self.options,
         )
 
 
@@ -123,7 +123,7 @@ class PostAddedSubscription(runtime.GQLOperation):
             PostAddedSubscriptionResult,
             'subscription PostAdded($userId: ID!) {\n  postAdded(userId: $userId) {\n    id\n    title\n    body\n    author {\n      name\n    }\n  }\n}',
             variables={"userId": user_id},
-            headers=self.headers,
+            options=self.options,
         )
 
 

@@ -66,7 +66,7 @@ class PingQuery(runtime.GQLOperation):
             PingQueryResult,
             'query Ping {\n  ping\n}',
             variables={},
-            headers=self.headers,
+            options=self.options,
         )
 
 

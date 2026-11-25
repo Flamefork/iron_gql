@@ -133,7 +133,7 @@ class EveryCellQuery(runtime.GQLOperation):
             EveryCellQueryResult,
             'query EveryCell($stringPlain: String, $stringRequired: String!, $stringList: [String!]!, $stringSparse: [String], $intPlain: Int, $intRequired: Int!, $intList: [Int!]!, $intSparse: [Int], $idPlain: ID, $idRequired: ID!, $idList: [ID!]!, $idSparse: [ID], $sizePlain: Size, $sizeRequired: Size!, $sizeList: [Size!]!, $sizeSparse: [Size], $filterPlain: Filter, $filterRequired: Filter!, $filterList: [Filter!]!, $filterSparse: [Filter]) {\n  echo(\n    payload: {\n      stringPlain: $stringPlain\n      stringRequired: $stringRequired\n      stringList: $stringList\n      stringSparse: $stringSparse\n      intPlain: $intPlain\n      intRequired: $intRequired\n      intList: $intList\n      intSparse: $intSparse\n      idPlain: $idPlain\n      idRequired: $idRequired\n      idList: $idList\n      idSparse: $idSparse\n      sizePlain: $sizePlain\n      sizeRequired: $sizeRequired\n      sizeList: $sizeList\n      sizeSparse: $sizeSparse\n      filterPlain: $filterPlain\n      filterRequired: $filterRequired\n      filterList: $filterList\n      filterSparse: $filterSparse\n    }\n    stringPlain: $stringPlain\n    stringRequired: $stringRequired\n    stringList: $stringList\n    stringSparse: $stringSparse\n    intPlain: $intPlain\n    intRequired: $intRequired\n    intList: $intList\n    intSparse: $intSparse\n    idPlain: $idPlain\n    idRequired: $idRequired\n    idList: $idList\n    idSparse: $idSparse\n    sizePlain: $sizePlain\n    sizeRequired: $sizeRequired\n    sizeList: $sizeList\n    sizeSparse: $sizeSparse\n    filterPlain: $filterPlain\n    filterRequired: $filterRequired\n    filterList: $filterList\n    filterSparse: $filterSparse\n  ) {\n    seen\n    size\n    sizes\n  }\n}',
             variables={"stringPlain": string_plain, "stringRequired": string_required, "stringList": string_list, "stringSparse": string_sparse, "intPlain": int_plain, "intRequired": int_required, "intList": int_list, "intSparse": int_sparse, "idPlain": id_plain, "idRequired": id_required, "idList": id_list, "idSparse": id_sparse, "sizePlain": size_plain, "sizeRequired": size_required, "sizeList": size_list, "sizeSparse": size_sparse, "filterPlain": filter_plain, "filterRequired": filter_required, "filterList": filter_list, "filterSparse": filter_sparse},
-            headers=self.headers,
+            options=self.options,
         )
 
 
@@ -144,7 +144,7 @@ class DefaultsQuery(runtime.GQLOperation):
             DefaultsQueryResult,
             'query Defaults {\n  labelled {\n    seen\n    size\n  }\n}',
             variables={},
-            headers=self.headers,
+            options=self.options,
         )
 
 
@@ -204,7 +204,7 @@ class SlottedQueryBound[TResult: pydantic.BaseModel](runtime.GQLBoundOperation):
             typing.cast("type[TResult]", SlottedQueryResult),
             self.exec_source,
             variables={"payload": payload, **self.fragment_args},
-            headers=self.headers,
+            options=self.options,
             slot_readers=self.slot_readers,
         )
 

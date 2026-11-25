@@ -71,7 +71,7 @@ class GetUserQuery(runtime.GQLOperation):
             GetUserQueryResult,
             'fragment UserFields on User {\n  id\n  name\n}\n\nquery GetUser($id: ID!) {\n  user(id: $id) {\n    ...UserFields\n  }\n}',
             variables={"id": id},
-            headers=self.headers,
+            options=self.options,
         )
 
 

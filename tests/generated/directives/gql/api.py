@@ -187,7 +187,7 @@ class IncludeSkipQuery(runtime.GQLOperation):
             IncludeSkipQueryResult,
             'query IncludeSkip($id: ID!, $withEmail: Boolean!, $skipPhone: Boolean!) {\n  user(id: $id) {\n    name\n    email @include(if: $withEmail)\n    phone @skip(if: $skipPhone)\n  }\n}',
             variables={"id": id, "withEmail": with_email, "skipPhone": skip_phone},
-            headers=self.headers,
+            options=self.options,
         )
 
 
@@ -198,7 +198,7 @@ class IncludeNonNullQuery(runtime.GQLOperation):
             IncludeNonNullQueryResult,
             'query IncludeNonNull($withName: Boolean!) {\n  user {\n    id\n    name @include(if: $withName)\n  }\n}',
             variables={"withName": with_name},
-            headers=self.headers,
+            options=self.options,
         )
 
 
@@ -209,7 +209,7 @@ class SkipNonNullQuery(runtime.GQLOperation):
             SkipNonNullQueryResult,
             'query SkipNonNull($skipName: Boolean!) {\n  user {\n    id\n    name @skip(if: $skipName)\n  }\n}',
             variables={"skipName": skip_name},
-            headers=self.headers,
+            options=self.options,
         )
 
 
@@ -220,7 +220,7 @@ class IncludeNullableQuery(runtime.GQLOperation):
             IncludeNullableQueryResult,
             'query IncludeNullable($withName: Boolean!) {\n  user {\n    id\n    nullableName @include(if: $withName)\n  }\n}',
             variables={"withName": with_name},
-            headers=self.headers,
+            options=self.options,
         )
 
 
@@ -231,7 +231,7 @@ class IncludeInlineFragmentQuery(runtime.GQLOperation):
             IncludeInlineFragmentQueryResult,
             'query IncludeInlineFragment($withDetails: Boolean!) {\n  user {\n    id\n    ... @include(if: $withDetails) {\n      name\n      email\n    }\n  }\n}',
             variables={"withDetails": with_details},
-            headers=self.headers,
+            options=self.options,
         )
 
 
@@ -242,7 +242,7 @@ class ConditionalAndUnconditionalQuery(runtime.GQLOperation):
             ConditionalAndUnconditionalQueryResult,
             'query ConditionalAndUnconditional($withDetails: Boolean!) {\n  user {\n    id\n    name\n    ... @include(if: $withDetails) {\n      name\n    }\n  }\n}',
             variables={"withDetails": with_details},
-            headers=self.headers,
+            options=self.options,
         )
 
 
@@ -253,7 +253,7 @@ class SkipLiteralFalseQuery(runtime.GQLOperation):
             SkipLiteralFalseQueryResult,
             'query SkipLiteralFalse {\n  user {\n    id\n    name @skip(if: false)\n  }\n}',
             variables={},
-            headers=self.headers,
+            options=self.options,
         )
 
 
@@ -264,7 +264,7 @@ class IncludeSkipSameFieldQuery(runtime.GQLOperation):
             IncludeSkipSameFieldQueryResult,
             'query IncludeSkipSameField($show: Boolean!, $hide: Boolean!) {\n  user {\n    id\n    name @include(if: $show) @skip(if: $hide)\n  }\n}',
             variables={"show": show, "hide": hide},
-            headers=self.headers,
+            options=self.options,
         )
 
 
@@ -275,7 +275,7 @@ class IncludeCamelCaseQuery(runtime.GQLOperation):
             IncludeCamelCaseQueryResult,
             'query IncludeCamelCase($withName: Boolean!) {\n  user {\n    id\n    firstName @include(if: $withName)\n  }\n}',
             variables={"withName": with_name},
-            headers=self.headers,
+            options=self.options,
         )
 
 
@@ -286,7 +286,7 @@ class IncludeListQuery(runtime.GQLOperation):
             IncludeListQueryResult,
             'query IncludeList($withTags: Boolean!) {\n  user {\n    id\n    tags @include(if: $withTags)\n  }\n}',
             variables={"withTags": with_tags},
-            headers=self.headers,
+            options=self.options,
         )
 
 
@@ -297,7 +297,7 @@ class IncludeLiteralTrueQuery(runtime.GQLOperation):
             IncludeLiteralTrueQueryResult,
             'query IncludeLiteralTrue {\n  user {\n    id\n    name @include(if: true)\n  }\n}',
             variables={},
-            headers=self.headers,
+            options=self.options,
         )
 
 
@@ -308,7 +308,7 @@ class IncludeNestedObjectQuery(runtime.GQLOperation):
             IncludeNestedObjectQueryResult,
             'query IncludeNestedObject($withAddress: Boolean!) {\n  user {\n    id\n    address @include(if: $withAddress) {\n      city\n      zip\n    }\n  }\n}',
             variables={"withAddress": with_address},
-            headers=self.headers,
+            options=self.options,
         )
 
 
@@ -319,7 +319,7 @@ class SharedVariableQuery(runtime.GQLOperation):
             SharedVariableQueryResult,
             'query SharedVariable($flag: Boolean!) {\n  user {\n    id\n    email @include(if: $flag)\n    phone @skip(if: $flag)\n  }\n}',
             variables={"flag": flag},
-            headers=self.headers,
+            options=self.options,
         )
 
 
@@ -330,7 +330,7 @@ class InlineLiteralFalseQuery(runtime.GQLOperation):
             InlineLiteralFalseQueryResult,
             'query InlineLiteralFalse {\n  user {\n    id\n    ... @include(if: false) {\n      name\n    }\n  }\n}',
             variables={},
-            headers=self.headers,
+            options=self.options,
         )
 
 
@@ -341,7 +341,7 @@ class ContradictoryPairQuery(runtime.GQLOperation):
             ContradictoryPairQueryResult,
             'query ContradictoryPair($flag: Boolean!) {\n  user {\n    id\n    name @include(if: $flag) @skip(if: $flag)\n  }\n}',
             variables={"flag": flag},
-            headers=self.headers,
+            options=self.options,
         )
 
 
@@ -352,7 +352,7 @@ class MixedPolarityVariableQuery(runtime.GQLOperation):
             MixedPolarityVariableQueryResult,
             'query MixedPolarityVariable($a: Boolean!, $b: Boolean!) {\n  user {\n    id\n    ... @include(if: $b) {\n      name\n    }\n    ... @include(if: $a) @skip(if: $b) {\n      email\n    }\n  }\n}',
             variables={"a": a, "b": b},
-            headers=self.headers,
+            options=self.options,
         )
 
 
@@ -363,7 +363,7 @@ class ComplementaryConjunctionsQuery(runtime.GQLOperation):
             ComplementaryConjunctionsQueryResult,
             'query ComplementaryConjunctions($a: Boolean!, $b: Boolean!) {\n  user {\n    id\n    ... @include(if: $a) {\n      ... @include(if: $b) {\n        name\n      }\n    }\n    ... @skip(if: $a) {\n      ... @skip(if: $b) {\n        name\n      }\n    }\n  }\n}',
             variables={"a": a, "b": b},
-            headers=self.headers,
+            options=self.options,
         )
 
 

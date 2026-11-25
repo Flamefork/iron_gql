@@ -82,7 +82,7 @@ class SearchQuery(runtime.GQLOperation):
             SearchQueryResult,
             'query Search {\n  search {\n    __typename\n    ... on User {\n      name\n    }\n  }\n}',
             variables={},
-            headers=self.headers,
+            options=self.options,
         )
 
 

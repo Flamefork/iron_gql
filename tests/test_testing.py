@@ -166,7 +166,7 @@ async def test_use_client_swaps_restores_and_closes_async_client(
 
     assert namespace["_client"] is original
     with pytest.raises(RuntimeError, match="closed"):
-        await client.query(_PingResult, "query Ping { ping }", variables={}, headers={})
+        await client.query(_PingResult, "query Ping { ping }", variables={}, options={})
 
 
 def test_use_client_swaps_restores_and_closes_sync_client(httpserver: HTTPServer):
@@ -186,7 +186,7 @@ def test_use_client_swaps_restores_and_closes_sync_client(httpserver: HTTPServer
 
     assert namespace["_client"] is original
     with pytest.raises(RuntimeError, match="closed"):
-        client.query(_PingResult, "query Ping { ping }", variables={}, headers={})
+        client.query(_PingResult, "query Ping { ping }", variables={}, options={})
 
 
 type _Mode = Literal["sync", "async"]
@@ -327,12 +327,12 @@ class _Swaps:
             case GQLClient():
                 with pytest.raises(RuntimeError, match="closed"):
                     client.query(
-                        _PingResult, "query { ping }", variables={}, headers={}
+                        _PingResult, "query { ping }", variables={}, options={}
                     )
             case AsyncGQLClient():
                 with pytest.raises(RuntimeError, match="closed"):
                     await client.query(
-                        _PingResult, "query { ping }", variables={}, headers={}
+                        _PingResult, "query { ping }", variables={}, options={}
                     )
 
     # The module is back on its own client, and no swap is left on record: a
@@ -450,7 +450,7 @@ async def test_a_cancelled_swap_restores_and_closes_its_client():
 
     assert namespace["_client"] is original
     with pytest.raises(RuntimeError, match="closed"):
-        await client.query(_PingResult, "query { ping }", variables={}, headers={})
+        await client.query(_PingResult, "query { ping }", variables={}, options={})
 
 
 async def test_an_out_of_order_exit_shadows_the_body_exception(swaps: _Swaps):
