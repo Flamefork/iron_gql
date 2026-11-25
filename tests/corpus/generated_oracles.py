@@ -175,17 +175,25 @@ def _tables(table: symtable.SymbolTable) -> Iterator[symtable.SymbolTable]:
         yield from _tables(child)
 
 
+def _imported_names(node: ast.stmt) -> list[str]:
+    match node:
+        case ast.Import(names=aliases):
+            return [alias.name for alias in aliases]
+        case ast.ImportFrom(module=module, names=aliases):
+            return [f"{module}:{alias.name}" for alias in aliases]
+        case _:
+            return []
+
+
 def assert_each_module_imported_once(module: ModuleType) -> None:
     # Each option that names a `module:attr` -- a scalar, the alias function,
     # the base -- brings its module along, and the scaffold imports pydantic
     # and the standard modules itself: two of them naming one module wrote its
-    # `import` twice, which basedpyright rejects as a duplicate import.
+    # `import` twice, which basedpyright rejects as a duplicate import. The
+    # base URL and the client options import a name instead, and may name one.
     source = Path(str(module.__file__)).read_text(encoding="utf-8")
     imported = [
-        alias.name
-        for node in ast.parse(source).body
-        if isinstance(node, ast.Import)
-        for alias in node.names
+        name for node in ast.parse(source).body for name in _imported_names(node)
     ]
     repeated = sorted({name for name in imported if imported.count(name) > 1})
     if repeated:

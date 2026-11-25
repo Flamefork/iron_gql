@@ -193,6 +193,28 @@ CASES = [
         "expect": "reject",
     },
     {
+        "name": "base-url-symbol-slots-not-in-nfkc",
+        "schema": USER_SCHEMA,
+        "base_url_import": "sample_app.settings:ｓｌｏｔｓ",
+        "queries": """
+        from sample_app.gql.api import api_gql
+
+        q = api_gql("query Q { user { id } }")
+        """,
+        "expect": "reject",
+    },
+    {
+        "name": "client-options-symbol-runtime-not-in-nfkc",
+        "schema": USER_SCHEMA,
+        "client_options_import": "sample_app.settings:ｒｕｎｔｉｍｅ",
+        "queries": """
+        from sample_app.gql.api import api_gql
+
+        q = api_gql("query Q { user { id } }")
+        """,
+        "expect": "reject",
+    },
+    {
         "name": "slot-alias-slot-name-meta",
         "schema": SLOT_SCHEMA,
         "queries": """
@@ -567,7 +589,10 @@ def test_generation_rejects_or_yields_an_importable_module(
     test_project.prepare(schema=case["schema"], queries=case["queries"])
     rejection: Exception | None = None
     try:
-        test_project.generate(base_url_import=case.get("base_url_import"))
+        test_project.generate(
+            base_url_import=case.get("base_url_import"),
+            client_options_import=case.get("client_options_import"),
+        )
     except (GraphQLGenerationError, ValueError) as exc:
         rejection = exc
     if rejection is not None:

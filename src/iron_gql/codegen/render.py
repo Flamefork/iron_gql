@@ -189,6 +189,7 @@ def scaffold_claims(
     *,
     gql_fn_name: str,
     base_url_ref: ImportRef,
+    client_options_ref: ImportRef | None,
     scalars: dict[str, ImportRef],
     to_camel_ref: ImportRef,
     model_base_ref: ImportRef,
@@ -219,7 +220,11 @@ def scaffold_claims(
         (gql_fn_name, "the generated gql function"),
         ("_client", "the generated client binding"),
         ("_statement_factories", "the generated statement factory table"),
-        (base_url_ref.root_symbol, base_url_ref.import_statement()),
+        *(
+            (ref.root_symbol, ref.import_statement())
+            for ref in (base_url_ref, client_options_ref)
+            if ref is not None
+        ),
         (to_camel_ref.root_module, f"import {to_camel_ref.root_module}"),
         *((ref.root_module, f"import {ref.root_module}") for ref in scalars.values()),
         (model_base_ref.root_module, f"import {model_base_ref.root_module}"),
@@ -301,6 +306,7 @@ def render_imports(
     to_camel_ref: ImportRef,
     scalars: dict[str, ImportRef],
     base_url_ref: ImportRef,
+    client_options_ref: ImportRef | None,
     model_base_ref: ImportRef,
     mode: ModeConfig,
 ) -> str:
@@ -342,7 +348,7 @@ def render_imports(
     third_party_imports = "\n".join(
         f"import {module}" for module in THIRD_PARTY_MODULE_NAMES
     )
-    return f"""\
+    scaffold_imports = f"""\
 {stdlib_imports}
 {abc_module_imports}
 {abc_imports}
@@ -351,11 +357,24 @@ def render_imports(
 
 {third_party_imports}
 
-{iron_gql_imports}
+{iron_gql_imports}"""
+    # Both may read one object, `CONFIG.url` and `CONFIG.gql`, or one that the
+    # scaffold imports: a name is imported once.
+    client_imports = "\n".join(
+        statement
+        for statement in dict.fromkeys(
+            ref.import_statement()
+            for ref in (base_url_ref, client_options_ref)
+            if ref is not None
+        )
+        if statement not in scaffold_imports.splitlines()
+    )
+    return f"""\
+{scaffold_imports}
 
 {module_imports}
 
-{base_url_ref.import_statement()}"""
+{client_imports}"""
 
 
 # `GQLModel` derives from the consumer's base, and the client builds its own
@@ -365,6 +384,7 @@ def render_imports(
 # `validate_by_name=False`, which a subclass's `populate_by_name` does not undo.
 def render_client_init(
     base_url_ref: ImportRef,
+    client_options_ref: ImportRef | None,
     subscription_protocol: SubscriptionProtocol,
     to_camel_ref: ImportRef,
     model_base_ref: ImportRef,
@@ -375,10 +395,13 @@ def render_client_init(
         if model_base_ref == DEFAULT_MODEL_BASE
         else f"\n    model_base={model_base_ref.dotted_path},"
     )
+    client_options_arg = (
+        "" if client_options_ref is None else f"\n    **{client_options_ref.symbol},"
+    )
     return f"""\
 _client = runtime.{mode.client_class}(
     base_url={base_url_ref.symbol},
-    subscription_protocol="{subscription_protocol}",{model_base_arg}
+    subscription_protocol="{subscription_protocol}",{model_base_arg}{client_options_arg}
 )
 
 
@@ -637,6 +660,7 @@ def render_gql_fn(
 def render_module(
     mode: GenerationMode,
     base_url_ref: ImportRef,
+    client_options_ref: ImportRef | None,
     subscription_protocol: SubscriptionProtocol,
     gql_fn_name: str,
     collected: CollectedModuleIR,
@@ -657,10 +681,16 @@ def render_module(
         # fragment definition always inherits exactly one on-type base.
         render_header(unsafe_multiple_inheritance=uses_slot_models),
         render_imports(
-            to_camel_ref, scalars, base_url_ref, model_base_ref, mode_config
+            to_camel_ref,
+            scalars,
+            base_url_ref,
+            client_options_ref,
+            model_base_ref,
+            mode_config,
         ),
         render_client_init(
             base_url_ref,
+            client_options_ref,
             subscription_protocol,
             to_camel_ref,
             model_base_ref,

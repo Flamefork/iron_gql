@@ -23,6 +23,7 @@ PING_STATEMENT = "query Ping { ping }"
 class RenderOptions(TypedDict, total=False):
     module_full_name: str
     base_url_import: str
+    client_options_import: str
     to_camel_fn_full_name: str
     model_base_import: str
     scalars: Mapping[str, str]

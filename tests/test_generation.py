@@ -1560,7 +1560,15 @@ async def test_accepted_import_option_yields_a_working_module(
     )
     test_project.write_file(
         test_project.root / "sample_app/settings.py",
-        f"GRAPHQL_URL = {base_url!r}\n\n\nclass CONFIG:\n    url = GRAPHQL_URL\n",
+        f"""
+        GRAPHQL_URL = {base_url!r}
+        OPTIONS = {{}}
+
+
+        class CONFIG:
+            url = GRAPHQL_URL
+            gql = OPTIONS
+        """,
     )
     test_project.write_file(
         test_project.root / "sample_app/type.py",

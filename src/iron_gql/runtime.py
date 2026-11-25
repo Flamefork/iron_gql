@@ -1,4 +1,5 @@
 import asyncio
+import inspect
 import json
 import threading
 import weakref
@@ -18,6 +19,7 @@ from typing import IO
 from typing import Any
 from typing import Literal
 from typing import Self
+from typing import TypedDict
 from typing import TypeIs
 from typing import cast
 
@@ -423,10 +425,77 @@ class _LoopTransport:
         return self.closing
 
 
+# The keys of `httpx_options` that the client keeps to itself, and what to do
+# instead: it sets the first four, and a transport shared between the `httpx2`
+# clients it opens would be closed by the first of them to close.
+_IN_PROCESS_HINT = "to call an app in process, pass target_app to AsyncGQLClient"
+_OWNED_HTTPX_OPTIONS: Mapping[str, str] = {
+    "base_url": "pass base_url to the client",
+    "headers": "pass headers to the client",
+    "timeout": "pass query_timeout and subscription_idle_timeout to the client",
+    "cookies": "drop it, the client keeps its cookies itself",
+    "transport": _IN_PROCESS_HINT,
+    "mounts": _IN_PROCESS_HINT,
+}
+
+
+# The settings for each `httpx2` client that a client opens: a copy, with every
+# key judged here, where the client is created -- an async client opens its
+# first `httpx2` client with its first operation. The values are `httpx2`'s to
+# judge.
+def _checked_httpx_options(
+    http_type: type[httpx2.Client | httpx2.AsyncClient],
+    httpx_options: Mapping[str, Any] | None,
+) -> dict[str, Any]:
+    options = {} if httpx_options is None else dict(httpx_options)
+    owned = [
+        f"{key!r} ({hint})"
+        for key, hint in _OWNED_HTTPX_OPTIONS.items()
+        if key in options
+    ]
+    if owned:
+        msg = f"httpx_options holds keys the client owns: {', '.join(owned)}"
+        raise ValueError(msg)
+    known = inspect.signature(http_type).parameters
+    unknown = [repr(key) for key in options if key not in known]
+    if unknown:
+        msg = (
+            f"httpx_options holds keys that httpx2.{http_type.__name__} of httpx2 "
+            f"{httpx2.__version__} does not take: {', '.join(unknown)}; "
+            "correct the spelling or drop them"
+        )
+        raise TypeError(msg)
+    return options
+
+
+# The constructors of `httpx2` as a client calls them: `httpx_options` is open,
+# so no type here can name their parameters.
+_open_http: Callable[..., httpx2.Client] = httpx2.Client
+_open_async_http: Callable[..., httpx2.AsyncClient] = httpx2.AsyncClient
+
+_PROXY_PAST_THE_APP = (
+    "httpx_options sets proxy on a client with target_app: httpx2 would send the "
+    "requests to the proxy instead of the app. Drop one of the two"
+)
+
 _CLOSED = (
     "The client is closed: close() is final, and a closed client sends no "
     "request and opens no subscription. Create a new client instead"
 )
+
+
+# The options of a client that a generated module takes as a dict (ADR 0008):
+# the constructor's parameters but those the generator has options of its own
+# for -- the endpoint, the subscription protocol and the model base.
+class GQLClientOptions(TypedDict, total=False):
+    headers: dict[str, str] | None
+    query_timeout: int
+    subscription_idle_timeout: float | None
+    httpx_options: Mapping[str, Any] | None
+
+
+class AsyncGQLClientOptions(GQLClientOptions, total=False):
+    target_app: ASGIApp | None
 
 
 class AsyncGQLClient:
@@ -439,8 +508,13 @@ class AsyncGQLClient:
         headers: dict[str, str] | None = None,
         query_timeout: int = DEFAULT_QUERY_TIMEOUT,
         subscription_idle_timeout: float | None = None,
+        httpx_options: Mapping[str, Any] | None = None,
         model_base: type[pydantic.BaseModel] | None = None,
     ):
+        options = _checked_httpx_options(httpx2.AsyncClient, httpx_options)
+        if target_app is not None and options.get("proxy") is not None:
+            raise ValueError(_PROXY_PAST_THE_APP)
+        self._httpx_options = options
         self._endpoint_url = httpx2.URL(base_url)
         self._subscription_protocol: SubscriptionProtocol = subscription_protocol
         self._subscription_timeouts = _subscription_timeouts(
@@ -491,7 +565,7 @@ class AsyncGQLClient:
             if self._closed:
                 raise RuntimeError(_CLOSED)
             self._drop_closed_loops()
-            http = httpx2.AsyncClient(
+            http = _open_async_http(
                 transport=(
                     httpx2.ASGITransport(app=self._target_app)
                     if self._target_app
@@ -500,6 +574,7 @@ class AsyncGQLClient:
                 headers=self._headers,
                 cookies=self._cookies,
                 timeout=self._query_timeout,
+                **self._httpx_options,
             )
             hook = self._closed_with(loop, http)
             self._transports[loop] = _LoopTransport(http, hook)
@@ -605,7 +680,7 @@ class AsyncGQLClient:
         url = str(ws_url(self._endpoint_url))
         try:
             async with (
-                httpx2.AsyncClient(
+                _open_async_http(
                     transport=(
                         ASGIWebSocketTransport(self._target_app)
                         if self._target_app
@@ -613,6 +688,7 @@ class AsyncGQLClient:
                     ),
                     headers={**httpx2.Headers(transport.headers), **headers},
                     cookies=self._cookies,
+                    **self._httpx_options,
                 ) as client,
                 AsyncWebSocketClient(client).connect(
                     url, subprotocols=["graphql-transport-ws"]
@@ -653,6 +729,7 @@ class GQLClient:
         headers: dict[str, str] | None = None,
         query_timeout: int = DEFAULT_QUERY_TIMEOUT,
         subscription_idle_timeout: float | None = None,
+        httpx_options: Mapping[str, Any] | None = None,
         model_base: type[pydantic.BaseModel] | None = None,
     ):
         self._endpoint_url = httpx2.URL(base_url)
@@ -662,7 +739,11 @@ class GQLClient:
         )
         self._model_base = model_base
         self._caller_accept = _caller_accept(headers)
-        http = httpx2.Client(headers=headers or {}, timeout=query_timeout)
+        http = _open_http(
+            headers=headers or {},
+            timeout=query_timeout,
+            **_checked_httpx_options(httpx2.Client, httpx_options),
+        )
         self._http = http
         # Closes the pool when the client is collected or the interpreter
         # exits: a generated module's client has no owner to call `close()`.

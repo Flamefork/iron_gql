@@ -334,6 +334,8 @@ def generated_package(
     scalars: Mapping[str, str] = DEFAULT_SCALARS,
     settings: str = 'GRAPHQL_URL = "http://testserver/graphql/"\n',
     model_base_import: str = "pydantic:BaseModel",
+    base_url_name: str = "GRAPHQL_URL",
+    client_options_name: str | None = None,
 ) -> None:
     """Generate a committed package under tests/generated/<name>/.
 
@@ -352,7 +354,12 @@ def generated_package(
         schema_path=root / "schema.graphql",
         src_path=root,
         module_full_name="gql.api",
-        base_url_import=f"tests.generated.{name}.settings:GRAPHQL_URL",
+        base_url_import=f"tests.generated.{name}.settings:{base_url_name}",
+        client_options_import=(
+            None
+            if client_options_name is None
+            else f"tests.generated.{name}.settings:{client_options_name}"
+        ),
         subscription_protocol="graphql-sse",
         scalars=dict(scalars),
         to_camel_fn_full_name="pydantic.alias_generators:to_camel",
@@ -511,6 +518,7 @@ class ProjectBuilder:
         self,
         to_camel_fn_full_name: str = "pydantic.alias_generators:to_camel",
         base_url_import: str | None = None,
+        client_options_import: str | None = None,
         module_full_name: str | None = None,
         mode: GenerationMode = "async",
         to_snake_fn: Callable[[str], str] = alias_generators.to_snake,
@@ -528,6 +536,7 @@ class ProjectBuilder:
                 if base_url_import is None
                 else base_url_import
             ),
+            client_options_import=client_options_import,
             subscription_protocol=subscription_protocol,
             scalars=dict(scalars),
             to_camel_fn_full_name=to_camel_fn_full_name,
@@ -539,6 +548,7 @@ class ProjectBuilder:
         self,
         to_camel_fn_full_name: str = "pydantic.alias_generators:to_camel",
         base_url_import: str | None = None,
+        client_options_import: str | None = None,
         module_full_name: str | None = None,
         mode: GenerationMode = "async",
         to_snake_fn: Callable[[str], str] = alias_generators.to_snake,
@@ -549,6 +559,7 @@ class ProjectBuilder:
         self.render(
             to_camel_fn_full_name=to_camel_fn_full_name,
             base_url_import=base_url_import,
+            client_options_import=client_options_import,
             module_full_name=module_full_name,
             mode=mode,
             to_snake_fn=to_snake_fn,
@@ -567,9 +578,14 @@ class ProjectBuilder:
         self._monkeypatch.syspath_prepend(str(path))  # pyright: ignore[reportUnknownMemberType]
 
     def generate_and_import(
-        self, subscription_protocol: SubscriptionProtocol = "graphql-sse"
+        self,
+        subscription_protocol: SubscriptionProtocol = "graphql-sse",
+        client_options_import: str | None = None,
     ) -> tuple[ModuleType, ModuleType]:
-        self.generate(subscription_protocol=subscription_protocol)
+        self.generate(
+            subscription_protocol=subscription_protocol,
+            client_options_import=client_options_import,
+        )
         self.clear_import_state()
         api_module = importlib.import_module(self.gql_module)
         queries_module = importlib.import_module(f"{self.package}.queries")

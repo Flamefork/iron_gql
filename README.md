@@ -72,7 +72,7 @@ pip install iron-gql[testing]   # + uvicorn for the loopback test server
 
    `src_path` is the import root: the generator derives a module's name from the file's path relative to it, so the root must be what the project's absolute imports are written relative to (`Path(".")` for a flat layout, `Path("src")` for a src layout). Below this root the scan does not descend into a hidden directory (its name starts with a dot) or into the root of a virtual environment (a directory containing `pyvenv.cfg`). Everything else is walked whatever it is called: statements are collected even from a directory whose name cannot be part of a module name — a script is run, not imported.
 
-   `base_url_import`, `to_camel_fn_full_name`, `model_base_import` and each value of `scalars` name an import as `module:name`, where the module and the name are dotted Python names: `myapp.config:SETTINGS.graphql_url` reads an attribute of an imported object. A value of another form — no `:` or a second one, an empty part, a keyword, surrounding whitespace — fails generation with a `GraphQLGenerationError` that names the option, before any source is scanned.
+   `base_url_import`, `client_options_import`, `to_camel_fn_full_name`, `model_base_import` and each value of `scalars` name an import as `module:name`, where the module and the name are dotted Python names: `myapp.config:SETTINGS.graphql_url` reads an attribute of an imported object. A value of another form — no `:` or a second one, an empty part, a keyword, surrounding whitespace — fails generation with a `GraphQLGenerationError` that names the option, before any source is scanned.
 
    This writes `myapp/gql/client.py`. The module contains:
    - a client singleton for the chosen mode,
@@ -365,6 +365,35 @@ Every `.bind()` the scan leaves alone is recorded with the reason, and `debug_pa
 ## Customization Hooks
 - **Naming conventions.** Supply `to_camel_fn_full_name` (a module:path string) and a `to_snake_fn` callable. These functions align the casing with your own `alias_generator`.
 - **Endpoint configuration.** The generator writes `base_url_import` verbatim into the generated module. Set it to a global string, a configuration object, or a helper that returns the GraphQL endpoint.
+- **Client options.** `client_options_import` (a `module:name` string, like `base_url_import`; none by default) names a dict of options for the module's client. The module imports it and passes it to the client as keyword arguments, so the options hold for every operation of the module. Type the dict as `GQLClientOptions` in a sync module and as `AsyncGQLClientOptions` in an async one:
+
+  ```python
+  # myapp/config.py
+  import httpx2
+
+  from iron_gql.runtime import AsyncGQLClientOptions
+
+  GRAPHQL_URL = "https://api.example.com/graphql"
+  CLIENT_OPTIONS: AsyncGQLClientOptions = {
+      "headers": {"X-Tenant": "acme"},
+      "query_timeout": 30,
+      "subscription_idle_timeout": 60,
+      "httpx_options": {
+          "limits": httpx2.Limits(max_connections=20),
+          "trust_env": False,
+      },
+  }
+  ```
+
+  ```python
+  render_gql_module(
+      ...,
+      base_url_import="myapp.config:GRAPHQL_URL",
+      client_options_import="myapp.config:CLIENT_OPTIONS",
+  )
+  ```
+
+  See [Client Options](#client-options) for what each option does.
 - **Subscription protocol.** The generator writes `subscription_protocol` into the generated module, where it creates the module's client.
 - **Model base.** `model_base_import` (a `module:attr` string, `"pydantic:BaseModel"` by default) names the Pydantic model that every model of the module derives from: `GQLModel`, the base of the generated models, inherits it. The generated module passes the same base to its client as `model_base`, and the client builds its own models of the protocol on it — the response body, a subscription's `next` payload, a graphql-transport-ws message and its `error` payload. A setting of your base therefore holds for everything the module parses. For example, `hide_input_in_errors=True` of your base holds for the client's own `Malformed response body` and `Malformed next payload` errors too:
 
@@ -386,12 +415,37 @@ Every `.bind()` the scan leaves alone is recorded with the reason, and `debug_pa
 ## Runtime Highlights
 - `AsyncGQLClient` accepts an ASGI `target_app`. You can use the same runtime for production HTTP calls and for in-process ASGI execution.
 - `GQLClient.subscribe` returns a plain context manager over a blocking generator, so a synchronous consumer reads subscription messages with `for`.
-- Both clients take `subscription_protocol` (required) and `subscription_idle_timeout`; see [Subscriptions](#subscriptions).
+- Both clients take `subscription_protocol` (required); see [Subscriptions](#subscriptions). `headers`, `query_timeout`, `subscription_idle_timeout` and `httpx_options` are optional; see [Client Options](#client-options).
 - Both clients take `model_base`, the base of the models that the client parses the protocol with; `pydantic.BaseModel` when you pass none. A generated module passes its own; see **Model base** in [Customization Hooks](#customization-hooks).
 - `GQLOperation.with_headers` clones the operation object. The original does not change, so each call can have its own headers.
 - `Upload` scalars map to `iron_gql.FileVar`. When variables contain `FileVar` instances, the client automatically sends a multipart upload (see the [GraphQL multipart request spec](https://github.com/jaydenseric/graphql-multipart-request-spec)).
 - Variables are converted to JSON-compatible structures: dicts, lists, and nested input models are walked, and values of other types, such as custom scalars, are dumped with the Pydantic `TypeAdapter`.
 - Pydantic secrets (`SecretStr`, `SecretBytes`, `Secret[T]`) go to the server as their values at any depth of the variables: a variable, a field of an input model, a list element, a mapping value. In `repr` and in the dumps of your models they stay masked. Map a secret scalar to one of them, e.g. `"Secret": "pydantic:SecretStr"`; for `Secret[T]`, give the parameterized type a name in your module and map the scalar to that name.
+
+## Client Options
+
+A client takes these options when you create it, and a generated module passes them from its `client_options_import` (**Client options** in [Customization Hooks](#customization-hooks)). Every key of `GQLClientOptions` and `AsyncGQLClientOptions` is optional.
+
+| Option | What it sets |
+|---|---|
+| `headers` | the headers of every request |
+| `query_timeout` | the `httpx2` timeout of a query or a mutation, in seconds |
+| `subscription_idle_timeout` | the longest silence of an SSE subscription ([Subscriptions](#subscriptions)); a WebSocket subscription does not read it |
+| `httpx_options` | the settings passed on to `httpx2` |
+| `target_app` | the ASGI app that an `AsyncGQLClient` calls in process; a key of `AsyncGQLClientOptions` only |
+
+The endpoint, the subscription protocol and the model base have generator options of their own and are not keys of the types. A key that the client does not take, such as `target_app` in a sync module, fails the import of the module with `TypeError`. A client that [`use_client`](#testing) sets on a module does not get the module's options: create it with the options that it needs.
+
+`httpx_options` holds keyword arguments of `httpx2.Client` in a sync client and of `httpx2.AsyncClient` in an async one: `verify`, `cert`, `proxy`, `limits`, `auth`, `event_hooks` and others. They apply to queries, SSE subscriptions and WebSocket subscriptions, in every event loop. The client copies the dict when it is created: a key that you add later has no effect.
+
+The client checks the keys when it is created:
+- `base_url`, `headers`, `timeout`, `cookies`, `transport` and `mounts` raise `ValueError`: they belong to the client. Use the options of the client instead of the first three. The client keeps its cookies itself. To call an app in process, use `target_app`.
+- A key that the installed `httpx2` does not take raises `TypeError`.
+- `proxy` other than `None` together with `target_app` raises `ValueError`: `httpx2` would send the requests to the proxy instead of the app.
+
+A value that `httpx2` refuses raises its own exception: in `GQLClient` when the client is created, in `AsyncGQLClient` at the first operation in an event loop.
+
+The settings can change what this document says about the client. `follow_redirects=True` follows a 3xx response, which otherwise raises ([Query Errors](#query-errors)). `auth` overwrites the `Authorization` header of an operation, such as one set by `with_headers`.
 
 ## Query Errors
 
@@ -402,7 +456,7 @@ A query or a mutation is sent with `Accept: application/graphql-response+json, a
 | 2xx with `data` | returns the result |
 | 2xx with `errors`, with `data` or without | raises `GraphQLResponseError` with the errors |
 | 2xx whose body is not a GraphQL response: not JSON, or JSON of another shape | raises `GraphQLResponseError`: "Malformed response body" |
-| 3xx | raises `httpx2.HTTPStatusError` |
+| 3xx | raises `httpx2.HTTPStatusError`, unless [`httpx_options`](#client-options) sets `follow_redirects` to `True` |
 | 4xx or 5xx of the type `application/graphql-response+json`, with `errors` | raises `GraphQLResponseError` with the errors |
 | any other 4xx or 5xx | raises `httpx2.HTTPStatusError`; `error.response` holds the status and the body |
 
@@ -428,7 +482,7 @@ With `"graphql-sse"`, each subscription is one `POST` request with `Accept: text
 | sends `next` with errors | raises `GraphQLResponseError` |
 | sends `complete` | ends the stream |
 | ends the response, or the connection breaks, before `complete` | raises `SubscriptionInterruptedError` |
-| sends nothing for `subscription_idle_timeout` seconds | raises `SubscriptionInterruptedError` |
+| sends nothing for `subscription_idle_timeout` seconds | raises `SubscriptionInterruptedError`, or `httpx2.ReadTimeout` while the client waits for the response headers |
 | refuses with a status that is not 2xx | raises as for a query: `GraphQLResponseError` for a 4xx or 5xx GraphQL response with `errors`, `httpx2.HTTPStatusError` otherwise |
 | answers with a 2xx response that is not a stream | raises `GraphQLResponseError`: with the errors of the body, "Malformed response body" for a body that is not a GraphQL response, or, for one without errors, that no event stream came |
 
@@ -450,6 +504,7 @@ Leave the `async with` block of a subscription before its loop ends.
 Known limits:
 - A loop closed without `shutdown_asyncgens`, such as `loop.close()` after `run_until_complete`, leaves the connections of `AsyncGQLClient` in it to the garbage collector, which emits `ResourceWarning`. The client still works in the next loop.
 - `AsyncGQLClient` keeps the connections of a loop that was stopped but not closed, so such loops add up.
+- A `GQLClient` that a value in its `httpx_options` refers to, such as an event hook that is a method of a `GQLClient` subclass, is not garbage-collected until you call `close()`.
 - After `os.fork()`, the child process inherits the open connections of the parent's clients.
 
 ## Example

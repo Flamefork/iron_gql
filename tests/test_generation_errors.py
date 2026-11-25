@@ -439,10 +439,12 @@ def test_every_malformed_import_option_comes_in_one_error(
 
     with pytest.raises(GraphQLGenerationError) as exc:
         test_project.render(
+            client_options_import="OPTIONS",
             to_camel_fn_full_name="to_camel",
             scalars={"ID": "builtins:str", "Stamp": "my-time:Stamp"},
         )
     assert exc.value.errors == [
+        _import_option_error("client_options_import", "OPTIONS", NO_COLON),
         _import_option_error("to_camel_fn_full_name", "to_camel", NO_COLON),
         _import_option_error(
             "scalars['Stamp']",

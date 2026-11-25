@@ -85,6 +85,7 @@ def render_gql_module(  # noqa: PLR0913 -- keyword-only options of the entry poi
     src_path: Path,
     module_full_name: str,
     base_url_import: str,
+    client_options_import: str | None = None,
     subscription_protocol: SubscriptionProtocol,
     scalars: dict[str, str] | None = None,
     to_camel_fn_full_name: str = "pydantic.alias_generators:to_camel",
@@ -101,6 +102,7 @@ def render_gql_module(  # noqa: PLR0913 -- keyword-only options of the entry poi
     target_module_path = src_path / f"{module_full_name.replace('.', '/')}.py"
     imports = ImportOptions.parse(
         base_url_import=base_url_import,
+        client_options_import=client_options_import,
         to_camel_fn_full_name=to_camel_fn_full_name,
         model_base_import=model_base_import,
         scalars=scalars,
@@ -130,6 +132,7 @@ def render_gql_module(  # noqa: PLR0913 -- keyword-only options of the entry poi
     scaffold = scaffold_claims(
         gql_fn_name=gql_fn_name,
         base_url_ref=imports.base_url,
+        client_options_ref=imports.client_options,
         scalars=imports.scalars,
         to_camel_ref=imports.to_camel,
         model_base_ref=imports.model_base,
@@ -175,6 +178,7 @@ def render_gql_module(  # noqa: PLR0913 -- keyword-only options of the entry poi
     new_content = render_module(
         mode=mode,
         base_url_ref=imports.base_url,
+        client_options_ref=imports.client_options,
         subscription_protocol=subscription_protocol,
         gql_fn_name=gql_fn_name,
         collected=collected,

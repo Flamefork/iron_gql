@@ -1,5 +1,6 @@
 import dataclasses
 import keyword
+import unicodedata
 from collections.abc import Callable
 from collections.abc import Iterable
 from collections.abc import Iterator
@@ -64,8 +65,16 @@ class ImportRef:
 # attribute path, where the generated module writes it.
 def _is_dotted_name(name: str) -> bool:
     return all(
-        part.isidentifier() and not keyword.iskeyword(part) for part in name.split(".")
+        part.isidentifier() and not keyword.iskeyword(_as_python_reads(part))
+        for part in name.split(".")
     )
+
+
+# Python reads an identifier in NFKC: a name in another form would escape the
+# rules on the names of the module, and one that reads as a keyword would be
+# written as that keyword.
+def _as_python_reads(name: str) -> str:
+    return unicodedata.normalize("NFKC", name)
 
 
 # The generator's options that name an import, `module:name`. Parsed together,
@@ -75,6 +84,7 @@ def _is_dotted_name(name: str) -> bool:
 @dataclass(kw_only=True, frozen=True)
 class ImportOptions:
     base_url: ImportRef
+    client_options: ImportRef | None
     to_camel: ImportRef
     model_base: ImportRef
     scalars: dict[str, ImportRef]
@@ -84,6 +94,7 @@ class ImportOptions:
         cls,
         *,
         base_url_import: str,
+        client_options_import: str | None,
         to_camel_fn_full_name: str,
         model_base_import: str,
         scalars: Mapping[str, str],
@@ -92,12 +103,18 @@ class ImportOptions:
         scalar_options = {name: f"scalars[{name!r}]" for name in scalars}
         refs = _parse_import_refs({
             "base_url_import": base_url_import,
+            **(
+                {}
+                if client_options_import is None
+                else {"client_options_import": client_options_import}
+            ),
             "to_camel_fn_full_name": to_camel_fn_full_name,
             "model_base_import": model_base_import,
             **{scalar_options[name]: raw for name, raw in scalars.items()},
         })
         return cls(
             base_url=refs["base_url_import"],
+            client_options=refs.get("client_options_import"),
             to_camel=refs["to_camel_fn_full_name"],
             model_base=refs["model_base_import"],
             scalars={name: refs[option] for name, option in scalar_options.items()},
@@ -114,7 +131,9 @@ def _parse_import_refs(options: Mapping[str, str]) -> dict[str, ImportRef]:
             case [_, symbol] if not _is_dotted_name(symbol):
                 problem = f"names {symbol!r}, which is not a dotted Python name"
             case [module, symbol]:
-                refs[option] = ImportRef(module=module, symbol=symbol)
+                refs[option] = ImportRef(
+                    module=_as_python_reads(module), symbol=_as_python_reads(symbol)
+                )
                 continue
             case [_]:
                 problem = "has no ':' between the module and the name"

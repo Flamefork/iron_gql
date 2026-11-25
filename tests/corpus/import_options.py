@@ -1,16 +1,19 @@
 """Values of the generator options that name an import, malformed ones by option
 and how the value fails, accepted ones by option and the form they take.
 
-`base_url_import`, `to_camel_fn_full_name`, `model_base_import` and each value
-of `scalars` name an import as `module:name`, where the module and the name are
-dotted paths of Python identifiers that are not keywords. An id names the
+`base_url_import`, `client_options_import`, `to_camel_fn_full_name`,
+`model_base_import` and each value of `scalars` name an import as `module:name`,
+where the module and the name are dotted paths of Python identifiers that are
+not keywords. An id names the
 option and the failure: the `:` (none, or more than one), or the part that
 fails (`module` or `name`) and how -- empty, an empty segment, a hyphen, a
-leading digit, a keyword, whitespace. The diagnosis names the option as the
+leading digit, a keyword, whitespace. Python reads an identifier in NFKC, so a
+name in another form stands for its NFKC spelling. The diagnosis names the option as the
 caller wrote it; a scalar's is `scalars['<scalar>']`. An accepted form's id
 names the option and what makes the form worth a case; the test project has a
-`sample_app.settings` with `GRAPHQL_URL` and a `CONFIG.url`, and a
-`sample_app.type` module (`type` is a soft keyword) with `to_camel`.
+`sample_app.settings` with `GRAPHQL_URL`, `OPTIONS`, a `CONFIG.url` and a
+`CONFIG.gql`, and a `sample_app.type` module (`type` is a soft keyword) with
+`to_camel`.
 """
 
 from dataclasses import dataclass
@@ -97,6 +100,62 @@ MALFORMED_IMPORT_OPTIONS: tuple[MalformedImportOption, ...] = (
         problem="names 'class', which is not a dotted Python name",
     ),
     MalformedImportOption(
+        id="option=client_options_import/fails=no-colon",
+        options={"client_options_import": "OPTIONS"},
+        option="client_options_import",
+        value="OPTIONS",
+        problem=NO_COLON,
+    ),
+    MalformedImportOption(
+        id="option=client_options_import/fails=empty",
+        options={"client_options_import": ""},
+        option="client_options_import",
+        value="",
+        problem=NO_COLON,
+    ),
+    MalformedImportOption(
+        id="option=client_options_import/fails=second-colon",
+        options={"client_options_import": "sample_app.settings:CONFIG:gql"},
+        option="client_options_import",
+        value="sample_app.settings:CONFIG:gql",
+        problem="has more than one ':'",
+    ),
+    MalformedImportOption(
+        id="option=client_options_import/fails=module-hyphen",
+        options={"client_options_import": "my-settings:OPTIONS"},
+        option="client_options_import",
+        value="my-settings:OPTIONS",
+        problem="names module 'my-settings', which is not a dotted Python name",
+    ),
+    MalformedImportOption(
+        id="option=client_options_import/fails=name-empty",
+        options={"client_options_import": "sample_app.settings:"},
+        option="client_options_import",
+        value="sample_app.settings:",
+        problem="names '', which is not a dotted Python name",
+    ),
+    MalformedImportOption(
+        id="option=client_options_import/fails=name-keyword",
+        options={"client_options_import": "sample_app.settings:CONFIG.class"},
+        option="client_options_import",
+        value="sample_app.settings:CONFIG.class",
+        problem="names 'CONFIG.class', which is not a dotted Python name",
+    ),
+    MalformedImportOption(
+        id="option=client_options_import/fails=name-keyword-not-in-nfkc",
+        options={"client_options_import": "sample_app.settings:ｃｌａｓｓ"},
+        option="client_options_import",
+        value="sample_app.settings:ｃｌａｓｓ",
+        problem="names 'ｃｌａｓｓ', which is not a dotted Python name",
+    ),
+    MalformedImportOption(
+        id="option=client_options_import/fails=name-full-width-dot",
+        options={"client_options_import": "sample_app.settings:CONFIG．gql"},
+        option="client_options_import",
+        value="sample_app.settings:CONFIG．gql",
+        problem="names 'CONFIG．gql', which is not a dotted Python name",
+    ),
+    MalformedImportOption(
         id="option=to_camel_fn_full_name/fails=module-hyphen",
         options={"to_camel_fn_full_name": "my-case:to_camel"},
         option="to_camel_fn_full_name",
@@ -165,6 +224,25 @@ ACCEPTED_IMPORT_OPTIONS: tuple[AcceptedImportOption, ...] = (
     AcceptedImportOption(
         id="option=base_url_import/form=dotted-name",
         options={"base_url_import": "sample_app.settings:CONFIG.url"},
+    ),
+    AcceptedImportOption(
+        id="option=client_options_import/form=name",
+        options={"client_options_import": "sample_app.settings:OPTIONS"},
+    ),
+    AcceptedImportOption(
+        id="option=client_options_import/form=name-not-in-nfkc",
+        options={"client_options_import": "sample_app.settings:ＯＰＴＩＯＮＳ"},
+    ),
+    AcceptedImportOption(
+        id="option=client_options_import/form=dotted-name",
+        options={"client_options_import": "sample_app.settings:CONFIG.gql"},
+    ),
+    AcceptedImportOption(
+        id="option=client_options_import/form=shares-root-with-base-url",
+        options={
+            "base_url_import": "sample_app.settings:CONFIG.url",
+            "client_options_import": "sample_app.settings:CONFIG.gql",
+        },
     ),
     AcceptedImportOption(
         id="option=to_camel_fn_full_name/form=soft-keyword-module",
