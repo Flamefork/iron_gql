@@ -445,22 +445,85 @@ The client checks the keys when it is created:
 
 A value that `httpx2` refuses raises its own exception: in `GQLClient` when the client is created, in `AsyncGQLClient` at the first operation in an event loop.
 
-The settings can change what this document says about the client. `follow_redirects=True` follows a 3xx response, which otherwise raises ([Query Errors](#query-errors)). `auth` overwrites the `Authorization` header of an operation, such as one set by `with_headers`.
+The settings can change what this document says about the client. `follow_redirects=True` follows a 3xx response, which otherwise raises ([Errors](#errors)). `auth` overwrites the `Authorization` header of an operation, such as one set by `with_headers`.
 
-## Query Errors
+## Errors
 
-A query or a mutation is sent with `Accept: application/graphql-response+json, application/json;q=0.9`, as [GraphQL over HTTP](https://graphql.github.io/graphql-over-http/draft/) asks of a client that does not know which of the two media types its server speaks. An `Accept` that you set in the headers of the client or of the call is sent as it is; the call's wins over the client's. The client reads the response as follows:
+A query or a mutation without a result raises an error of iron_gql, and so does a subscription whose stream ends without `complete` while you read it. Both clients raise the same types, over HTTP, SSE and WebSocket. All of them are importable from `iron_gql` and from `iron_gql.errors`:
+
+```
+GraphQLClientError
+├─ TransportError
+│  └─ SubscriptionInterruptedError
+└─ ResponseError
+   ├─ GraphQLResponseError
+   ├─ HTTPResponseError
+   ├─ ResponseProtocolError
+   └─ WebSocketClosedError
+```
+
+| Type | What it says | Its fields |
+|---|---|---|
+| `TransportError` | the server's answer did not arrive whole: the connection failed or broke, or a timeout passed | |
+| `SubscriptionInterruptedError` | a subscription that had started broke before `complete` | |
+| `ResponseError` | the server answered with something other than a result | `status_code` |
+| `GraphQLResponseError` | the server explained the failure in GraphQL terms | `errors` |
+| `HTTPResponseError` | the server answered with a status that is not 2xx and no such explanation, or refused a WebSocket with any status but 101 | `response` |
+| `ResponseProtocolError` | the answer breaks the protocol, or exceeds a limit of the client; the text of the error says how | |
+| `WebSocketClosedError` | the server closed the WebSocket with a code from 4000 to 4999 | `close_code`, `reason` |
+
+- `errors` holds the errors that the server sent, in their order and unchanged. It is never empty. What the client itself finds wrong is in the text of a `ResponseProtocolError`.
+- `status_code` is the status of the HTTP response that the answer came with. For an event of an SSE stream it is the status of the response that opened the stream. `None` means that the answer came over a WebSocket, or that the client does not know the status, as with too many redirects. An `HTTPResponseError` always has a status, also for a refused WebSocket.
+- `response` is the `httpx2.Response`. Its body is read, unless reading it failed or the response refuses a WebSocket: then it is not specified whether the body is available. The response keeps its request with the headers, `Authorization` included; the response of a `target_app` that refuses a WebSocket has no request.
+- `reason` is empty when the server sent none.
+- The exception that an error comes from, such as `httpx2.ConnectError`, is its `__cause__`.
+
+A 503 and a 401 with the same GraphQL errors differ by `status_code`. For example, a read that is worth repeating while the server is unavailable:
+
+```python
+import asyncio
+
+from iron_gql import ResponseError, TransportError
+
+
+async def get_user_patiently(user_id: str) -> GetUserQueryResult:
+    for delay in (1, 2, 4):
+        try:
+            return await get_user.execute(id=user_id)
+        except TransportError:
+            pass
+        except ResponseError as error:
+            if error.status_code != 503:
+                raise
+        await asyncio.sleep(delay)
+    return await get_user.execute(id=user_id)
+```
+
+No error promises that a mutation was not executed. After a `TransportError` or a 5xx status the server may have executed it.
+
+Outside this tree:
+- A wrong call or setting raises a built-in exception: `ValueError`, `TypeError` or `RuntimeError`. A URL of another scheme than `http://` and `https://` raises `ValueError` when the operation runs; a WebSocket subscription takes `ws://` and `wss://` too. A header that HTTP does not allow raises `ValueError` as well. A `target_app` gets a query with such a scheme, or with a line break in a header: the checks of the network do not run in process. A value of `httpx_options` that `httpx2` refuses raises the exception of `httpx2` ([Client Options](#client-options)).
+- Data that does not fit the generated models raises `pydantic.ValidationError`.
+- An exception from your `auth` or `event_hooks`, or from the `target_app` of a query or a mutation, passes as it is, with one exception: an `httpx2` exception for which the client has a type of its own becomes that type, wherever it comes from. A failed connection in your `auth` is a `TransportError`.
+- A `target_app` behind a WebSocket that fails is seen by its close: `httpx2` closes with code 1011 for it. One that does not answer the connection raises `RuntimeError`. A `websocket.close` that it sends after it accepted is taken by `httpx2` only with both a `code` and a `reason`: without one of them the subscription raises `KeyError`.
+- An exception from the body of your `with` block passes as it is, whatever its type.
+- Independent failures of an async WebSocket subscription that happen at once come as an exception group.
+
+### Responses
+
+A query or a mutation is sent with `Accept: application/graphql-response+json, application/json;q=0.9`, as [GraphQL over HTTP](https://graphql.github.io/graphql-over-http/draft/) asks of a client that does not know which of the two media types its server speaks. An `Accept` that you set in the headers of the client or of the call is sent as it is; the call's wins over the client's. The client reads the response by the first row that fits:
 
 | The server answers | The client |
 |---|---|
-| 2xx with `data` | returns the result |
-| 2xx with `errors`, with `data` or without | raises `GraphQLResponseError` with the errors |
-| 2xx whose body is not a GraphQL response: not JSON, or JSON of another shape | raises `GraphQLResponseError`: "Malformed response body" |
-| 3xx | raises `httpx2.HTTPStatusError`, unless [`httpx_options`](#client-options) sets `follow_redirects` to `True` |
-| 4xx or 5xx of the type `application/graphql-response+json`, with `errors` | raises `GraphQLResponseError` with the errors |
-| any other 4xx or 5xx | raises `httpx2.HTTPStatusError`; `error.response` holds the status and the body |
+| 3xx | raises `HTTPResponseError`; the text names the `Location`, if there is one. There are two exceptions, both for a 301, 302, 303, 307 or 308 with a `Location`: one that `httpx2` cannot parse raises `TransportError`, and any other is followed when [`httpx_options`](#client-options) sets `follow_redirects` to `True` |
+| 4xx or 5xx of the type `application/graphql-response+json` whose body is a GraphQL response with `errors` | raises `GraphQLResponseError` |
+| any other status that is not 2xx | raises `HTTPResponseError`, also when its body breaks off or cannot be decoded |
+| 2xx whose body is a GraphQL response with `errors`, with `data` or without | raises `GraphQLResponseError` |
+| 2xx whose body is a GraphQL response with `data` | returns the result |
+| 2xx whose body breaks off | raises `TransportError` |
+| any other 2xx: the body is not a GraphQL response, or holds neither `errors` nor `data` | raises `ResponseProtocolError` |
 
-The type is compared without its parameters, such as `charset`, and regardless of case. `GraphQLResponseError` means that the server explained the failure in GraphQL terms: a server of the current edition answers a request error with a 4xx or 5xx status and a GraphQL body, and a server of the earlier edition answers it with 200 and `application/json`. It also means that a response came with a 2xx status, of any type, but its body could not be read as a GraphQL response. `httpx2.HTTPStatusError` means that no GraphQL explanation came: a proxy or a gateway answered, the body has another type, or a GraphQL body carries no `errors`.
+The type is compared without its parameters, such as `charset`, and regardless of case; a 2xx response is read whatever its type. `errors` that are `null` or an empty list are no errors, and `data` that is `null` is no data. A server of the current edition answers a request error with a 4xx or 5xx status and a GraphQL body, and a server of the earlier edition answers it with 200 and `application/json`: both raise `GraphQLResponseError`.
 
 ## Subscriptions
 
@@ -478,15 +541,33 @@ With `"graphql-sse"`, each subscription is one `POST` request with `Accept: text
 
 | The server | The client |
 |---|---|
-| sends `next` with data | yields a result |
-| sends `next` with errors | raises `GraphQLResponseError` |
+| sends `next` with data and no errors | yields a result |
+| sends `next` with errors, with data or without | raises `GraphQLResponseError` |
 | sends `complete` | ends the stream |
+| sends `next` with neither, or an event that it should not | raises `ResponseProtocolError` |
 | ends the response, or the connection breaks, before `complete` | raises `SubscriptionInterruptedError` |
-| sends nothing for `subscription_idle_timeout` seconds | raises `SubscriptionInterruptedError`, or `httpx2.ReadTimeout` while the client waits for the response headers |
-| refuses with a status that is not 2xx | raises as for a query: `GraphQLResponseError` for a 4xx or 5xx GraphQL response with `errors`, `httpx2.HTTPStatusError` otherwise |
-| answers with a 2xx response that is not a stream | raises `GraphQLResponseError`: with the errors of the body, "Malformed response body" for a body that is not a GraphQL response, or, for one without errors, that no event stream came |
+| sends nothing for `subscription_idle_timeout` seconds | raises `SubscriptionInterruptedError`, or `TransportError` while the client waits for the response headers |
+| refuses with a status that is not 2xx | raises as for a query ([Responses](#responses)) |
+| answers with a 2xx response that is not a stream | raises `GraphQLResponseError` if the body is a GraphQL response with errors, `TransportError` if the body breaks off, `ResponseProtocolError` otherwise |
 
-`SubscriptionInterruptedError` tells you that the server did not confirm the end of the operation. The client does not open the subscription again. Open it again yourself if your server lets a new subscription continue from its current state.
+With `"graphql-transport-ws"`, each subscription is one WebSocket:
+
+| The server | The client |
+|---|---|
+| sends `next` with data and no errors | yields a result |
+| sends `error`, or `next` with data or without, with errors | raises `GraphQLResponseError` |
+| sends `complete` | ends the stream |
+| refuses the WebSocket with any status but 101 | raises `HTTPResponseError`, also when the body holds GraphQL errors |
+| sends no `connection_ack` in time | raises `TransportError` |
+| sends another message than the protocol allows, a binary one, or one over the size limit of the client | raises `ResponseProtocolError` |
+| sends too many messages before `connection_ack` | raises `ResponseProtocolError`; the text names the limit of the client |
+| closes with a code from 4000 to 4999 | raises `WebSocketClosedError` |
+| closes with code 1009 (message too big) | raises `ResponseProtocolError` |
+| closes with any other code, 1000 among them, or without one, or the connection breaks | raises `TransportError` before the client has sent `subscribe`, `SubscriptionInterruptedError` after |
+
+The rules of the close codes hold at any moment of the subscription, and for a `target_app` that closes instead of accepting.
+
+`SubscriptionInterruptedError` tells you that the server did not confirm the end of the operation. Only `complete` ends it. It is a `TransportError`: put its `except` first. The client does not open the subscription again. Open it again yourself if your server lets a new subscription continue from its current state.
 
 `subscription_idle_timeout` is the longest wait for the response headers and for the next data on the stream. The default `None` waits without a limit. A server that sends heartbeat comments keeps a healthy stream within the limit: set the timeout above the heartbeat interval of your server.
 

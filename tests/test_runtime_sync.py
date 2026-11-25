@@ -1,7 +1,6 @@
 import io
 import json
 
-import httpx2
 import pydantic
 import pytest
 from pydantic import TypeAdapter
@@ -11,6 +10,7 @@ from werkzeug import Response
 
 from iron_gql import FileVar
 from iron_gql import GraphQLResponseError
+from iron_gql import HTTPResponseError
 from iron_gql.runtime import GQLClient
 
 
@@ -93,7 +93,7 @@ def test_sync_query_rejects_redirect(httpserver: HTTPServer):
         subscription_protocol="graphql-sse", base_url=httpserver.url_for("/graphql/")
     )
     try:
-        with pytest.raises(httpx2.HTTPStatusError, match="https://elsewhere/graphql"):
+        with pytest.raises(HTTPResponseError, match="https://elsewhere/graphql"):
             client.query(_UserResult, _GET_USER, variables={"id": "1"}, headers={})
     finally:
         client.close()

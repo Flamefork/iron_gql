@@ -15,11 +15,13 @@ from collections.abc import Iterator
 from contextlib import asynccontextmanager
 from contextlib import contextmanager
 
-import httpx2
 import pydantic
 import pytest
 
 from iron_gql import GraphQLResponseError
+from iron_gql import HTTPResponseError
+from iron_gql import ResponseError
+from iron_gql import ResponseProtocolError
 from iron_gql.runtime import ASGIApp
 from iron_gql.runtime import ASGIReceive
 from iron_gql.runtime import ASGIScope
@@ -131,16 +133,18 @@ def _server(seen: _Seen) -> ASGIApp:
 def _observed(
     case: ResponseCase, result: object, requests: list[dict[str, str]]
 ) -> str:
+    if isinstance(result, ResponseError) and result.status_code != case.status.code:
+        return f"{result!r} with status {result.status_code}"
     match result:
         case pydantic.BaseModel() if result.model_dump() == DATA:
             return "data"
-        case GraphQLResponseError() if str(result).startswith(
+        case ResponseProtocolError() if str(result).startswith(
             "Malformed response body"
         ):
             return "malformed"
-        case GraphQLResponseError() if str(result) == "No data in response":
+        case ResponseProtocolError() if str(result) == "No data in response":
             return "no-data"
-        case GraphQLResponseError() if str(result).startswith(
+        case ResponseProtocolError() if str(result).startswith(
             "Expected an event stream"
         ):
             return "not-a-stream"
@@ -148,15 +152,16 @@ def _observed(
             case.body.errors is not None and result.errors == case.body.errors.value
         ):
             return "errors"
-        case httpx2.HTTPStatusError() if (
+        case HTTPResponseError() if (
             str(result) == "Unexpected 3xx response (307) to /graphql"
             and len(requests) == 1
         ):
             return "redirect"
-        case httpx2.HTTPStatusError() if (
+        case HTTPResponseError() if (
             result.response.status_code == case.status.code
             and result.response.content == case.body.content
             and case.status.status_class != "redirect"
+            and str(case.status.code) in str(result)
         ):
             return "status"
         case _:

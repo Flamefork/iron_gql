@@ -38,7 +38,9 @@ import httpx2
 import pydantic
 import pytest
 
+from iron_gql import HTTPResponseError
 from iron_gql import SubscriptionInterruptedError
+from iron_gql import TransportError
 from iron_gql.codegen.ir import GraphQLGenerationError
 from iron_gql.runtime import ASGIApp
 from iron_gql.runtime import ASGIReceive
@@ -58,6 +60,7 @@ from tests.conftest import accept_graphql_sse
 from tests.conftest import basedpyright_report
 from tests.conftest import generated_package
 from tests.conftest import generated_source
+from tests.conftest import run_async
 
 _PACKAGE_SCHEMA = "type Query { ping: String! }"
 
@@ -242,14 +245,6 @@ def test_httpx_option_reaches_every_request_of_the_sync_client(
     assert app.header("authorization") == [(path, _AUTH_HEADER)]
 
 
-# `asyncio.run` in the test's own thread, with the loop factory given: a run
-# without one makes its loop the thread's current one, and the loop it replaces
-# -- the one pytest-asyncio leaves after an async test, never closed -- is
-# collected with a `ResourceWarning` inside whichever test comes next.
-def _run[T](coroutine: Coroutine[object, object, T]) -> T:
-    return asyncio.run(coroutine, loop_factory=asyncio.new_event_loop)
-
-
 # Two runs are two event loops, each with a transport of its own.
 @pytest.mark.parametrize("path", _PATHS)
 def test_httpx_option_reaches_every_request_of_the_async_client_in_each_loop(
@@ -261,8 +256,8 @@ def test_httpx_option_reaches_every_request_of_the_async_client_in_each_loop(
         subscription_protocol=_protocol(path),
         httpx_options={"auth": _AUTH},
     )
-    _run(_async_send(client, path))
-    _run(_async_send(client, path))
+    run_async(_async_send(client, path))
+    run_async(_async_send(client, path))
     assert app.header("authorization") == [(path, _AUTH_HEADER)] * 2
 
 
@@ -608,7 +603,7 @@ class _Module:
             operation = cast("_SyncOperation", self.queries[name])
             return operation.with_headers(headers or {}).execute()
         async_operation = cast("_AsyncOperation", self.queries[name])
-        return _run(async_operation.with_headers(headers or {}).execute())
+        return run_async(async_operation.with_headers(headers or {}).execute())
 
     def counters(self, name: str = "counter") -> list[int]:
         if self.mode == "sync":
@@ -620,7 +615,7 @@ class _Module:
             async with subscription.execute() as stream:
                 return [item.counter async for item in stream]
 
-        return _run(collect())
+        return run_async(collect())
 
 
 # The module the generator writes for `options`, a Python expression that
@@ -652,7 +647,7 @@ def _module(
     finally:
         client = cast("GQLClient | AsyncGQLClient", vars(api)["_client"])
         if isinstance(client, AsyncGQLClient):
-            _run(client.close())
+            run_async(client.close())
         else:
             client.close()
 
@@ -699,9 +694,10 @@ def test_module_query_timeout_ends_a_slow_query(
     options = f'{{"query_timeout": {_QUERY_TIMEOUT}}}'
     with (
         _module(test_project, mode, base_url, options) as module,
-        pytest.raises(httpx2.ReadTimeout),
+        pytest.raises(TransportError) as error,
     ):
         module.query("slow")
+    assert isinstance(error.value.__cause__, httpx2.ReadTimeout)
 
 
 @pytest.mark.parametrize("mode", _MODES)
@@ -754,7 +750,7 @@ def test_follow_redirects_ends_the_refusal_of_a_redirect(
     moved = base_url.replace("/graphql", "/moved")
     with (
         _module(test_project, mode, moved, "{}") as module,
-        pytest.raises(httpx2.HTTPStatusError),
+        pytest.raises(HTTPResponseError),
     ):
         module.query()
     followed = '{"httpx_options": {"follow_redirects": True}}'

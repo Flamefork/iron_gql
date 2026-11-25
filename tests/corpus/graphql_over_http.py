@@ -37,6 +37,8 @@ STATUSES: tuple[Status, ...] = (
     Status(name="400", code=400, status_class="error"),
     Status(name="401", code=401, status_class="error"),
     Status(name="500", code=500, status_class="error"),
+    # Told apart from 401 by the status alone when both carry the same errors.
+    Status(name="503", code=503, status_class="error"),
 )
 
 
@@ -68,9 +70,11 @@ type ErrorsKind = Literal["errors", "none", "malformed"]
 @dataclass(frozen=True, kw_only=True)
 class ErrorsForm:
     name: str
-    # The JSON value of the `errors` entry; `None` leaves the entry out.
+    # The JSON value of the `errors` entry.
     value: object
     kind: ErrorsKind
+    # Whether there is an `errors` entry at all.
+    present: bool = True
 
 
 _LOGIN_REQUIRED = {
@@ -79,7 +83,8 @@ _LOGIN_REQUIRED = {
 }
 
 ERRORS_FORMS: tuple[ErrorsForm, ...] = (
-    ErrorsForm(name="absent", value=None, kind="none"),
+    ErrorsForm(name="absent", value=None, kind="none", present=False),
+    ErrorsForm(name="null", value=None, kind="none"),
     ErrorsForm(name="empty", value=[], kind="none"),
     ErrorsForm(name="one-error", value=[_LOGIN_REQUIRED], kind="errors"),
     ErrorsForm(
@@ -127,7 +132,7 @@ def _json_body(data: DataKind, errors: ErrorsForm) -> Body:
             pass
         case "not-an-object":
             document["data"] = ["pong"]
-    if errors.value is not None:
+    if errors.present:
         document["errors"] = errors.value
     return Body(
         name=f"data-{data}-errors-{errors.name}",
@@ -140,7 +145,7 @@ def _json_body(data: DataKind, errors: ErrorsForm) -> Body:
 # A subscription message's payload carrying this `errors` entry, beside the
 # `data` the message holds.
 def with_errors(payload: dict[str, object], form: ErrorsForm) -> dict[str, object]:
-    return payload if form.value is None else {**payload, "errors": form.value}
+    return {**payload, "errors": form.value} if form.present else payload
 
 
 BODIES: tuple[Body, ...] = (
@@ -174,15 +179,15 @@ type Outcome = Literal[
     "data",
     # `GraphQLResponseError` carrying the body's `errors` as they came.
     "errors",
-    # `GraphQLResponseError`: the body is not a GraphQL response.
+    # `ResponseProtocolError`: the body is not a GraphQL response.
     "malformed",
-    # `GraphQLResponseError`: a query's response holds no data.
+    # `ResponseProtocolError`: a query's response holds no data.
     "no-data",
-    # `GraphQLResponseError`: a subscription got a single response, no stream.
+    # `ResponseProtocolError`: a subscription got a single response, no stream.
     "not-a-stream",
-    # `httpx2.HTTPStatusError` for a redirect, which is not followed.
+    # `HTTPResponseError` for a redirect, which is not followed.
     "redirect",
-    # `httpx2.HTTPStatusError` with the response, its status and body inside.
+    # `HTTPResponseError` with the response, its status and body inside.
     "status",
 ]
 

@@ -21,7 +21,7 @@ from typing import cast
 import pydantic
 import pytest
 
-from iron_gql import GraphQLResponseError
+from iron_gql import ResponseProtocolError
 from iron_gql.codegen.ir import GraphQLGenerationError
 from iron_gql.runtime import ASGIApp
 from iron_gql.runtime import ASGIReceive
@@ -273,7 +273,7 @@ _PROTOCOLS: tuple[SubscriptionProtocol, ...] = ("graphql-sse", "graphql-transpor
 # body until the app returns; the sync client takes no app at all.
 async def _subscription(
     mode: _Mode, protocol: SubscriptionProtocol, app: ASGIApp
-) -> list[int] | GraphQLResponseError:
+) -> list[int] | ResponseProtocolError:
     try:
         match mode:
             case "async" if protocol == "graphql-sse":
@@ -292,7 +292,7 @@ async def _subscription(
                     sync_queries.counter.execute() as stream,
                 ):
                     return [item.counter for item in stream]
-    except GraphQLResponseError as exc:
+    except ResponseProtocolError as exc:
         return exc
 
 
@@ -311,7 +311,7 @@ def _next_app(protocol: SubscriptionProtocol, payload: object) -> ASGIApp:
 # server sent it, or the `repr` of a value parsed out of it -- catches the
 # client quoting the whole input itself.
 def _assert_hides_input(result: object, prefix: str, raw: str) -> None:
-    assert isinstance(result, GraphQLResponseError), result
+    assert isinstance(result, ResponseProtocolError), result
     assert str(result).startswith(prefix)
     assert "input_value" not in str(result)
     assert raw not in str(result)
@@ -354,7 +354,7 @@ _MALFORMED_PAYLOADS: dict[str, object] = {
 @pytest.mark.parametrize("body", list(_MALFORMED_BODIES))
 async def test_async_response_error_hides_its_input(body: str):
     async with _serving(_response_app(_MALFORMED_BODIES[body])):
-        with pytest.raises(GraphQLResponseError) as caught:
+        with pytest.raises(ResponseProtocolError) as caught:
             await queries.get_post.execute()
     _assert_hides_input(
         caught.value, "Malformed response body", _MALFORMED_BODIES[body].decode()
@@ -369,7 +369,7 @@ def test_sync_response_error_hides_its_input(body: str):
             sync_api,
             GQLClient(base_url=base_url, subscription_protocol="graphql-sse"),
         ),
-        pytest.raises(GraphQLResponseError) as caught,
+        pytest.raises(ResponseProtocolError) as caught,
     ):
         sync_queries.get_post.execute()
     _assert_hides_input(

@@ -36,6 +36,8 @@ from httpx2.websockets import WebSocketClient
 from httpx2.websockets import WebSocketDisconnect
 from pytest_httpserver import HTTPServer
 
+from iron_gql import HTTPResponseError
+from iron_gql import TransportError
 from iron_gql.runtime import ASGIApp
 from iron_gql.runtime import AsyncGQLClient
 from iron_gql.runtime import GQLClient
@@ -360,7 +362,7 @@ class _Swaps:
     # app or hit a closed client.
     async def assert_released(self) -> None:
         assert self.bound is self.original
-        with pytest.raises(httpx2.HTTPError):
+        with pytest.raises((TransportError, HTTPResponseError)):
             await self.ping()
         await self.exit(await self.enter(self.client("fresh")))
         assert self.bound is self.original

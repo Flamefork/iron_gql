@@ -35,6 +35,7 @@ from iron_gql.testing import accept_graphql_ws
 from iron_gql.testing.server import live_asgi_server
 from tests.conftest import ProjectBuilder
 from tests.conftest import accept_graphql_sse
+from tests.conftest import run_async
 
 _SCHEMA = """
 type Query { ping: String! }
@@ -335,22 +336,14 @@ def _async_module(
     )
 
 
-# `asyncio.run` in the test's own thread, with the loop factory given: a run
-# without one makes its loop the thread's current one, and the loop it replaces
-# -- the one pytest-asyncio leaves after an async test, never closed -- is
-# collected with a `ResourceWarning` inside whichever test comes next.
-def _run[T](coroutine: Coroutine[object, object, T]) -> T:
-    return asyncio.run(coroutine, loop_factory=asyncio.new_event_loop)
-
-
 def test_async_module_client_serves_consecutive_asyncio_runs(
     test_project: ProjectBuilder, server: tuple[_Server, str]
 ):
     _app, base_url = server
     module = _async_module(test_project, base_url)
 
-    assert _run(module.pong()) == "pong"
-    assert _run(module.pong()) == "pong"
+    assert run_async(module.pong()) == "pong"
+    assert run_async(module.pong()) == "pong"
 
     assert _transports(module.client) == {}
     gc.collect()
@@ -395,7 +388,7 @@ def test_async_client_drops_loops_closed_without_shutting_down_their_generators(
             pong = loop.run_until_complete(module.pong())
             results.append((pong, len(_transports(module.client))))
             loop.close()
-        _run(module.client.close())
+        run_async(module.client.close())
         gc.collect()
 
     assert results == [("pong", 1)] * 3
@@ -415,8 +408,8 @@ def test_async_client_carries_cookies_across_loops_into_subscriptions(
     async def follow_up() -> tuple[str, list[int]]:
         return await module.pong(), await module.counters()
 
-    _run(module.pong())
-    assert _run(follow_up()) == ("pong", [1])
+    run_async(module.pong())
+    assert run_async(follow_up()) == ("pong", [1])
 
     subscription = "sse" if protocol == "graphql-sse" else "ws"
     assert app.cookies == [
@@ -514,7 +507,7 @@ def test_async_close_called_concurrently_in_one_loop_closes_the_transport_once(
         await asyncio.gather(module.client.close(), module.client.close())
         return http
 
-    assert _run(close_twice()).is_closed
+    assert run_async(close_twice()).is_closed
     assert _transports(module.client) == {}
 
 
@@ -619,9 +612,9 @@ def test_async_operation_started_by_another_generator_cleanup_outlives_the_loop(
 
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always", ResourceWarning)
-        generator = _run(main())
+        generator = run_async(main())
         left = len(_transports(module.client))
-        _run(module.client.close())
+        run_async(module.client.close())
         del generator
         gc.collect()
 

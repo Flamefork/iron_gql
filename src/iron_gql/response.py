@@ -4,8 +4,11 @@ import httpx2
 import pydantic
 
 from iron_gql.errors import GraphQLResponseError
+from iron_gql.errors import HTTPResponseError
+from iron_gql.errors import ResponseProtocolError
 from iron_gql.protocol import ProtocolModels
 from iron_gql.protocol import ResponseBody
+from iron_gql.transport import response_summary
 
 GRAPHQL_RESPONSE = "application/graphql-response+json"
 
@@ -19,22 +22,16 @@ def media_type(response: httpx2.Response) -> str:
 
 # A status that is not 2xx raises. Under GraphQL over HTTP a response of the
 # GraphQL media type is read independent of its status, so a 4xx or 5xx one
-# whose body carries `errors` raises those; any other raises
-# `httpx2.HTTPStatusError`, the response with its body inside.
+# whose body carries `errors` raises those; any other raises the response with
+# its body inside.
 def raise_for_status(response: httpx2.Response, models: ProtocolModels) -> None:
-    if httpx2.codes.is_redirect(response.status_code):
-        location: str = response.headers.get("Location", "")
-        message = f"Unexpected 3xx response ({response.status_code})"
-        if location:
-            message = f"{message} to {location}"
-        raise httpx2.HTTPStatusError(
-            message, request=response.request, response=response
-        )
+    if response.is_success:
+        return
     if response.is_error and media_type(response) == GRAPHQL_RESPONSE:
         errors = _error_status_errors(response, models)
         if errors:
-            raise GraphQLResponseError(errors)
-    response.raise_for_status()
+            raise GraphQLResponseError(errors, status_code=response.status_code)
+    raise HTTPResponseError(response_summary(response), response=response)
 
 
 def _error_status_errors(
@@ -52,9 +49,8 @@ def response_body(response: httpx2.Response, models: ProtocolModels) -> Response
     try:
         body = models.body.model_validate_json(response.content)
     except pydantic.ValidationError as exc:
-        raise GraphQLResponseError([
-            {"message": f"Malformed response body: {exc}"}
-        ]) from exc
+        msg = f"Malformed response body: {exc}"
+        raise ResponseProtocolError(msg, status_code=response.status_code) from exc
     if body.errors:
-        raise GraphQLResponseError(body.errors)
+        raise GraphQLResponseError(body.errors, status_code=response.status_code)
     return body

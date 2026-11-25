@@ -1,3 +1,4 @@
+import asyncio
 import importlib
 import json
 import os
@@ -7,6 +8,7 @@ import sys
 import textwrap
 from collections.abc import AsyncIterator
 from collections.abc import Callable
+from collections.abc import Coroutine
 from collections.abc import Iterator
 from collections.abc import Mapping
 from contextlib import asynccontextmanager
@@ -27,6 +29,8 @@ from werkzeug import Request
 from werkzeug import Response
 
 from iron_gql import GraphQLResponseError
+from iron_gql import ResponseError
+from iron_gql import ResponseProtocolError
 from iron_gql.codegen import GenerationMode
 from iron_gql.codegen import RenderedModule
 from iron_gql.codegen import render_gql_module
@@ -153,15 +157,21 @@ def basedpyright_report(*check_paths: Path) -> BasedPyrightReport:
 # malformed entry makes the payload malformed, and none leaves the message
 # without the errors it needed -- the message names each of the last two.
 def errors_read_by_form(
-    error: GraphQLResponseError, form: ErrorsForm, *, malformed: str, none: str
+    error: ResponseError, form: ErrorsForm, *, malformed: str, none: str
 ) -> bool:
     match form.kind:
         case "errors":
-            return error.errors == form.value
+            return (
+                isinstance(error, GraphQLResponseError) and error.errors == form.value
+            )
         case "malformed":
-            return str(error).startswith(malformed)
+            return isinstance(error, ResponseProtocolError) and str(error).startswith(
+                malformed
+            )
         case "none":
-            return str(error).startswith(none)
+            return isinstance(error, ResponseProtocolError) and str(error).startswith(
+                none
+            )
 
 
 def make_subscription_app(messages: list[dict[str, object]]) -> ASGIApp:
@@ -302,6 +312,14 @@ def render_tree(root: Path) -> RenderedModule:
 def write_text(path: Path, content: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(textwrap.dedent(content).lstrip("\n"), encoding="utf-8")
+
+
+# `asyncio.run` in the test's own thread, with the loop factory given: a run
+# without one makes its loop the thread's current one, and the loop it replaces
+# -- the one pytest-asyncio leaves after an async test, never closed -- is
+# collected with a `ResourceWarning` inside whichever test comes next.
+def run_async[T](coroutine: Coroutine[object, object, T]) -> T:
+    return asyncio.run(coroutine, loop_factory=asyncio.new_event_loop)
 
 
 def readme_fenced_blocks() -> list[str]:

@@ -15,7 +15,10 @@ import pytest
 
 from iron_gql import FileVar
 from iron_gql import GraphQLResponseError
+from iron_gql import ResponseError
+from iron_gql import ResponseProtocolError
 from iron_gql import SubscriptionInterruptedError
+from iron_gql import TransportError
 from iron_gql.runtime import ASGIApp
 from iron_gql.runtime import ASGIReceive
 from iron_gql.runtime import ASGIScope
@@ -313,7 +316,7 @@ async def test_single_graphql_response_without_errors_is_not_a_stream():
 
     async with _sse_client(handler) as client:
         with pytest.raises(
-            GraphQLResponseError,
+            ResponseProtocolError,
             match="Expected an event stream, got 'application/json'",
         ):
             await _read_counters(client, [])
@@ -341,7 +344,7 @@ async def test_next_without_data_or_errors_is_an_error():
         await request.end()
 
     async with _sse_client(handler) as client:
-        with pytest.raises(GraphQLResponseError, match="No data in response"):
+        with pytest.raises(ResponseProtocolError, match="No data in next payload"):
             await _read_counters(client, [])
 
 
@@ -352,7 +355,7 @@ async def test_next_with_malformed_data_is_an_error():
         await request.end()
 
     async with _sse_client(handler) as client:
-        with pytest.raises(GraphQLResponseError, match="Malformed next payload"):
+        with pytest.raises(ResponseProtocolError, match="Malformed next payload"):
             await _read_counters(client, [])
 
 
@@ -377,13 +380,13 @@ async def test_next_errors_are_read_by_their_form(form: ErrorsForm):
         async_live_asgi_server(_sse_app(handler)) as base_url,
         use_package_client("sse_codegen", base_url),
     ):
-        with pytest.raises(GraphQLResponseError) as error:
+        with pytest.raises(ResponseError) as error:
             await _drain_events()
     assert errors_read_by_form(
         error.value,
         form,
         malformed="Malformed next payload",
-        none="No data in response",
+        none="No data in next payload",
     )
 
 
@@ -409,8 +412,10 @@ async def test_oversized_event_is_not_an_interruption():
         await request.end()
 
     async with _sse_client(handler) as client:
-        with pytest.raises(httpx2.SSEError, match="byte limit"):
+        with pytest.raises(ResponseProtocolError, match="byte limit") as error:
             await _read_counters(client, [])
+    assert isinstance(error.value.__cause__, httpx2.SSEError)
+    assert error.value.status_code == 200
 
 
 async def test_event_of_another_type_is_an_error():
@@ -423,7 +428,8 @@ async def test_event_of_another_type_is_an_error():
 
     async with _sse_client(handler) as client:
         with pytest.raises(
-            GraphQLResponseError, match="Unexpected subscription event event: 'message'"
+            ResponseProtocolError,
+            match="Unexpected subscription event event: 'message'",
         ):
             await _read_counters(client, [])
 
@@ -584,14 +590,16 @@ async def test_heartbeat_comments_keep_a_quiet_stream_within_the_idle_timeout():
 
 
 async def test_waiting_for_the_response_headers_is_bounded_by_the_idle_timeout():
-    # The stream is not accepted yet, so this is the transport's own timeout,
+    # The stream is not accepted yet, so this is a failure to reach the server,
     # not an interruption of a subscription.
     async def handler(request: SSETestRequest) -> None:
         await request.wait_disconnect()
 
     async with _sse_client(handler, subscription_idle_timeout=0.2) as client:
-        with pytest.raises(httpx2.ReadTimeout):
+        with pytest.raises(TransportError) as error:
             await _read_counters(client, [])
+    assert not isinstance(error.value, SubscriptionInterruptedError)
+    assert isinstance(error.value.__cause__, httpx2.ReadTimeout)
 
 
 async def test_in_process_target_app_is_refused_for_sse():

@@ -8,7 +8,13 @@ import pydantic
 import pytest
 
 from iron_gql import FileVar
+from iron_gql import GraphQLClientError
 from iron_gql import GraphQLResponseError
+from iron_gql import ResponseError
+from iron_gql import ResponseProtocolError
+from iron_gql import SubscriptionInterruptedError
+from iron_gql import TransportError
+from iron_gql import WebSocketClosedError
 from iron_gql import websockets
 from iron_gql.runtime import ASGIApp
 from iron_gql.runtime import ASGIReceive
@@ -76,6 +82,7 @@ class _Captured:
     scope_raw_headers: list[tuple[str, str]] = field(default_factory=list)
     scope_headers: dict[str, str] = field(default_factory=dict)
     scope_query_string: str = ""
+    scope_scheme: object = None
     subscribe: dict[str, object] | None = None
     client_responses: list[dict[str, object]] = field(default_factory=list)
 
@@ -109,6 +116,7 @@ def _capture_scope(scope: ASGIScope, captured: _Captured) -> None:
     scope_headers = _decode_headers(scope)
     captured.scope_raw_headers = scope_headers
     captured.scope_headers = dict(scope_headers)
+    captured.scope_scheme = scope["scheme"]
     query_string = scope["query_string"]
     assert isinstance(query_string, bytes)
     captured.scope_query_string = query_string.decode()
@@ -295,7 +303,7 @@ async def test_subscribe_connection_rejected():
                 async for _ in stream:
                     pass
 
-        with pytest.raises(GraphQLResponseError, match="Expected connection_ack"):
+        with pytest.raises(ResponseProtocolError, match="Expected connection_ack"):
             await consume()
     finally:
         await client.close()
@@ -320,7 +328,7 @@ async def test_subscribe_no_data_in_next():
                 async for _ in stream:
                     pass
 
-        with pytest.raises(GraphQLResponseError, match="No data in response"):
+        with pytest.raises(ResponseProtocolError, match="No data in next payload"):
             await consume()
     finally:
         await client.close()
@@ -346,7 +354,7 @@ async def test_subscribe_unexpected_message_type():
                     pass
 
         with pytest.raises(
-            GraphQLResponseError, match="Unexpected subscription message type"
+            ResponseProtocolError, match="Unexpected subscription message type"
         ):
             await consume()
     finally:
@@ -533,7 +541,7 @@ async def test_subscribe_disconnect_before_connection_ack():
                     pass
 
         with pytest.raises(
-            GraphQLResponseError, match="before connection_ack with code 4401"
+            WebSocketClosedError, match=r"handshake failed.* with code 4401"
         ):
             await consume()
     finally:
@@ -562,7 +570,7 @@ async def test_subscribe_connection_ack_timeout(monkeypatch: pytest.MonkeyPatch)
                     pass
 
         with pytest.raises(
-            GraphQLResponseError, match="Timed out waiting for connection_ack"
+            TransportError, match="Timed out waiting for connection_ack"
         ):
             await consume()
     finally:
@@ -609,7 +617,7 @@ async def test_subscribe_malformed_message_no_type():
                     pass
 
         with pytest.raises(
-            GraphQLResponseError, match="Unexpected subscription message type: None"
+            ResponseProtocolError, match="Unexpected subscription message type: None"
         ):
             await consume()
     finally:
@@ -656,7 +664,7 @@ async def test_subscribe_error_without_payload():
                 async for _ in stream:
                     pass
 
-        with pytest.raises(GraphQLResponseError, match="Error without payload"):
+        with pytest.raises(ResponseProtocolError, match="Error without payload"):
             await consume()
     finally:
         await client.close()
@@ -730,7 +738,7 @@ async def test_subscribe_next_without_payload_key():
                 async for _ in stream:
                     pass
 
-        with pytest.raises(GraphQLResponseError, match="No data in response"):
+        with pytest.raises(ResponseProtocolError, match="No data in next payload"):
             await consume()
     finally:
         await client.close()
@@ -758,7 +766,8 @@ async def test_subscribe_pre_ack_messages_exhaustion():
                     pass
 
         with pytest.raises(
-            GraphQLResponseError, match="No connection_ack after 16 messages"
+            ResponseProtocolError,
+            match="No connection_ack within 16 messages, the limit of the client",
         ):
             await consume()
     finally:
@@ -819,7 +828,7 @@ async def test_subscribe_next_with_data_and_errors():
         await client.close()
 
 
-async def test_subscribe_normal_closure_during_messages():
+async def test_subscribe_normal_closure_without_complete_is_an_interruption():
     app = _make_ws_disconnect_app(
         [
             {"type": "next", "payload": {"data": {"counter": 1}}},
@@ -837,8 +846,11 @@ async def test_subscribe_normal_closure_during_messages():
         async with client.subscribe(
             _CounterResult, "subscription { counter }", variables={}, headers={}
         ) as stream:
-            results = [item.counter async for item in stream]
-        assert results == [1, 2]
+            assert [(await anext(stream)).counter for _ in range(2)] == [1, 2]
+            with pytest.raises(
+                SubscriptionInterruptedError, match="closed with code 1000"
+            ):
+                await anext(stream)
     finally:
         await client.close()
 
@@ -868,7 +880,7 @@ async def test_subscribe_abnormal_disconnect_during_messages():
                     results.append(item.counter)  # noqa: PERF401
 
         with pytest.raises(
-            GraphQLResponseError, match="disconnected with code 1011: Internal Error"
+            SubscriptionInterruptedError, match="closed with code 1011: Internal Error"
         ):
             await consume()
 
@@ -897,8 +909,8 @@ async def test_subscribe_disconnect_before_ack_with_reason():
                     pass
 
         with pytest.raises(
-            GraphQLResponseError,
-            match="before connection_ack with code 4401: Unauthorized",
+            WebSocketClosedError,
+            match=r"handshake failed.* with code 4401: Unauthorized",
         ):
             await consume()
     finally:
@@ -921,7 +933,7 @@ async def test_subscribe_not_json_during_messages():
                 async for _ in stream:
                     pass
 
-        with pytest.raises(GraphQLResponseError, match="Malformed protocol message:"):
+        with pytest.raises(ResponseProtocolError, match="Malformed protocol message:"):
             await consume()
     finally:
         await client.close()
@@ -944,7 +956,7 @@ async def test_subscribe_not_json_during_handshake():
                     pass
 
         with pytest.raises(
-            GraphQLResponseError, match="Malformed protocol message during handshake"
+            ResponseProtocolError, match="Malformed protocol message during handshake"
         ):
             await consume()
     finally:
@@ -1042,7 +1054,7 @@ def test_sync_subscribe_raises_on_abnormal_close():
         )
         try:
             with (
-                pytest.raises(GraphQLResponseError, match="bad request"),
+                pytest.raises(WebSocketClosedError, match="bad request"),
                 client.subscribe(
                     _CounterResult,
                     "subscription { counter }",
@@ -1102,14 +1114,16 @@ def _make_ws_raw_app(
     return app
 
 
-def _sync_subscribe_error(app: ASGIApp, match: str) -> None:
+def _sync_subscribe_error(
+    app: ASGIApp, match: str, error: type[GraphQLClientError] = ResponseProtocolError
+) -> None:
     with live_asgi_server(app) as base_url:
         client = GQLClient(
             subscription_protocol="graphql-transport-ws", base_url=base_url
         )
         try:
             with (
-                pytest.raises(GraphQLResponseError, match=match),
+                pytest.raises(error, match=match),
                 client.subscribe(
                     _CounterResult,
                     "subscription { counter }",
@@ -1178,7 +1192,7 @@ def test_sync_subscribe_ignores_pong_during_messages():
             client.close()
 
 
-def test_sync_subscribe_stops_on_normal_closure():
+def test_sync_subscribe_normal_closure_without_complete_is_an_interruption():
     app = _make_ws_disconnect_app(
         [{"type": "next", "payload": {"data": {"counter": 5}}}], 1000
     )
@@ -1190,7 +1204,11 @@ def test_sync_subscribe_stops_on_normal_closure():
             with client.subscribe(
                 _CounterResult, "subscription { counter }", variables={}, headers={}
             ) as stream:
-                assert [event.counter for event in stream] == [5]
+                assert next(stream).counter == 5
+                with pytest.raises(
+                    SubscriptionInterruptedError, match="closed with code 1000"
+                ):
+                    next(stream)
         finally:
             client.close()
 
@@ -1200,12 +1218,14 @@ def test_sync_subscribe_pre_ack_messages_exhaustion():
         pre_ack_texts=tuple(json.dumps({"type": "pong"}) for _ in range(16)),
         ack=False,
     )
-    _sync_subscribe_error(app, "No connection_ack after 16 messages")
+    _sync_subscribe_error(
+        app, "No connection_ack within 16 messages, the limit of the client"
+    )
 
 
 def test_sync_subscribe_disconnect_before_connection_ack():
     app = _make_ws_raw_app(close_after_init=(4401, "unauthorized"))
-    _sync_subscribe_error(app, "disconnected before connection_ack.*unauthorized")
+    _sync_subscribe_error(app, "handshake failed.*unauthorized", WebSocketClosedError)
 
 
 def test_sync_subscribe_not_json_during_handshake():
@@ -1221,7 +1241,7 @@ def test_sync_subscribe_malformed_message_during_handshake():
 def test_sync_subscribe_connection_ack_timeout(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(websockets, "_WS_CONNECTION_ACK_TIMEOUT_SECONDS", 0.05)
     app = _make_ws_raw_app(ack=False)
-    _sync_subscribe_error(app, "Timed out waiting for connection_ack")
+    _sync_subscribe_error(app, "Timed out waiting for connection_ack", TransportError)
 
 
 def test_sync_subscribe_not_json_during_messages():
@@ -1234,7 +1254,9 @@ def test_sync_subscribe_malformed_message_during_messages():
     _sync_subscribe_error(app, "Malformed protocol message")
 
 
-async def _async_subscribe_error(app: ASGIApp, match: str) -> None:
+async def _async_subscribe_error(
+    app: ASGIApp, match: str, error: type[GraphQLClientError] = ResponseProtocolError
+) -> None:
     client = AsyncGQLClient(
         subscription_protocol="graphql-transport-ws",
         base_url="http://testserver/graphql",
@@ -1249,7 +1271,7 @@ async def _async_subscribe_error(app: ASGIApp, match: str) -> None:
                 pass
 
     try:
-        with pytest.raises(GraphQLResponseError, match=match):
+        with pytest.raises(error, match=match):
             await consume()
     finally:
         await client.close()
@@ -1310,13 +1332,13 @@ async def test_subscription_errors_are_read_by_their_form(
         target_app=app,
         subscription_protocol="graphql-transport-ws",
     ):
-        with pytest.raises(GraphQLResponseError) as error:
+        with pytest.raises(ResponseError) as error:
             await _drain_events()
     assert errors_read_by_form(
         error.value,
         form,
         malformed=f"Malformed {message_type} payload",
-        none="No data in response"
+        none="No data in next payload"
         if message_type == "next"
         else "Error without payload",
     )
@@ -1325,16 +1347,19 @@ async def test_subscription_errors_are_read_by_their_form(
 async def test_subscribe_abnormal_disconnect_without_reason():
     # Without a reason the message ends at the code: no dangling separator.
     app = _make_ws_disconnect_app([], close_code=1011)
-    await _async_subscribe_error(app, r"WebSocket disconnected with code 1011$")
+    await _async_subscribe_error(
+        app, r"WebSocket closed with code 1011$", SubscriptionInterruptedError
+    )
 
 
-async def test_subscribe_url_scheme_ws_is_kept():
+@pytest.mark.parametrize("scheme", ["ws", "wss"])
+async def test_subscribe_url_scheme_ws_is_kept(scheme: str):
     captured = _Captured()
     app = _make_ws_app([{"type": "complete"}], captured=captured)
 
     client = AsyncGQLClient(
         subscription_protocol="graphql-transport-ws",
-        base_url="ws://testserver/graphql",
+        base_url=f"{scheme}://testserver/graphql",
         target_app=app,
     )
     try:
@@ -1343,5 +1368,6 @@ async def test_subscribe_url_scheme_ws_is_kept():
         ) as stream:
             assert [item async for item in stream] == []
         assert captured.subscribe is not None
+        assert captured.scope_scheme == scheme
     finally:
         await client.close()

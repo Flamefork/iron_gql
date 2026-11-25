@@ -5,7 +5,6 @@ from decimal import Decimal
 from typing import TypedDict
 from typing import cast
 
-import httpx2
 import pytest
 from graphql import GraphQLResolveInfo
 from pydantic import TypeAdapter
@@ -15,6 +14,8 @@ from werkzeug import Response
 
 from iron_gql import FileVar
 from iron_gql import GraphQLResponseError
+from iron_gql import HTTPResponseError
+from iron_gql import ResponseProtocolError
 from iron_gql.runtime import AsyncGQLClient
 from iron_gql.runtime import serialize_variables
 from tests.conftest import generated_package
@@ -510,7 +511,7 @@ async def test_file_upload_multipart_base_url_without_trailing_slash(
         assert received["file_name"] == "test.txt"
 
 
-async def test_redirect_response_raises_http_status_error(httpserver: HTTPServer):
+async def test_redirect_response_raises_http_response_error(httpserver: HTTPServer):
     def redirect_handler(_request: Request) -> Response:
         return Response(
             "moved",
@@ -524,7 +525,7 @@ async def test_redirect_response_raises_http_status_error(httpserver: HTTPServer
     )
     async with use_package_client("runtime", httpserver.url_for("/graphql")):
         with pytest.raises(
-            httpx2.HTTPStatusError,
+            HTTPResponseError,
             match=r"Unexpected 3xx response \(307\) to /graphql/",
         ):
             await queries.ping.execute()
@@ -539,7 +540,7 @@ async def test_redirect_without_location_header(httpserver: HTTPServer):
     )
     async with use_package_client("runtime", httpserver.url_for("/graphql")):
         with pytest.raises(
-            httpx2.HTTPStatusError,
+            HTTPResponseError,
             match=r"Unexpected 3xx response \(302\)",
         ):
             await queries.ping.execute()
@@ -557,7 +558,7 @@ async def test_no_data_in_response(httpserver: HTTPServer):
         no_data_handler
     )
     async with use_package_client("runtime", httpserver.url_for("/graphql/")):
-        with pytest.raises(GraphQLResponseError, match="No data in response"):
+        with pytest.raises(ResponseProtocolError, match="No data in response"):
             await queries.ping.execute()
 
 
@@ -573,7 +574,7 @@ async def test_malformed_response_body(httpserver: HTTPServer):
         array_body_handler
     )
     async with use_package_client("runtime", httpserver.url_for("/graphql/")):
-        with pytest.raises(GraphQLResponseError, match="Malformed response body"):
+        with pytest.raises(ResponseProtocolError, match="Malformed response body"):
             await queries.ping.execute()
 
 

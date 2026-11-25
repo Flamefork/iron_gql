@@ -9,6 +9,8 @@ from collections.abc import Callable
 from collections.abc import Generator
 from collections.abc import Mapping
 from collections.abc import MutableMapping
+from contextlib import AsyncExitStack
+from contextlib import ExitStack
 from contextlib import asynccontextmanager
 from contextlib import contextmanager
 from copy import replace
@@ -29,7 +31,9 @@ from httpx2.websockets import ASGIWebSocketTransport
 from httpx2.websockets import AsyncWebSocketClient
 from httpx2.websockets import WebSocketClient
 
-from iron_gql.errors import GraphQLResponseError
+from iron_gql.errors import ResponseProtocolError
+from iron_gql.errors import SubscriptionInterruptedError
+from iron_gql.errors import TransportError
 from iron_gql.protocol import ProtocolModels
 from iron_gql.protocol import protocol_models
 from iron_gql.response import raise_for_status
@@ -42,6 +46,9 @@ from iron_gql.slots import SlotReader
 from iron_gql.slots import SlotReaders
 from iron_gql.sse import async_graphql_sse_subscribe
 from iron_gql.sse import graphql_sse_subscribe
+from iron_gql.transport import own_error
+from iron_gql.transport import reading_body
+from iron_gql.transport import translated
 from iron_gql.websockets import async_graphql_ws_subscribe
 from iron_gql.websockets import graphql_ws_subscribe
 from iron_gql.websockets import ws_url
@@ -304,11 +311,29 @@ def _build_payload(
     return payload, files
 
 
+type _FileStreams = dict[str, tuple[str, Any] | tuple[str, Any, str]]
+
+
+# How `httpx2` takes the body of a request: JSON, or multipart with files.
+class _RequestContent(TypedDict, total=False):
+    json: dict[str, Any]
+    data: dict[str, str]
+    files: _FileStreams
+
+
+def _request_content(query: str, variables: dict[str, Any]) -> _RequestContent:
+    payload, files = _build_payload(query, variables)
+    if not files:
+        return {"json": payload}
+    body, file_streams = _multipart_body(payload, files)
+    return {"data": body, "files": file_streams}
+
+
 def _multipart_body(
     payload: dict[str, Any], files: dict[str, FileVar]
-) -> tuple[dict[str, str], dict[str, tuple[str, Any] | tuple[str, Any, str]]]:
+) -> tuple[dict[str, str], _FileStreams]:
     file_map: dict[str, list[str]] = {}
-    file_streams: dict[str, tuple[str, Any] | tuple[str, Any, str]] = {}
+    file_streams: _FileStreams = {}
 
     for i, (path, file_var) in enumerate(files.items()):
         key = str(i)
@@ -332,7 +357,8 @@ def _parse_query_response[T: pydantic.BaseModel](
     raise_for_status(response, models)
     body = response_body(response, models)
     if body.data is None:
-        raise GraphQLResponseError([{"message": "No data in response"}])
+        msg = "No data in response"
+        raise ResponseProtocolError(msg, status_code=response.status_code)
 
     return result_type.model_validate(body.data, context=slot_readers)
 
@@ -478,6 +504,9 @@ _PROXY_PAST_THE_APP = (
     "requests to the proxy instead of the app. Drop one of the two"
 )
 
+_REQUESTING = "Sending the request"
+_OPENING_WS = "Opening the WebSocket"
+
 _CLOSED = (
     "The client is closed: close() is final, and a closed client sends no "
     "request and opens no subscription. Create a new client instead"
@@ -619,18 +648,15 @@ class AsyncGQLClient:
         headers: dict[str, str],
         slot_readers: SlotReaders | None = None,
     ) -> T:
-        payload, files = _build_payload(query, variables)
+        content = _request_content(query, variables)
         headers = _with_accept(self._caller_accept, _QUERY_ACCEPT, headers)
         transport = await self._transport()
-        if files:
-            body, file_streams = _multipart_body(payload, files)
-            response = await transport.post(
-                self._endpoint_url, data=body, files=file_streams, headers=headers
-            )
-        else:
-            response = await transport.post(
-                self._endpoint_url, json=payload, headers=headers
-            )
+        with translated(_REQUESTING):
+            async with transport.stream(
+                "POST", self._endpoint_url, headers=headers, **content
+            ) as response:
+                with reading_body(response):
+                    await response.aread()
         return _parse_query_response(response, result_type, slot_readers, self._models)
 
     @asynccontextmanager
@@ -678,33 +704,47 @@ class AsyncGQLClient:
         # session gets a client of its own built from the loop's transport.
         transport = await self._transport()
         url = str(ws_url(self._endpoint_url))
+        # What this side of the session failed with, the body of the caller's
+        # `with` included. The task groups of `httpx2.websockets` wrap it in
+        # groups of their own on its way out.
+        own: BaseException | None = None
+        broken: type[TransportError] = TransportError
+        surfaced: BaseException | None = None
         try:
-            async with (
-                _open_async_http(
-                    transport=(
-                        ASGIWebSocketTransport(self._target_app)
-                        if self._target_app
-                        else None
-                    ),
-                    headers={**httpx2.Headers(transport.headers), **headers},
-                    cookies=self._cookies,
-                    **self._httpx_options,
-                ) as client,
-                AsyncWebSocketClient(client).connect(
-                    url, subprotocols=["graphql-transport-ws"]
-                ) as ws,
-                async_graphql_ws_subscribe(
-                    ws, result_type, payload, slot_readers, self._models
-                ) as stream,
-            ):
-                yield stream
-        except BaseExceptionGroup as eg:
-            # httpx2.websockets wraps exceptions in nested ExceptionGroups via task
-            # groups; unwrap so callers see plain exceptions (except* always re-wraps)
-            unwrapped = _unwrap_solo_exception_group(eg)
-            if unwrapped is not eg:
-                raise unwrapped from None
-            raise
+            async with AsyncExitStack() as stack:
+                try:
+                    http = await stack.enter_async_context(
+                        _open_async_http(
+                            transport=(
+                                ASGIWebSocketTransport(self._target_app)
+                                if self._target_app
+                                else None
+                            ),
+                            headers={**httpx2.Headers(transport.headers), **headers},
+                            cookies=self._cookies,
+                            **self._httpx_options,
+                        )
+                    )
+                    with translated(_OPENING_WS):
+                        ws = await stack.enter_async_context(
+                            AsyncWebSocketClient(http).connect(
+                                url, subprotocols=["graphql-transport-ws"]
+                            )
+                        )
+                    stream = await async_graphql_ws_subscribe(
+                        ws, result_type, payload, slot_readers, self._models
+                    )
+                    broken = SubscriptionInterruptedError
+                    yield stream
+                except BaseException as exc:
+                    own = exc
+                    raise
+        except BaseExceptionGroup as group:
+            surfaced = _surfaced(group, own, broken)
+        # Outside the handler: raised in it, the exception would take the group
+        # for its `__context__`.
+        if surfaced is not None:
+            raise surfaced
 
     # Final in every loop. The transport of the running loop is closed before
     # `close()` returns; those of other live loops close as their loops end,
@@ -773,17 +813,17 @@ class GQLClient:
         headers: dict[str, str],
         slot_readers: SlotReaders | None = None,
     ) -> T:
-        payload, files = _build_payload(query, variables)
+        content = _request_content(query, variables)
         headers = _with_accept(self._caller_accept, _QUERY_ACCEPT, headers)
-        if files:
-            body, file_streams = _multipart_body(payload, files)
-            response = self._open_http().post(
-                self._endpoint_url, data=body, files=file_streams, headers=headers
-            )
-        else:
-            response = self._open_http().post(
-                self._endpoint_url, json=payload, headers=headers
-            )
+        http = self._open_http()
+        with (
+            translated(_REQUESTING),
+            http.stream(
+                "POST", self._endpoint_url, headers=headers, **content
+            ) as response,
+            reading_body(response),
+        ):
+            response.read()
         return _parse_query_response(response, result_type, slot_readers, self._models)
 
     @contextmanager
@@ -816,15 +856,18 @@ class GQLClient:
                 # headers and cookies already apply; the async client has to
                 # rebuild them because its websocket transport differs from
                 # its HTTP one.
-                with (
-                    WebSocketClient(self._open_http()).connect(
-                        url, subprotocols=["graphql-transport-ws"], headers=headers
-                    ) as ws,
-                    graphql_ws_subscribe(
+                with ExitStack() as stack:
+                    with translated(_OPENING_WS):
+                        ws = stack.enter_context(
+                            WebSocketClient(self._open_http()).connect(
+                                url,
+                                subprotocols=["graphql-transport-ws"],
+                                headers=headers,
+                            )
+                        )
+                    yield graphql_ws_subscribe(
                         ws, result_type, payload, slot_readers, self._models
-                    ) as stream,
-                ):
-                    yield stream
+                    )
 
     def _open_http(self) -> httpx2.Client:
         if not self._finalizer.alive:
@@ -836,21 +879,27 @@ class GQLClient:
         self._finalizer()
 
 
-# typeshed quirk: `BaseExceptionGroup.exceptions` is declared via a Self-bound
-# TypeVar, which pyright widens to `… | Unknown` whenever the group is
-# parameterized with anything broader than `Exception` — including, recursively,
-# the same group type passed back to this function. The local ignores name the
-# specific stub limitation rather than asserting "we know better".
-def _unwrap_solo_exception_group(
-    eg: BaseExceptionGroup[BaseException],
+# An exception as the caller is to see it once the task groups are done: `own`
+# as it is, a failure of a background task of the session translated, and a
+# group only where several failed on their own.
+def _surfaced(
+    exc: BaseException, own: BaseException | None, broken: type[TransportError]
 ) -> BaseException:
-    nested: tuple[BaseException, ...] = eg.exceptions
-    if len(nested) != 1:
-        return eg
-    inner = nested[0]
-    if isinstance(inner, BaseExceptionGroup):
-        return _unwrap_solo_exception_group(inner)
-    return inner
+    if exc is own:
+        return exc
+    if not isinstance(exc, BaseExceptionGroup):
+        background = own_error(
+            exc, "The WebSocket session", broken=broken, status_code=None
+        )
+        if background is None:
+            return exc
+        background.__cause__ = exc
+        return background
+    # typeshed declares `exceptions` through a Self-bound TypeVar, which
+    # pyright widens to `… | Unknown` for a group of `BaseException`.
+    nested: tuple[BaseException, ...] = exc.exceptions
+    members = [_surfaced(member, own, broken) for member in nested]
+    return members[0] if len(members) == 1 else exc.derive(members)
 
 
 _adapter_cache: dict[type[object], pydantic.TypeAdapter[object]] = {}
